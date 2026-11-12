@@ -1,5 +1,8 @@
 import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, Settings } from '../shared/types';
 import { readBookmarkExport } from './bookmark-file.js';
+import { setupArcSidebarPreview } from './arc-sidebar-preview.js';
+
+setupArcSidebarPreview();
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let groups: EnvGroup[] = [];

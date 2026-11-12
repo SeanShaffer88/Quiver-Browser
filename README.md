@@ -54,6 +54,8 @@ Start the PortableApps edition with `QuiverPortable.exe`. It keeps the browser p
 
 In **Settings → Bookmarks**, choose a local profile from Chrome, Edge, Brave, or Vivaldi and select **Review import**. **Choose HTML file** accepts a bookmark export from Firefox or another browser. Setup opens the same importer when you select its bookmark option. The review shows a sample and totals for new, duplicate, unsupported, and excess entries before you confirm. **Undo this import** removes the latest batch, even after restart. Quiver stores HTTP and HTTPS bookmarks locally and opens pages only when you select a bookmark.
 
+In **Settings → Arc sidebar preview**, select **Choose Arc sidebar file…** and choose a copy of Arc’s `StorableSidebar.json`. The preview shows Spaces, nested pinned entries, Favorites grouped by source profile, and counts of recognized Today tabs. Custom profiles are matched by directory and device identity when supplied. The selected file is read locally and your Quiver data and Arc file stay intact. **Clear preview** removes the results from Settings.
+
 Local packages are unsigned unless you configure code signing. Windows SmartScreen may show a warning.
 
 The first build can download the pinned Electron runtime and packaging tools. Use `npm run build:dir` to produce an unpacked Windows app in `release\win-unpacked\`.
