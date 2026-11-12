@@ -138,7 +138,7 @@ async function refresh(reason?: string): Promise<void> {
 
 async function run(index: number, forceNew: boolean): Promise<void> {
   const item = items[index];
-  if (id === null || committing || !item?.preview.canRun || (forceNew && !item.alternative)) return;
+  if (id === null || committing || !item?.preview.canRun || (forceNew && !item.acceptsAltEnter)) return;
   const openId = id;
   const mine = request;
   committing = true;
@@ -147,7 +147,7 @@ async function run(index: number, forceNew: boolean): Promise<void> {
     if (id !== openId) return;
     if (result === 'done') clear();
     else if (request === mine) {
-      if (result === 'stale') await refresh('The tab or Space changed. Review the updated action.');
+      if (result === 'stale') await refresh('The page or destination changed. Review the updated action.');
       else setMessage('This action is unavailable. Select another result or edit the command.');
     }
   } catch {

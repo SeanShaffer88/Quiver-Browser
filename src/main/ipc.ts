@@ -68,6 +68,8 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       internal: tab?.internal ?? false,
       mode,
       environment: tab && !tab.internal ? detectEnv(url, store.state.settings.envGroups)?.env : undefined,
+      navigation: tab?.commandRevision ?? 0,
+      navigationPending: !!tab && (!!tab.requestedUrl || tab.view.webContents.isDestroyed() || tab.view.webContents.isLoadingMainFrame()),
     };
   };
 
@@ -163,11 +165,11 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     const context = commandContext(command.mode);
     if (!commandContextMatches(command.context, context, action, parseContext(context))) return 'stale';
     const choice = commandChoice(suggestion, context);
-    if (alternate === true && !choice.alternative) return 'unavailable';
-    const preview = alternate === true ? choice.alternative : choice.preview;
+    if (alternate === true && !choice.acceptsAltEnter) return 'unavailable';
+    const preview = (alternate === true && choice.alternative) || choice.preview;
     switch (action.type) {
       case 'navigate':
-        tabs.navigate(action.url, { newTab: preview?.tab === 'new' });
+        tabs.navigate(action.url, { newTab: preview.tab === 'new' });
         break;
       case 'copy':
         clipboard.writeText(action.text);

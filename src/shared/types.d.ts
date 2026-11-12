@@ -118,6 +118,7 @@ export interface CommandChoice {
   accessibleLabel: string;
   preview: CommandPreview;
   alternative?: CommandPreview;
+  acceptsAltEnter: boolean;
 }
 
 export type CommandCommitResult = 'done' | 'stale' | 'unavailable';

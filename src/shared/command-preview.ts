@@ -9,6 +9,8 @@ export interface CommandContext {
   internal: boolean;
   mode: CommandMode;
   environment?: EnvBadge;
+  navigation: number;
+  navigationPending: boolean;
 }
 
 function displayDestination(raw: string): string {
@@ -76,7 +78,7 @@ export function commandChoice(suggestion: Suggestion, context: CommandContext): 
       if (kind === 'jwt') accessibleLabel = 'JWT decode result';
       break;
   }
-  return { kind, label, detail, preview, alternative, accessibleLabel };
+  return { kind, label, detail, preview, alternative, accessibleLabel, acceptsAltEnter: action.type === 'navigate' };
 }
 
 export function commandContextMatches(before: CommandContext, after: CommandContext, action: SuggestionAction, parser: ParseContext): boolean {
@@ -84,5 +86,6 @@ export function commandContextMatches(before: CommandContext, after: CommandCont
       before.url !== after.url || before.internal !== after.internal || before.mode !== after.mode ||
       before.environment !== after.environment) return false;
   if (action.type !== 'env') return true;
-  return resolveEnvironment(after.url, parser.envGroups, action.target)?.url === action.url;
+  return before.navigation === after.navigation && !before.navigationPending && !after.navigationPending &&
+    resolveEnvironment(after.url, parser.envGroups, action.target)?.url === action.url;
 }

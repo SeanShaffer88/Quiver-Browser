@@ -12,7 +12,7 @@ const parserContext: ParseContext = {
 
 const context: CommandContext = {
   spaceId: 'work', spaceName: 'Work', tabId: 7, url: parserContext.currentUrl!,
-  internal: false, mode: 'current',
+  internal: false, mode: 'current', navigation: 11, navigationPending: false,
 };
 
 test('command previews describe the actual tab, including when an internal tab cannot be replaced', () => {
@@ -24,6 +24,8 @@ test('command previews describe the actual tab, including when an internal tab c
   assert.equal(alternative?.title, 'Open in new tab');
   assert.equal(commandChoice(suggestion, { ...context, internal: true }).preview.title, 'Open in new tab');
   assert.equal(commandChoice(suggestion, { ...context, mode: 'new' }).alternative, undefined);
+  assert.equal(commandChoice(suggestion, { ...context, mode: 'new' }).acceptsAltEnter, true);
+  assert.equal(commandChoice(suggestion, { ...context, internal: true }).acceptsAltEnter, true);
 });
 
 test('the parser classifies a search by the chosen path, regardless of the search template prefix', () => {
@@ -54,8 +56,12 @@ test('env previews resolve the exact destination and reject stale source or chan
   assert.equal(preview.title, 'Switch to PROD');
   assert.equal(preview.destination, 'https://prod.example/a?view=full#details');
   assert.equal(alternative, undefined);
+  assert.equal(commandChoice(suggestion, context).acceptsAltEnter, false);
   assert.equal(commandContextMatches(context, { ...context, tabId: 9 }, suggestion.action, parserContext), false);
   assert.equal(commandContextMatches(context, { ...context, spaceId: 'personal' }, suggestion.action, parserContext), false);
+  assert.equal(commandContextMatches(context, { ...context, navigation: 12 }, suggestion.action, parserContext), false);
+  assert.equal(commandContextMatches(context, { ...context, navigationPending: true }, suggestion.action, parserContext), false);
+  assert.equal(commandContextMatches({ ...context, navigationPending: true }, context, suggestion.action, parserContext), false);
   assert.equal(commandContextMatches(context, context, suggestion.action, {
     ...parserContext, envGroups: [{ ...parserContext.envGroups[0], prod: 'https://new-prod.example' }],
   }), false);
