@@ -4,11 +4,20 @@ param(
     [Parameter(Mandatory)][string]$InstallerRoot,
     [string]$UnpackedDirectory = 'release/win-unpacked',
     [string]$OutputDirectory,
-    [string]$ExpectedVersion
+    [string]$ExpectedVersion,
+    [scriptblock]$SignFile,
+    [string]$SignTool,
+    [string]$PublisherSubject,
+    [ValidatePattern('\A[0-9a-fA-F]{40}\z')][string]$CertificateThumbprint
 )
 
 $ErrorActionPreference = 'Stop'
 if (!$IsWindows) { throw 'Windows is required to compile this installer.' }
+$signingRequested = $PSBoundParameters.ContainsKey('SignFile') -or $PSBoundParameters.ContainsKey('SignTool') -or
+    $PSBoundParameters.ContainsKey('PublisherSubject') -or $PSBoundParameters.ContainsKey('CertificateThumbprint')
+if ($signingRequested -and (!$SignFile -or [string]::IsNullOrWhiteSpace($SignTool) -or [string]::IsNullOrWhiteSpace($PublisherSubject))) {
+    throw 'Signing requires SignFile, SignTool, and PublisherSubject together.'
+}
 $repository = Split-Path -Parent $PSScriptRoot
 $templates = Join-Path $repository 'build/portableapps'
 $icon = Join-Path $repository 'build/icon.ico'
@@ -58,6 +67,14 @@ if (Get-ChildItem -LiteralPath $unpacked -Recurse -Force -Attributes ReparsePoin
     throw 'The unpacked application contains a reparse point.'
 }
 
+$signatureVerifier = Join-Path $PSScriptRoot 'Test-WindowsSignatures.ps1'
+$signatureOptions = @{ SignTool = $SignTool; PublisherSubject = $PublisherSubject }
+if ($CertificateThumbprint) { $signatureOptions.CertificateThumbprint = $CertificateThumbprint }
+$signatureEvidence = [ordered]@{}
+if ($signingRequested) {
+    $signatureEvidence.quiver_exe = & $signatureVerifier -Path $sourceExe @signatureOptions
+}
+
 $null = New-Item -ItemType Directory -Path $destination
 $packageRoot = Join-Path $destination 'QuiverPortable'
 $applicationRoot = Join-Path $packageRoot 'App/Quiver'
@@ -102,6 +119,13 @@ $manifest = [ordered]@{
     }
     artifact = $null
     result_level = $null
+}
+if ($signingRequested) { $manifest.signatures = $signatureEvidence }
+
+function Invoke-SigningStep([string]$Path) {
+    $PSNativeCommandUseErrorActionPreference = $true
+    & $SignFile $Path | Out-Null
+    & $signatureVerifier -Path $Path @signatureOptions
 }
 
 function Invoke-PackagingStep {
@@ -153,6 +177,10 @@ function Write-MenuIcon {
 try {
     $null = New-Item -ItemType Directory -Path $appInfo, $sourceRoot, (Join-Path $packageRoot 'Data'), $stagedTool
     Copy-Item -LiteralPath $unpacked -Destination $applicationRoot -Recurse
+    if ($signingRequested -and
+        (Get-FileHash -LiteralPath (Join-Path $applicationRoot 'Quiver.exe')).Hash -cne $signatureEvidence.quiver_exe.sha256) {
+        throw 'The staged Quiver.exe differs from the signature-verified input.'
+    }
     Copy-Item -LiteralPath (Join-Path $toolsRoot 'App'), $sourceWizard -Destination $stagedTool -Recurse
     Copy-Item -LiteralPath (Join-Path $repository 'LICENSE'), (Join-Path $templates 'QuiverPortable.nsi') -Destination $sourceRoot
     Copy-Item -LiteralPath $installerLicense -Destination (Join-Path $sourceRoot 'PortableApps.comInstaller-License.txt')
@@ -173,6 +201,7 @@ try {
     $launcher = Join-Path $packageRoot 'QuiverPortable.exe'
     $launcherSource = Join-Path $sourceRoot 'QuiverPortable.nsi'
     Invoke-PackagingStep 'compile-launcher' $compiler @("/DOUTPUT=$launcher", "/DAPP_ICON=$icon", $launcherSource) $sourceRoot
+    if ($signingRequested) { $signatureEvidence.launcher = Invoke-SigningStep $launcher }
     Invoke-PackagingStep 'generate-installer' $wizard @($packageRoot) $stagedTool
     $installerSource = Join-Path $sourceRoot 'PortableApps.comInstaller.nsi'
     $generatedConfig = Join-Path $sourceRoot 'PortableApps.comInstallerConfig.nsh'
@@ -185,6 +214,7 @@ try {
     Copy-Item -LiteralPath $icon -Destination (Join-Path $sourceRoot 'PortableApps.comInstaller.ico') -Force
     Copy-Item -LiteralPath $banner -Destination (Join-Path $sourceRoot 'PortableApps.comInstaller.bmp') -Force
     Invoke-PackagingStep 'compile-installer' $compiler @($installerSource) $sourceRoot
+    if ($signingRequested) { $signatureEvidence.installer = Invoke-SigningStep $artifactPath }
     Invoke-PackagingStep 'inspect-installer' $extractor @('l', '-slt', $artifactPath) $destination
     $listing = Get-Content -Raw -LiteralPath (Join-Path $destination 'inspect-installer.stdout.log')
     if ($listing -notmatch '(?m)^Type = Nsis\s*$' -or
