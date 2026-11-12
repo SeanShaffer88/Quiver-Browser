@@ -58,6 +58,7 @@ public static class QuiverPortableInput {
     [DllImport("user32")] private static extern int GetDlgCtrlID(IntPtr window);
     [DllImport("user32")] private static extern IntPtr GetDlgItem(IntPtr window, int id);
     [DllImport("user32")] private static extern bool GetGUIThreadInfo(uint thread, ref ThreadInfo info);
+    [DllImport("user32")] private static extern bool GetWindowRect(IntPtr window, out Rect rect);
     [DllImport("user32", CharSet = CharSet.Unicode)]
     private static extern int GetClassName(IntPtr window, StringBuilder text, int size);
     [DllImport("user32", CharSet = CharSet.Unicode)]
@@ -67,9 +68,6 @@ public static class QuiverPortableInput {
     [DllImport("user32")] private static extern bool PostMessage(IntPtr window, uint message, IntPtr wparam, IntPtr lparam);
     [DllImport("user32", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern IntPtr ReadText(IntPtr window, uint message, IntPtr capacity, StringBuilder text,
-        uint flags, uint timeout, out IntPtr result);
-    [DllImport("user32", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode, ExactSpelling = true)]
-    private static extern IntPtr WriteText(IntPtr window, uint message, IntPtr unused, string text,
         uint flags, uint timeout, out IntPtr result);
     [DllImport("user32")] private static extern uint SendInput(uint count, Input[] inputs, int size);
 
@@ -111,9 +109,7 @@ public static class QuiverPortableInput {
         return read;
     }
 
-    public static bool SetFileName(uint processId, string title, string name, string stem, string target) {
-        IntPtr dialog = FindDialog(processId, title);
-        if (dialog == IntPtr.Zero) return false;
+    private static IntPtr FindFileName(IntPtr dialog, uint processId, string name, string stem) {
         IntPtr match = IntPtr.Zero;
         int matches = 0;
         EnumChildWindows(dialog, (control, state) => {
@@ -124,9 +120,7 @@ public static class QuiverPortableInput {
             }
             return matches < 2;
         }, IntPtr.Zero);
-        return matches == 1 && OwnedControl(match, dialog, processId) &&
-            WriteText(match, 0x000C, IntPtr.Zero, target, 2, 500, out _) != IntPtr.Zero &&
-            TryReadControl(match, out string actual) && actual == target;
+        return matches == 1 ? match : IntPtr.Zero;
     }
 
     private static Input Key(ushort key, ushort scan = 0, uint flags = 0) =>
@@ -134,10 +128,18 @@ public static class QuiverPortableInput {
 
     private static bool SendKeys(Input[] keys) => SendInput((uint)keys.Length, keys, Marshal.SizeOf<Input>()) == keys.Length;
 
-    public static bool FocusFileName(uint processId, string title) {
+    public static bool FocusFileName(uint processId, string title, string name, string stem) {
         IntPtr dialog = FindDialog(processId, title);
+        if (!Focus(dialog, processId)) return false;
+        IntPtr edit = FindFileName(dialog, processId, name, stem);
+        if (edit == IntPtr.Zero) return false;
+        if (FindFocusedFileName(processId, title) == edit) return true;
+        if (GetWindowRect(edit, out Rect rect)) {
+            var center = new Point { X = rect.Left + (rect.Right - rect.Left) / 2, Y = rect.Top + (rect.Bottom - rect.Top) / 2 };
+            if (WindowFromPoint(center) == edit && Click(dialog, processId, center.X, center.Y)) return true;
+        }
         // Alt+N selects the File name field in the English Common Item Dialog.
-        return Focus(dialog, processId) && SendKeys(new[] { Key(0x12), Key(0x4E), Key(0x4E, flags: 2), Key(0x12, flags: 2) });
+        return GetForegroundWindow() == dialog && SendKeys(new[] { Key(0x12), Key(0x4E), Key(0x4E, flags: 2), Key(0x12, flags: 2) });
     }
 
     private static IntPtr FindFocusedFileName(uint processId, string title) {
@@ -259,6 +261,7 @@ function Invoke-PortableSaveAs([Diagnostics.Process]$Browser, [string]$Root, [st
     )
     $proof = foreach ($test in $tests) {
         $target = Join-Path $test.folder $test.name
+        $stem = [IO.Path]::GetFileNameWithoutExtension($test.name)
         $defaultTarget = Join-Path $downloads $test.name
         $useDefaultDestination = $test.folder -ieq $downloads
         $dialogTitle = "$Origin/portable-download?name=$($test.name)"
@@ -269,17 +272,14 @@ function Invoke-PortableSaveAs([Diagnostics.Process]$Browser, [string]$Root, [st
         try {
             $null = Wait-For "the native Save As dialog for $($test.name)" { Test-PortableSaveDialog $Browser $dialogTitle }
             if (!$useDefaultDestination) {
-                $stem = [IO.Path]::GetFileNameWithoutExtension($test.name)
-                if (![QuiverPortableInput]::SetFileName($Browser.Id, $dialogTitle, $test.name, $stem, $target)) {
-                    $null = Wait-For 'the owned Save As dialog to focus its File name field' {
-                        [QuiverPortableInput]::FocusFileName($Browser.Id, $dialogTitle)
-                    }
-                    $null = Wait-For 'the verified native filename edit to accept the custom path' {
-                        [QuiverPortableInput]::TypeFileName($Browser.Id, $dialogTitle, $test.name, $stem, $target)
-                    }
-                    $null = Wait-For 'the custom path to appear in the verified filename edit' {
-                        [QuiverPortableInput]::VerifyTypedFileName($Browser.Id, $dialogTitle, $target)
-                    }
+                $null = Wait-For 'the owned Save As dialog to focus its File name field' {
+                    [QuiverPortableInput]::FocusFileName($Browser.Id, $dialogTitle, $test.name, $stem)
+                }
+                $null = Wait-For 'the verified native filename edit to accept the custom path' {
+                    [QuiverPortableInput]::TypeFileName($Browser.Id, $dialogTitle, $test.name, $stem, $target)
+                }
+                $null = Wait-For 'the custom path to appear in the verified filename edit' {
+                    [QuiverPortableInput]::VerifyTypedFileName($Browser.Id, $dialogTitle, $target)
                 }
             }
             $null = Wait-For 'the owned native Save button to accept a click' {
@@ -298,10 +298,21 @@ function Invoke-PortableSaveAs([Diagnostics.Process]$Browser, [string]$Root, [st
 
         $body = [Text.Encoding]::ASCII.GetBytes("Quiver portable download: $($test.name)" + [char]10)
         $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($body))
-        $null = Wait-For "the exact downloaded bytes in $target" {
-            if (Test-Path -LiteralPath $target -PathType Leaf) {
-                try { (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ceq $hash } catch [IO.IOException] { }
+        try {
+            $null = Wait-For "the exact downloaded bytes in $target" {
+                if (Test-Path -LiteralPath $target -PathType Leaf) {
+                    try { (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ceq $hash } catch [IO.IOException] { }
+                }
             }
+        } catch {
+            $observed = @(Get-ChildItem -LiteralPath $downloads,$chosenFolder -Filter "$stem*" -File -ErrorAction SilentlyContinue |
+                Select-Object -First 8 | ForEach-Object {
+                    $relative = [IO.Path]::GetRelativePath($Root, $_.FullName)
+                    $observedHash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
+                    "$relative ($($_.Length) bytes, SHA-256 $observedHash)"
+                })
+            Write-Warning "Expected SHA-256 $hash. Matching files in the two fixture folders: $(if ($observed) { $observed -join ', ' } else { 'none' })."
+            throw
         }
         if (!$useDefaultDestination -and (Test-Path -LiteralPath $defaultTarget)) {
             throw 'The custom download unexpectedly also appeared at the default destination.'
