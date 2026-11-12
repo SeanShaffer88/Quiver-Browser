@@ -9,6 +9,7 @@ import { BookmarkProfileReadError, bookmarkProfileLabel, discoverBookmarkProfile
 import type { DevServerWatcher } from './devservers';
 import { internalRole, type InternalPage, type InternalRole } from './internal-access';
 import type { Store } from './store';
+import { tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
 
 export interface IpcDeps {
@@ -92,6 +93,17 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     currentUrl: context.internal ? undefined : context.url,
   });
 
+  const commandTabTarget = (tab: NonNullable<TabManager['activeTab']>, spaceName: string) =>
+    tabCommandTarget(tab, tabs.tabUrl(tab), spaceName, store.state.settings.envGroups);
+
+  function* openTabTargets() {
+    const spaces = new Map(tabs.spaces.map(({ id, name }) => [id, name]));
+    for (const tab of tabs.tabs.values()) {
+      const name = spaces.get(tab.spaceId);
+      if (name !== undefined && !tab.view.webContents.isDestroyed()) yield commandTabTarget(tab, name);
+    }
+  }
+
   handle('shell', 'state:get', () => tabs.snapshot());
 
   // tabs
@@ -151,7 +163,9 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (typeof text !== 'string' || text.length > MAX_COMMAND_LENGTH) return [];
     const context = commandContext(command.mode);
     command.context = context;
-    command.suggestions = parseCommand(text, parseContext(context));
+    const query = tabSearchQuery(text);
+    command.suggestions = query === undefined ? parseCommand(text, parseContext(context))
+      : tabSearchSuggestions(query, context.spaceId, openTabTargets());
     return command.suggestions.map((suggestion) => commandChoice(suggestion, context));
   });
   handle('commandbar', 'cmd:commit', (_e, id: number, request: number, index: number, alternate: boolean): CommandCommitResult => {
@@ -183,6 +197,14 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       case 'internal':
         tabs.navigate(`quiver://${action.page}`);
         break;
+      case 'activate-tab': {
+        const tab = tabs.tabs.get(action.target.id);
+        const space = tab && tabs.spaces.find(({ id }) => id === tab.spaceId);
+        if (!tab || !space || tab.view.webContents.isDestroyed() ||
+            !tabTargetMatches(action.target, commandTabTarget(tab, space.name))) return 'stale';
+        tabs.activateTab(tab.id);
+        break;
+      }
     }
     closeOverlay(false);
     return 'done';

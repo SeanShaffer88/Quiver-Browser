@@ -99,12 +99,24 @@ export interface ShellState {
   settings: Settings;
 }
 
+export interface TabCommandTarget {
+  id: number;
+  spaceId: string;
+  spaceName: string;
+  revision: number;
+  url: string;
+  title: string;
+  host: string;
+  environment: EnvBadge | null;
+}
+
 export type SuggestionAction =
   | { type: 'navigate'; url: string }
   | { type: 'copy'; text: string }
   | { type: 'boost'; name: string }
   | { type: 'env'; target: EnvBadge; url: string }
   | { type: 'internal'; page: 'boosts' | 'settings' }
+  | { type: 'activate-tab'; target: TabCommandTarget }
   | { type: 'noop' };
 
 export interface Suggestion {
@@ -128,7 +140,7 @@ export interface CommandPreview {
   title: string;
   destination?: string;
   space?: string;
-  tab?: CommandMode;
+  tab?: CommandMode | 'existing';
   environment?: EnvBadge;
   source?: EnvBadge;
   canRun: boolean;
