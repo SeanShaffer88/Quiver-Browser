@@ -96,6 +96,7 @@ export class TabManager {
   private phonePartition = '';
   private phoneSpaceId = '';
   private phoneUrl = '';
+  private phoneLoad: symbol | null = null;
   private phoneReady = false;
   private phoneEmulated = false;
   private phoneReloadedForTouch = false;
@@ -698,6 +699,7 @@ export class TabManager {
     this.phonePartition = '';
     this.phoneSpaceId = '';
     this.phoneUrl = '';
+    this.phoneLoad = null;
     this.phoneReady = false;
     this.phoneEmulated = false;
     this.phoneReloadedForTouch = false;
@@ -725,7 +727,7 @@ export class TabManager {
     const contents = this.phone?.webContents;
     if (!contents || contents.isDestroyed() || this.phonePartition !== tab.partition || this.phoneSpaceId !== tab.spaceId) return 'starting';
     if (this.phoneUnavailable) return 'unavailable';
-    return this.phoneReady && this.phoneEmulated && this.phoneReloadedForTouch && contents.debugger.isAttached() &&
+    return !this.phoneLoad && this.phoneReady && this.phoneEmulated && this.phoneReloadedForTouch && contents.debugger.isAttached() &&
       this.phoneUrl === this.tabUrl(tab) ? 'active' : 'starting';
   }
 
@@ -749,7 +751,7 @@ export class TabManager {
       const wc = phone.webContents;
       wc.setUserAgent(MOBILE_UA);
       wc.setWindowOpenHandler(({ url }) => {
-        if (this.phone === phone && /^https?:/i.test(url)) void wc.loadURL(url).catch(() => undefined);
+        if (this.phone === phone && /^https?:/i.test(url)) this.loadPhone(phone, url);
         return { action: 'deny' };
       });
       wc.on('did-start-navigation', ({ isMainFrame, isSameDocument }) => {
@@ -761,6 +763,7 @@ export class TabManager {
       wc.on('dom-ready', () => {
         if (this.phone !== phone) return;
         this.phoneReady = true;
+        this.phoneUnavailable = false;
         this.layout();
         this.emit();
       });
@@ -770,9 +773,8 @@ export class TabManager {
         this.phoneUnavailable = true;
         this.emit();
       });
-      wc.on('did-fail-load', (_event, code, _description, _url, isMainFrame) => {
-        if (this.phone !== phone || !isMainFrame || code === -3) return;
-        this.phoneReady = false;
+      wc.on('did-stop-loading', () => {
+        if (this.phone !== phone || this.phoneLoad || this.phoneReady || wc.isLoadingMainFrame()) return;
         this.phoneUnavailable = true;
         this.emit();
       });
@@ -799,13 +801,21 @@ export class TabManager {
     const url = this.tabUrl(tab);
     if (!/^https?:/i.test(url) || url === this.phoneUrl) return;
     this.phoneUrl = url;
+    this.loadPhone(phone, url);
+  }
+
+  private loadPhone(phone: WebContentsView, url: string): void {
+    const request = Symbol();
+    this.phoneLoad = request;
     this.phoneReady = false;
     this.phoneUnavailable = false;
-    void phone.webContents.loadURL(url).catch(() => {
-      if (this.phone !== phone || this.phoneUrl !== url) return;
-      this.phoneUnavailable = true;
+    const finish = (failed: boolean) => {
+      if (this.phone !== phone || this.phoneLoad !== request) return;
+      this.phoneLoad = null;
+      if (failed) this.phoneUnavailable = true;
       this.emit();
-    });
+    };
+    void phone.webContents.loadURL(url).then(() => finish(false), (error?: NodeJS.ErrnoException) => finish(error?.code !== 'ERR_ABORTED'));
   }
 
   /**

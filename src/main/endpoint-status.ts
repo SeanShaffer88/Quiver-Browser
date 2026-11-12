@@ -7,9 +7,9 @@ const CONNECTION_FAILURES = new Set([-7, -100, -101, -102, -109, -118]);
 export function loopbackEndpoint(rawUrl: string): string | null {
   try {
     const { protocol, hostname, port } = new URL(rawUrl);
-    if (protocol !== 'http:' && protocol !== 'https:') return null;
+    if (protocol !== 'http:') return null;
     if (hostname !== '[::1]' && !(hostname.startsWith('127.') && isIPv4(hostname))) return null;
-    return `${hostname}:${port || (protocol === 'https:' ? 443 : 80)}`;
+    return `${hostname}:${port || 80}`;
   } catch {
     return null;
   }

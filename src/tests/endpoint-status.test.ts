@@ -4,11 +4,24 @@ import { EndpointStatus, loopbackEndpoint } from '../main/endpoint-status';
 
 test('endpoint identity keeps the exact loopback family, address, and effective port', () => {
   assert.equal(loopbackEndpoint('http://127.0.0.1/p'), '127.0.0.1:80');
-  assert.equal(loopbackEndpoint('https://127.0.0.2/p'), '127.0.0.2:443');
+  assert.equal(loopbackEndpoint('http://127.0.0.2:443/p'), '127.0.0.2:443');
   assert.equal(loopbackEndpoint('http://[::1]:8080/a?x=2#b'), '[::1]:8080');
   assert.equal(loopbackEndpoint('http://localhost:8080/'), null);
   assert.equal(loopbackEndpoint('https://example.test/'), null);
   assert.equal(loopbackEndpoint('file://127.0.0.1/test'), null);
+});
+
+test('a plaintext HTTP probe never proves recovery for HTTPS on the same port', () => {
+  const tracker = new EndpointStatus();
+  const http = 'http://127.0.0.1:8443/';
+  const https = 'https://127.0.0.1:8443/orders';
+  tracker.observe([http]);
+  tracker.observe([]);
+  assert.equal(tracker.status(https), null);
+  const failure = tracker.failure(https, -102);
+  assert.equal(failure, null);
+  tracker.observe([http]);
+  assert.equal(tracker.retry(https, failure), null);
 });
 
 test('a failed scan and an unrelated listener cannot recover a failed local URL', () => {
