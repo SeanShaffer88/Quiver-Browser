@@ -135,7 +135,7 @@ function Invoke-Button {
 
 function Read-State {
     if (Test-Path -LiteralPath $statePath -PathType Leaf) {
-        # Allow Quiver to atomically replace this file while the test reads a snapshot.
+        # Close the file handle before parsing to minimize interference with Windows replacement.
         $share = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
         $reader = [IO.StreamReader]::new([IO.File]::Open($statePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, $share))
         try { $json = $reader.ReadToEnd() } finally { $reader.Dispose() }
@@ -191,10 +191,20 @@ function Get-GearSnapshot {
 }
 
 function Get-VisibleGear {
-    $button = Find-Control (Get-QuiverWindow) 'Settings' ([Windows.Automation.ControlType]::Button)
+    $window = Get-QuiverWindow
+    $button = Find-Control $window 'Settings' ([Windows.Automation.ControlType]::Button)
     if (!$button -or !$button.Current.IsEnabled -or $button.Current.IsOffscreen) { return }
     $bounds = $button.Current.BoundingRectangle
-    if (!$bounds.IsEmpty -and $bounds.Width -gt 0 -and $bounds.Height -gt 0) { return $button }
+    if ($bounds.IsEmpty -or $bounds.Width -le 0 -or $bounds.Height -le 0) { return }
+    $x = $bounds.X + $bounds.Width / 2
+    $y = $bounds.Y + $bounds.Height / 2
+    if (![double]::IsFinite($x) -or ![double]::IsFinite($y) -or
+        $x -lt [int]::MinValue -or $x -gt [int]::MaxValue -or $y -lt [int]::MinValue -or $y -gt [int]::MaxValue) { return }
+    $hwnd = [IntPtr]$window.Current.NativeWindowHandle
+    $pidAtCapture = $window.Current.ProcessId
+    if ($hwnd -ne [IntPtr]::Zero -and $pidAtCapture -eq $script:appProcess.Id) {
+        [pscustomobject]@{ button = $button; hwnd = $hwnd; ownerPid = $pidAtCapture; x = [int]$x; y = [int]$y; bounds = Get-RectEvidence $bounds }
+    }
 }
 
 function Wait-ForSettingsNavigation([int]$Milliseconds) {
@@ -217,22 +227,18 @@ function Open-SettingsFromNewTab {
         (Get-ActiveRoute (Read-State)) -ceq $newTabRoute
     }
     try {
-        $button = Wait-For 'visible enabled Settings toolbar gear' { Get-VisibleGear }
-        $window = Get-QuiverWindow
-        $bounds = $button.Current.BoundingRectangle
-        $x = [int]($bounds.X + $bounds.Width / 2)
-        $y = [int]($bounds.Y + $bounds.Height / 2)
-        $click = [ordered]@{ action = 'owned click'; x = $x; y = $y; before = Get-GearSnapshot }
+        $target = Wait-For 'visible enabled Settings toolbar gear' { Get-VisibleGear }
+        $click = [ordered]@{ action = 'owned click'; x = $target.x; y = $target.y; hwnd = $target.hwnd.ToInt64(); pid = $target.ownerPid; bounds = $target.bounds }
         $script:settingsGearAttempts.Add($click)
-        $click.sent = [QuiverTestInput]::Click([IntPtr]$window.Current.NativeWindowHandle, $script:appProcess.Id, $x, $y)
+        $click.sent = [QuiverTestInput]::Click($target.hwnd, $target.ownerPid, $target.x, $target.y)
         $click.navigated = Wait-ForSettingsNavigation 2500
         Write-Host "Settings gear click accepted=$($click.sent), navigated=$($click.navigated)."
         if (!$click.navigated) {
-            $button = Wait-For 'visible enabled Settings toolbar gear for UIA Invoke' { Get-VisibleGear }
+            $target = Wait-For 'visible enabled Settings toolbar gear for UIA Invoke' { Get-VisibleGear }
             $invoke = [ordered]@{ action = 'UIA Invoke'; before = Get-GearSnapshot }
             $script:settingsGearAttempts.Add($invoke)
             try {
-                $button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+                $target.button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
                 $invoke.sent = $true
             } catch {
                 $invoke.error = $_.Exception.Message

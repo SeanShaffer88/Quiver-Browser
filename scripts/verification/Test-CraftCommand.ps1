@@ -226,7 +226,7 @@ function Open-Command([int]$Key = 0x4c) {
 }
 
 function Read-Session {
-    # Allow Quiver to atomically replace this file while the test reads a snapshot.
+    # Close the file handle before parsing to minimize interference with Windows replacement.
     $share = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
     $reader = [IO.StreamReader]::new([IO.File]::Open($statePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, $share))
     try { $json = $reader.ReadToEnd() } finally { $reader.Dispose() }
