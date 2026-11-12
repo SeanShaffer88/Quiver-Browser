@@ -1,0 +1,33 @@
+html, body { user-select: text; overflow: auto; }
+body.center { display: grid; place-items: center; }
+.newtab-card { max-width: 640px; padding: 24px; }
+.newtab-card h1 { margin: 0 0 8px; font-size: 32px; letter-spacing: .02em; }
+.newtab-card p, .newtab-card li { color: var(--muted); line-height: 1.9; }
+.newtab-card ul { padding-left: 18px; }
+kbd, code { font: 12px var(--mono); background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; color: var(--text); }
+.page { max-width: 880px; margin: 0 auto; padding: 24px 28px 48px; }
+.page h1 { margin: 0 0 4px; font-size: 22px; }
+.page h2 { margin: 28px 0 8px; font-size: 15px; }
+.page .sub { color: var(--muted); margin: 0 0 12px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.row label { color: var(--muted); min-width: 120px; }
+.row input[type="text"], .row input[type="number"], .row select { flex: 1; min-width: 160px; }
+.group { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; margin: 8px 0; background: var(--panel); }
+.group .grid { display: grid; grid-template-columns: 90px 1fr; gap: 6px 8px; align-items: center; }
+.group .grid label { color: var(--muted); }
+.note { color: var(--muted); font-size: 12px; }
+.mono { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+.status { min-height: 1.4em; color: var(--muted); }
+.status.err { color: var(--prod); }
+.status.ok { color: var(--local); }
+/* boosts */
+.boosts { display: grid; grid-template-columns: 280px 1fr; height: 100vh; }
+.boosts aside { border-right: 1px solid var(--border); background: var(--panel); padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.boosts main { display: flex; flex-direction: column; padding: 14px; gap: 8px; min-width: 0; }
+.bfile { display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 6px; width: 100%; text-align: left; color: var(--muted); }
+.bfile:hover { background: var(--panel-2); color: var(--text); }
+.bfile.sel { background: var(--panel-2); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.bfile .k { font: 10px var(--mono); color: var(--accent); text-transform: uppercase; }
+#editor { flex: 1; resize: none; font: 13px/1.5 var(--mono); tab-size: 2; white-space: pre; overflow: auto; }
+.toolbar { display: flex; gap: 8px; align-items: center; }
+.toolbar .name { font: 600 14px var(--mono); flex: 1; overflow: hidden; text-overflow: ellipsis; }

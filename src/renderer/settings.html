@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+<title>Settings</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="pages.css">
+</head>
+<body>
+<div class="page">
+  <h1>Settings</h1>
+  <p class="sub">Everything is stored on this device. Quiver has no telemetry and no account.</p>
+
+  <h2>Environments</h2>
+  <p class="note">Group the origins of one app once. Then <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>) cycles local → staging → production, keeping path, query and hash. Leave an origin empty to skip it.</p>
+  <div id="groups"></div>
+  <div class="row"><button class="btn" id="addgroup">Add environment group</button><span class="status" id="envstatus" role="status"></span></div>
+
+  <h2>Command bar</h2>
+  <div class="row"><label for="engine">Search engine</label><input id="engine" type="text" spellcheck="false" placeholder="https://duckduckgo.com/?q=%s"></div>
+  <p class="note">Must start with http(s):// and contain <code>%s</code> for the query. Search text is only sent when you press Enter on a search result.</p>
+
+  <h2>Local servers</h2>
+  <div class="row"><label for="scan">Detect servers</label><input id="scan" type="checkbox"><span class="note">Lists HTTP servers listening on this machine (netstat + a local request for the page title). Pauses while the window is in the background.</span></div>
+</div>
+<script type="module" src="settings.js"></script>
+</body>
+</html>

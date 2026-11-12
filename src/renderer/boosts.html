@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+<title>Boosts</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="pages.css">
+</head>
+<body>
+<div class="boosts">
+  <aside>
+    <h1 style="margin:0;font-size:18px">Boosts</h1>
+    <p class="note">CSS or TypeScript injected into sites. Name files after the hostname: <code>github.com.css</code>, <code>github.com.ts</code>, or <code>all.css</code> for every site. CSS applies live on save; scripts reload the site’s tabs.</p>
+    <div class="row">
+      <input id="newname" type="text" list="suggest" spellcheck="false" placeholder="github.com.css" aria-label="New boost file name">
+      <datalist id="suggest"></datalist>
+      <button class="btn primary" id="create" title="Create the file and open it">New</button>
+    </div>
+    <div id="files" role="listbox" aria-label="Boost files"></div>
+    <p class="note" id="dir"></p>
+  </aside>
+  <main>
+    <div class="toolbar">
+      <span class="name" id="curname">No file selected</span>
+      <button class="btn" id="reload" title="Discard edits and reload this file from disk">Reload</button>
+      <button class="btn primary" id="save" title="Save (Ctrl+S). CSS applies live; TypeScript reloads matching tabs">Save</button>
+      <button class="btn danger" id="delete" title="Delete this boost file from disk">Delete</button>
+    </div>
+    <textarea id="editor" spellcheck="false" aria-label="Boost source" disabled></textarea>
+    <div class="status" id="status" role="status"></div>
+  </main>
+</div>
+<script type="module" src="boosts.js"></script>
+</body>
+</html>

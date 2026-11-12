@@ -1,0 +1,33 @@
+:root {
+  --bg: #14161a;
+  --panel: #1b1e24;
+  --panel-2: #22262e;
+  --border: #2a2e37;
+  --text: #d7dae0;
+  --muted: #8b93a1;
+  --accent: #5b8cff;
+  --local: #3ecf8e;
+  --staging: #f5b73b;
+  --prod: #ff5d5d;
+  --radius: 8px;
+  --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; overflow: hidden; user-select: none; }
+button { font: inherit; color: inherit; background: transparent; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+input, textarea, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; user-select: text; }
+.icon-btn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); }
+.icon-btn:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
+.icon-btn:disabled { opacity: .35; cursor: default; }
+.icon-btn.on { color: var(--accent); background: var(--panel-2); }
+.btn { padding: 6px 12px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #0b1020; font-weight: 600; }
+.btn.danger:hover { border-color: var(--prod); color: var(--prod); }
+.pill { font-size: 10px; font-weight: 700; letter-spacing: .06em; padding: 1px 6px; border-radius: 999px; color: #0b1020; }
+.pill.LOCAL { background: var(--local); }
+.pill.STAGING { background: var(--staging); }
+.pill.PROD { background: var(--prod); color: #fff; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
