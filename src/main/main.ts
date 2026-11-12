@@ -11,9 +11,52 @@ import { Store } from './store';
 import { restrictInternalNavigation, TabManager } from './tabs';
 import { placeWindow } from './window-placement';
 
-// Portable build: keep every byte next to the executable (data\), never in %APPDATA%.
-if (process.env.PORTABLE_EXECUTABLE_DIR) {
-  app.setPath('userData', path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'data'));
+function createPortableDirectory(parent: string, name: string): string {
+  const directory = path.join(parent, name);
+  let entry = fs.lstatSync(directory, { throwIfNoEntry: false });
+  if (!entry) {
+    try {
+      fs.mkdirSync(directory);
+    } catch (error) {
+      // Another launch can create the directory before either process takes the instance lock.
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+    entry = fs.lstatSync(directory);
+  }
+  if (!entry.isDirectory() || entry.isSymbolicLink()) {
+    throw new Error(`The portable ${name} path must be an ordinary directory.`);
+  }
+  if (path.relative(directory, fs.realpathSync.native(directory)) !== '') {
+    throw new Error(`The portable ${name} directory points outside its expected path.`);
+  }
+  return directory;
+}
+
+function configurePortablePaths(root: string | undefined): string | undefined {
+  if (!root) return undefined;
+  if (!path.isAbsolute(root) || (process.platform === 'win32' && path.parse(root).root.length < 3)) {
+    throw new Error('The portable profile requires a fully qualified package path.');
+  }
+  const data = createPortableDirectory(fs.realpathSync.native(root), 'Data');
+  createPortableDirectory(data, 'Partitions');
+  createPortableDirectory(data, 'boosts');
+  const stateFile = path.join(data, 'quiver-state.json');
+  const state = fs.lstatSync(stateFile, { throwIfNoEntry: false });
+  if (state && (!state.isFile() || path.relative(stateFile, fs.realpathSync.native(stateFile)) !== '')) {
+    throw new Error('The portable quiver-state.json path must be an ordinary file.');
+  }
+  const downloads = createPortableDirectory(data, 'Downloads');
+  const paths = {
+    userData: data,
+    sessionData: data,
+    userCache: createPortableDirectory(data, 'Cache'),
+    temp: createPortableDirectory(data, 'Temp'),
+    logs: createPortableDirectory(data, 'Logs'),
+    crashDumps: createPortableDirectory(data, 'CrashDumps'),
+    downloads,
+  };
+  for (const [name, directory] of Object.entries(paths)) app.setPath(name, directory);
+  return downloads;
 }
 
 protocol.registerSchemesAsPrivileged([{ scheme: INTERNAL_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -51,6 +94,8 @@ function screenPlacement(saved: Parameters<typeof placeWindow>[0]) {
 }
 
 async function main(): Promise<void> {
+  // Set the portable paths before Electron initializes sessions or selects its instance lock.
+  const portableDownloadPath = configurePortablePaths(process.env.PORTABLE_EXECUTABLE_DIR);
   if (!app.requestSingleInstanceLock({ argv: process.argv })) {
     app.quit();
     return;
@@ -172,6 +217,7 @@ async function main(): Promise<void> {
     },
     onShortcut,
     registerInternalProtocol,
+    portableDownloadPath,
   );
   tabs.attachShortcuts(shell.webContents);
 

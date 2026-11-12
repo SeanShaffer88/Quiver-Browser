@@ -50,7 +50,7 @@ Outputs in `release\`:
 
 Windows setup adds Quiver to Windows Default Apps. Select **Open Windows Default Apps after setup** to choose Quiver there. Setup can also open Quiver’s bookmark importer and add a launch-at-sign-in shortcut. Each option is opt-in on a fresh install. For unattended setup, `/S /currentuser /STARTATLOGIN` opts in to startup without opening Windows Settings or the importer.
 
-The portable installer keeps Quiver’s profile in `QuiverPortable\Data` and leaves default browser and startup choices alone. To build it locally, first build the Windows setup to populate `release\win-unpacked`. Then run `pwsh -File scripts/Build-PortableApps.ps1 -InstallerRoot <PortableApps.comInstaller-folder>`. This requires an official PortableApps.com Installer toolchain. The GitHub workflow pins and verifies the tool archive.
+Start the PortableApps edition with `QuiverPortable.exe`. It keeps the browser profile, cache, temporary files, and logs in `QuiverPortable\Data`. Downloads start in `Data\Downloads`, and the Save As dialog lets you choose another destination. To build it locally, first build the Windows setup to populate `release\win-unpacked`. Then run `pwsh -File scripts/Build-PortableApps.ps1 -InstallerRoot <PortableApps.comInstaller-folder>`. This requires the official PortableApps.com Installer toolchain. The GitHub workflow pins and verifies the tool archive.
 
 In **Settings → Bookmarks**, choose a local profile from Chrome, Edge, Brave, or Vivaldi and select **Review import**. **Choose HTML file** accepts a bookmark export from Firefox or another browser. Setup opens the same importer when you select its bookmark option. The review shows a sample and totals for new, duplicate, unsupported, and excess entries before you confirm. **Undo this import** removes the latest batch, even after restart. Quiver stores HTTP and HTTPS bookmarks locally and opens pages only when you select a bookmark.
 
@@ -119,8 +119,8 @@ The sidebar lists IPv4 and IPv6 HTTP servers reachable over loopback. Quiver use
 
 ### Where data lives
 - Installed: `%APPDATA%\Quiver\`
-- PortableApps: `Data\` in the QuiverPortable folder
-- Files: `quiver-state.json` (Spaces, tabs, settings, window bounds), `boosts\`, and Chromium partitions.
+- PortableApps: `Data\` in the QuiverPortable folder. In addition to the profile, it holds `Cache\`, `Temp\`, `Logs\`, `CrashDumps\` and the default `Downloads\` directory.
+- Profile files: `quiver-state.json` (Spaces, tabs, settings, window bounds), `boosts\`, and Chromium partitions.
 
 To remove everything: uninstall, then delete that folder.
 
