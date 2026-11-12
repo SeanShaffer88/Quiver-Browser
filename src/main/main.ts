@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME } from '../shared/constants';
 import { Boosts } from './boosts';
+import { configureSitePermissions } from './browser-policy';
 import { DevServerWatcher } from './devservers';
 import { registerIpc } from './ipc';
 import { parseLaunchArgs } from './launch-args';
@@ -74,7 +75,9 @@ let registeredInternal = false;
 function registerInternalProtocol(): void {
   if (registeredInternal) return;
   registeredInternal = true;
-  session.fromPartition(INTERNAL_PARTITION).protocol.handle(INTERNAL_SCHEME, async (req) => {
+  const internal = session.fromPartition(INTERNAL_PARTITION);
+  configureSitePermissions(internal, false);
+  internal.protocol.handle(INTERNAL_SCHEME, async (req) => {
     try {
       const u = new URL(req.url);
       if (u.host !== 'app') return new Response('not found', { status: 404 });
@@ -148,8 +151,8 @@ async function main(): Promise<void> {
   });
   const shell = new WebContentsView({ webPreferences: prefs() });
   const overlay = new WebContentsView({ webPreferences: prefs() });
-  for (const view of [shell, overlay]) {
-    restrictInternalNavigation(view.webContents);
+  for (const [view, page] of [[shell, 'shell'], [overlay, 'commandbar']] as const) {
+    restrictInternalNavigation(view.webContents, page);
     view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   }
   overlay.setBackgroundColor('#00000000');
@@ -221,7 +224,6 @@ async function main(): Promise<void> {
       if (!shell.webContents.isDestroyed()) shell.webContents.send('state', state);
     },
     onShortcut,
-    registerInternalProtocol,
     portableDownloadPath,
   );
   tabs.attachShortcuts(shell.webContents);

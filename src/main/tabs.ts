@@ -1,7 +1,6 @@
 import { BaseWindow, WebContentsView, session, webContents, type Rectangle, type WebContents } from 'electron';
 import path from 'node:path';
 import {
-  INTERNAL_ORIGIN,
   INTERNAL_PARTITION,
   MOBILE_UA,
   PHONE_LABEL_H,
@@ -15,7 +14,9 @@ import {
 import { badgeFor, isLocalHost, switchEnv } from '../shared/env';
 import type { DevServer, EnvBadge, LocalServerStatus, PhoneStatus, RecoveryNotice, ShellState, Space, TabInfo } from '../shared/types';
 import { boostKind, boostMatchesHost, transpileBoost, wrapScript, type Boosts } from './boosts';
+import { allowsInternalNavigation, allowsWebNavigation, configureSitePermissions, isInternalTabPage } from './browser-policy';
 import { EndpointStatus, type EndpointFailure } from './endpoint-status';
+import { internalPage } from './internal-access';
 import { shortcutFor, type ShortcutAction } from './shortcuts';
 import type { Store } from './store';
 import {
@@ -58,13 +59,10 @@ const ERR_PREFIX = 'data:text/html;charset=utf-8,%3C!--quiver-error--%3E';
 const SPACE_COLORS = ['#5b8cff', '#ff7a59', '#3ecf8e', '#f5b73b', '#b57bff', '#ff5d8f', '#2cc5d9'];
 
 export function toInternalUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    if (u.host === 'app') return url;
-    return `quiver://app/${u.host || 'newtab'}.html${u.search}`;
-  } catch {
-    return 'quiver://app/newtab.html';
-  }
+  const u = URL.parse(url);
+  if (!u) return CANONICAL_NEW_TAB_URL;
+  const candidate = u.host === 'app' ? url : `quiver://app/${u.host || 'newtab'}.html${u.search}${u.hash}`;
+  return isInternalTabPage(internalPage(candidate)) ? candidate : CANONICAL_NEW_TAB_URL;
 }
 
 export function displayUrl(url: string): string {
@@ -82,9 +80,29 @@ function errorPage(url: string, desc: string): string {
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html).replace(/^%3C!--quiver-error--%3E/, '%3C!--quiver-error--%3E');
 }
 
-export function restrictInternalNavigation(wc: WebContents): void {
+export function restrictInternalNavigation(wc: WebContents, fixedPage?: 'shell' | 'commandbar'): void {
   const guard = (event: { url: string; isMainFrame: boolean; preventDefault(): void }) => {
-    if (!event.isMainFrame || !event.url.startsWith(INTERNAL_ORIGIN)) event.preventDefault();
+    const current = fixedPage ?? internalPage(wc.getURL());
+    if ((!fixedPage && !isInternalTabPage(current)) || !allowsInternalNavigation(event.url, event.isMainFrame, current)) {
+      event.preventDefault();
+    }
+  };
+  wc.on('will-frame-navigate', guard);
+  wc.on('will-redirect', guard);
+}
+
+function restrictWebNavigation(wc: WebContents): void {
+  const guard = (event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>) => {
+    // Only a known local file initiator may follow a renderer-driven local file link.
+    let initiator: string | undefined;
+    if (/^file:/i.test(event.url)) {
+      try {
+        initiator = event.initiator?.url;
+      } catch {
+        // The initiating frame can have been disposed before this event is handled.
+      }
+    }
+    if (!allowsWebNavigation(event.url, initiator)) event.preventDefault();
   };
   wc.on('will-frame-navigate', guard);
   wc.on('will-redirect', guard);
@@ -126,7 +144,6 @@ export class TabManager {
     private readonly boosts: Boosts,
     private readonly onState: (s: ShellState) => void,
     private readonly onShortcut: (a: ShortcutAction) => void,
-    private readonly prepareInternalSession: (partition: string) => void,
     private readonly portableDownloadPath?: string,
   ) {
     boosts.onChange((name, kind, removed) => void this.onBoostChanged(name, kind, removed));
@@ -245,10 +262,7 @@ export class TabManager {
         item.setSaveDialogOptions({ ...item.getSaveDialogOptions(), defaultPath: safeName ? path.join(downloadPath, name) : downloadPath });
       });
     }
-    const allowed = new Set(['fullscreen', 'clipboard-sanitized-write']);
-    ses.setPermissionRequestHandler((_wc, permission, cb) => cb(allowed.has(permission)));
-    ses.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
-    if (partition === INTERNAL_PARTITION) this.prepareInternalSession(partition);
+    if (partition !== INTERNAL_PARTITION) configureSitePermissions(ses, true);
   }
 
   attachShortcuts(wc: WebContents): void {
@@ -275,6 +289,7 @@ export class TabManager {
       },
     });
     if (internal) restrictInternalNavigation(view.webContents);
+    else restrictWebNavigation(view.webContents);
     return view;
   }
 
@@ -424,13 +439,6 @@ export class TabManager {
       if (/^https?:/i.test(url)) this.openTab(url, { spaceId: tab.spaceId });
       return { action: 'deny' };
     });
-    if (!tab.internal) {
-      const guard = (event: { url: string; preventDefault(): void }) => {
-        if (event.url.startsWith('quiver://')) event.preventDefault();
-      };
-      wc.on('will-frame-navigate', guard);
-      wc.on('will-redirect', guard);
-    }
     wc.on('render-process-gone', (_e, details) => {
       if (this.tabs.get(tab.id) !== tab) return;
       const url = this.tabUrl(tab);

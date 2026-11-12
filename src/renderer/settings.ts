@@ -1,4 +1,4 @@
-import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, ShellState } from '../shared/types';
+import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, Settings } from '../shared/types';
 import { readBookmarkExport } from './bookmark-file.js';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -290,11 +290,11 @@ function renderGroups(): void {
 }
 
 (async () => {
-  const s = (await quiver.invoke('state:get')) as ShellState;
-  groups = s.settings.envGroups.map((g) => ({ ...g }));
+  const settings = (await quiver.invoke('settings:get')) as Settings;
+  groups = settings.envGroups.map((g) => ({ ...g }));
   renderGroups();
-  $<HTMLInputElement>('engine').value = s.settings.searchEngine;
-  $<HTMLInputElement>('scan').checked = s.settings.devServerScan;
+  $<HTMLInputElement>('engine').value = settings.searchEngine;
+  $<HTMLInputElement>('scan').checked = settings.devServerScan;
 })();
 
 $('addgroup').addEventListener('click', () => {
