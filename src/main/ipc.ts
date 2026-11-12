@@ -1,13 +1,13 @@
 import { clipboard, ipcMain, Menu, type IpcMainInvokeEvent, type WebContentsView, type WebFrameMain } from 'electron';
 import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
-import { INTERNAL_ORIGIN } from '../shared/constants';
 import { detectEnv } from '../shared/env';
-import { parseCommand, resolveInput } from '../shared/parser';
+import { parseCommand } from '../shared/parser';
 import type { BookmarkLibraryView, CommandCommitResult, CommandMode, EnvGroup, Settings, Suggestion } from '../shared/types';
 import { BookmarkImports } from './bookmark-import';
 import { isValidBoostName, type Boosts } from './boosts';
 import { BookmarkProfileReadError, bookmarkProfileLabel, discoverBookmarkProfiles, readChromiumBookmarkCandidates } from './chromium-bookmarks';
 import type { DevServerWatcher } from './devservers';
+import { internalRole, type InternalPage, type InternalRole } from './internal-access';
 import type { Store } from './store';
 import { displayUrl, type TabManager } from './tabs';
 
@@ -21,6 +21,7 @@ export interface IpcDeps {
 }
 
 const MAX_COMMAND_LENGTH = 65536;
+type AuthorizedInvokeEvent = IpcMainInvokeEvent & { senderFrame: WebFrameMain };
 
 export function sanitizeEnvGroups(input: unknown): EnvGroup[] {
   if (!Array.isArray(input)) return [];
@@ -34,11 +35,23 @@ export function sanitizeEnvGroups(input: unknown): EnvGroup[] {
 export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?: CommandMode) => void; toggleSidebar: () => void } {
   const { tabs, store, boosts, devWatcher, overlay, shell } = d;
 
-  const handle = (channel: string, fn: (e: IpcMainInvokeEvent, ...args: any[]) => unknown) => {
+  const handle = (role: InternalRole, channel: string, fn: (e: AuthorizedInvokeEvent, ...args: any[]) => unknown) => {
     ipcMain.handle(channel, (e, ...args) => {
-      const url = e.senderFrame?.url ?? '';
-      if (e.senderFrame !== e.sender.mainFrame || !url.startsWith(INTERNAL_ORIGIN)) throw new Error('forbidden sender');
-      return fn(e, ...args);
+      const frame = e.senderFrame;
+      if (!frame) throw new Error('forbidden sender');
+      let assignedPage: InternalPage | undefined;
+      if (e.sender === shell.webContents) assignedPage = 'shell';
+      else if (e.sender === overlay.webContents) assignedPage = 'commandbar';
+      else {
+        for (const tab of tabs.tabs.values()) {
+          if (tab.internalPage && e.sender === tab.view.webContents) {
+            assignedPage = tab.internalPage;
+            break;
+          }
+        }
+      }
+      if (internalRole(frame.url, assignedPage, frame === e.sender.mainFrame) !== role) throw new Error('forbidden sender');
+      return fn(e as AuthorizedInvokeEvent, ...args);
     });
   };
 
@@ -79,43 +92,31 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     currentUrl: context.internal ? undefined : context.url,
   });
 
-  const fromOverlay = (e: IpcMainInvokeEvent) => {
-    if (e.sender !== overlay.webContents || new URL(e.senderFrame!.url).pathname !== '/commandbar.html') {
-      throw new Error('forbidden sender');
-    }
-  };
-
-  handle('state:get', () => tabs.snapshot());
+  handle('shell', 'state:get', () => tabs.snapshot());
 
   // tabs
-  handle('tab:new', (_e, url?: string) => {
-    tabs.openTab(typeof url === 'string' && url ? resolveInput(url, store.state.settings.searchEngine) : 'quiver://newtab');
-  });
-  handle('tab:close', (_e, id: number) => tabs.closeTab(Number(id)));
-  handle('tab:activate', (_e, id: number) => tabs.activateTab(Number(id)));
-  handle('tab:back', () => tabs.goBack());
-  handle('tab:forward', () => tabs.goForward());
-  handle('tab:reload', () => tabs.reload());
-  handle('tab:reopen', (e, id: number) => {
-    if (e.sender !== shell.webContents || !Number.isSafeInteger(id)) throw new Error('invalid reopen request');
+  handle('shell', 'tab:close', (_e, id: number) => tabs.closeTab(Number(id)));
+  handle('shell', 'tab:activate', (_e, id: number) => tabs.activateTab(Number(id)));
+  handle('shell', 'tab:back', () => tabs.goBack());
+  handle('shell', 'tab:forward', () => tabs.goForward());
+  handle('shell', 'tab:reload', () => tabs.reload());
+  handle('shell', 'tab:reopen', (_e, id: number) => {
+    if (!Number.isSafeInteger(id)) throw new Error('invalid reopen request');
     tabs.reopenClosedTab(id);
   });
-  handle('tab:retry-crash', (e, id: number) => {
-    if (e.sender !== shell.webContents || !Number.isSafeInteger(id)) throw new Error('invalid retry request');
+  handle('shell', 'tab:retry-crash', (_e, id: number) => {
+    if (!Number.isSafeInteger(id)) throw new Error('invalid retry request');
     tabs.retryCrashedTab(id);
   });
-  handle('recovery:dismiss', (e) => {
-    if (e.sender !== shell.webContents) throw new Error('forbidden sender');
-    tabs.dismissRecovery();
-  });
+  handle('shell', 'recovery:dismiss', () => tabs.dismissRecovery());
 
   // spaces
-  handle('space:create', (_e, name: string, isolated: boolean) => {
+  handle('shell', 'space:create', (_e, name: string, isolated: boolean) => {
     tabs.createSpace(String(name ?? ''), !!isolated);
   });
-  handle('space:rename', (_e, id: string, name: string) => tabs.renameSpace(String(id), String(name)));
-  handle('space:activate', (_e, id: string) => tabs.activateSpace(String(id)));
-  handle('space:menu', (_e, id: string) => {
+  handle('shell', 'space:rename', (_e, id: string, name: string) => tabs.renameSpace(String(id), String(name)));
+  handle('shell', 'space:activate', (_e, id: string) => tabs.activateSpace(String(id)));
+  handle('shell', 'space:menu', (_e, id: string) => {
     const menu = Menu.buildFromTemplate([
       { label: 'Rename Space', click: () => shell.webContents.send('space:rename-start', id) },
       { type: 'separator' },
@@ -125,9 +126,9 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   });
 
   // chrome
-  handle('sidebar:toggle', () => toggleSidebar());
-  handle('preview:toggle', () => tabs.setPreview(!tabs.preview));
-  handle('env:switch', (_e, target?: 'LOCAL' | 'STAGING' | 'PROD') => tabs.switchEnvironment(target));
+  handle('shell', 'sidebar:toggle', () => toggleSidebar());
+  handle('shell', 'preview:toggle', () => tabs.setPreview(!tabs.preview));
+  handle('shell', 'env:switch', (_e, target?: 'LOCAL' | 'STAGING' | 'PROD') => tabs.switchEnvironment(target));
 
   function toggleSidebar() {
     store.state.settings.sidebarCollapsed = !store.state.settings.sidebarCollapsed;
@@ -137,16 +138,13 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   }
 
   // command bar
-  handle('cmd:open', (e, text?: string, mode?: CommandMode, invoker?: unknown) => {
-    if (e.sender !== shell.webContents) throw new Error('forbidden sender');
+  handle('shell', 'cmd:open', (_e, text?: string, mode?: CommandMode, invoker?: unknown) => {
     openCommandBar(text, mode === 'new' ? 'new' : 'current', invoker === 'address' || invoker === 'new-tab' ? invoker : undefined);
   });
-  handle('cmd:close', (e, id: number) => {
-    fromOverlay(e);
+  handle('commandbar', 'cmd:close', (_e, id: number) => {
     if (command?.id === id) closeOverlay(true);
   });
-  handle('cmd:suggest', (e, id: number, request: number, text: string) => {
-    fromOverlay(e);
+  handle('commandbar', 'cmd:suggest', (_e, id: number, request: number, text: string) => {
     if (!command || command.id !== id || !Number.isSafeInteger(request) || request <= command.request) return [];
     command.request = request;
     command.suggestions = [];
@@ -156,8 +154,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     command.suggestions = parseCommand(text, parseContext(context));
     return command.suggestions.map((suggestion) => commandChoice(suggestion, context));
   });
-  handle('cmd:commit', (e, id: number, request: number, index: number, alternate: boolean): CommandCommitResult => {
-    fromOverlay(e);
+  handle('commandbar', 'cmd:commit', (_e, id: number, request: number, index: number, alternate: boolean): CommandCommitResult => {
     if (!command?.context || command.id !== id || command.request !== request || !Number.isSafeInteger(index)) return 'stale';
     const suggestion = command.suggestions[index];
     if (!suggestion || suggestion.action.type === 'noop') return 'unavailable';
@@ -190,15 +187,13 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     closeOverlay(false);
     return 'done';
   });
-  handle('cmd:run', (e, action: unknown) => {
-    if (e.sender !== shell.webContents) throw new Error('forbidden sender');
+  handle('shell', 'cmd:run', (_e, action: unknown) => {
     const choice = action as Partial<{ type: string; page: string }> | null;
     if (choice?.type === 'internal' && (choice.page === 'boosts' || choice.page === 'settings')) tabs.navigate(`quiver://${choice.page}`);
   });
-  handle('clipboard:write', (_e, text: string) => clipboard.writeText(String(text).slice(0, 100000)));
-
   // settings
-  handle('settings:set', (_e, patch: Partial<Settings>) => {
+  handle('settings', 'settings:get', () => store.state.settings);
+  handle('settings', 'settings:set', (_e, patch: Partial<Settings>) => {
     const s = store.state.settings;
     if (patch.envGroups !== undefined) s.envGroups = sanitizeEnvGroups(patch.envGroups);
     if (typeof patch.searchEngine === 'string' && /^https?:\/\/.+%s/.test(patch.searchEngine)) s.searchEngine = patch.searchEngine;
@@ -213,11 +208,6 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     tabs.emit();
   });
 
-  const fromSettings = (event: IpcMainInvokeEvent) => {
-    const frame = event.senderFrame;
-    if (!frame || new URL(frame.url).pathname !== '/settings.html') throw new Error('forbidden sender');
-    return frame;
-  };
   const imports = new BookmarkImports<WebFrameMain>(store.state, () => {
     const saved = store.flush();
     if (!saved) store.save(); // Retain any unrelated pending settings or session writes after rollback.
@@ -247,16 +237,12 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     return imports.begin(frame);
   };
   const browserData = process.platform === 'win32' ? process.env.LOCALAPPDATA ?? '' : '';
-  handle('bookmarks:list', (event): BookmarkLibraryView => {
-    fromSettings(event);
+  handle('settings', 'bookmarks:list', (): BookmarkLibraryView => {
     return { bookmarks: store.state.bookmarks, undo: imports.getUndo() };
   });
-  handle('bookmarks:profiles', (event) => {
-    fromSettings(event);
-    return discoverBookmarkProfiles(browserData);
-  });
-  handle('bookmarks:review-profile', async (event, browser: unknown, profile: unknown) => {
-    const frame = fromSettings(event);
+  handle('settings', 'bookmarks:profiles', () => discoverBookmarkProfiles(browserData));
+  handle('settings', 'bookmarks:review-profile', async (event, browser: unknown, profile: unknown) => {
+    const frame = event.senderFrame;
     const generation = beginBookmarkReview(event, frame);
     try {
       const source = bookmarkProfileLabel(browser, profile);
@@ -268,48 +254,45 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       return { error: error instanceof BookmarkProfileReadError ? error.message : 'Quiver could not read this browser profile.' };
     }
   });
-  handle('bookmarks:review-file', (event, name: unknown, input: unknown, scanLimited: unknown) => {
-    const frame = fromSettings(event);
+  handle('settings', 'bookmarks:review-file', (event, name: unknown, input: unknown, scanLimited: unknown) => {
+    const frame = event.senderFrame;
     const generation = beginBookmarkReview(event, frame);
     const file = typeof name === 'string' ? name.slice(0, 260).split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 120) : '';
     return imports.finish(frame, generation, file || 'HTML bookmark export', input, scanLimited === true);
   });
-  handle('bookmarks:cancel-review', (event) => clearBookmarkReview(fromSettings(event)));
-  handle('bookmarks:confirm', (event, id: unknown) => {
-    const frame = fromSettings(event);
+  handle('settings', 'bookmarks:cancel-review', (event) => clearBookmarkReview(event.senderFrame));
+  handle('settings', 'bookmarks:confirm', (event, id: unknown) => {
+    const frame = event.senderFrame;
     const result = imports.commit(frame, id);
     if ('added' in result) clearBookmarkReview(frame);
     return result;
   });
-  handle('bookmarks:undo', (event, id: unknown) => {
-    fromSettings(event);
+  handle('settings', 'bookmarks:undo', (_event, id: unknown) => {
     const result = imports.undo(id);
     if ('removed' in result && trackedBookmarkReview) clearBookmarkReview(trackedBookmarkReview.frame);
     return result;
   });
-  handle('bookmarks:open', (event, url: unknown) => {
-    fromSettings(event);
+  handle('settings', 'bookmarks:open', (_event, url: unknown) => {
     const bookmark = store.state.bookmarks.find((item) => item.url === url);
     if (bookmark) tabs.openTab(bookmark.url);
   });
 
   // boosts
-  handle('boost:list', () => boosts.list());
-  handle('boost:read', (_e, name: string) => boosts.read(String(name)));
-  handle('boost:save', (_e, name: string, content: string) => boosts.save(String(name), String(content)));
-  handle('boost:create', (_e, name: string) => boosts.create(String(name)));
-  handle('boost:delete', (_e, name: string) => boosts.remove(String(name)));
-  handle('boost:dir', () => boosts.dir);
+  handle('boosts', 'boost:list', () => boosts.list());
+  handle('boosts', 'boost:read', (_e, name: string) => boosts.read(String(name)));
+  handle('boosts', 'boost:save', (_e, name: string, content: string) => boosts.save(String(name), String(content)));
+  handle('boosts', 'boost:create', (_e, name: string) => boosts.create(String(name)));
+  handle('boosts', 'boost:delete', (_e, name: string) => boosts.remove(String(name)));
+  handle('boosts', 'boost:dir', () => boosts.dir);
 
   // dev servers
-  handle('devserver:open', (_e, url: string) => {
+  handle('shell', 'devserver:open', (_e, url: string) => {
     const existing = [...tabs.tabs.values()].find((t) => !t.internal && t.spaceId === tabs.activeSpaceId && tabs.tabUrl(t).replace(/\/$/, '') === String(url).replace(/\/$/, ''));
     if (existing) tabs.activateTab(existing.id);
     else tabs.navigate(String(url), { newTab: true });
   });
-  handle('devserver:refresh', () => store.state.settings.devServerScan && devWatcher.tick());
-  handle('devserver:retry', (e, tabId: unknown, url: unknown) => {
-    if (e.sender !== shell.webContents) throw new Error('forbidden sender');
+  handle('shell', 'devserver:refresh', () => store.state.settings.devServerScan && devWatcher.tick());
+  handle('shell', 'devserver:retry', (_e, tabId: unknown, url: unknown) => {
     if (typeof tabId !== 'number' || !Number.isSafeInteger(tabId) || typeof url !== 'string') return false;
     return tabs.retryDevServer(tabId, url);
   });

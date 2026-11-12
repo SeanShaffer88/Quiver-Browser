@@ -8,7 +8,7 @@ Quiver keeps settings, tabs and Boosts on this device and has no account or tele
 
 Electron supplies Chromium, native-composited tab views, persistent cookie partitions, and phone emulation through the DevTools protocol. TypeScript runs the desktop shell and its local developer tools. This keeps the Windows build on Node.js and npm. The package includes the Electron runtime.
 
-Every view enables context isolation and sandboxing and disables Node.js integration. Quiver pages use a restrictive Content Security Policy. The preload and allowed IPC channels are reserved for Quiver’s own top-level pages.
+Every view enables context isolation and sandboxing and disables Node.js integration. Quiver pages use a restrictive Content Security Policy. Each privileged command is available only to the top-level Quiver page that needs it. Regular tabs and Phone Preview share the same navigation and site permission rules. Quiver denies access to camera, microphone, location, notifications, and external app protocols.
 
 ## Prerequisites (build)
 
