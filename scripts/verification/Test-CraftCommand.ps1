@@ -348,7 +348,10 @@ try {
             @{ id = 'space-isolated'; name = 'Isolated Space'; color = '#ff7a59'; isolated = $true }
         )
         activeSpaceId = 'space-main'
-        tabsBySpace = @{ 'space-main' = @(@{ url = $initial }); 'space-isolated' = @(@{ url = $isolatedTab }) }
+        tabsBySpace = @{
+            'space-main' = @(@{ url = $initial })
+            'space-isolated' = @(@{ url = $isolatedTab; title = 'Saved isolated dashboard' })
+        }
         activeIndexBySpace = @{ 'space-main' = 0; 'space-isolated' = 0 }
         settings = @{
             envGroups = @(@{ name = 'Fixture'; local = ''; staging = $staging; prod = $prod })
@@ -470,6 +473,9 @@ try {
     Type-Command 'tab no fixture matches this'
     Confirm-Preview 'No matching open tabs'
     Press-Key 0x0d
+    Confirm-NoRequest $requestsBefore $altNewTab 3
+    Type-Command 'tab saved isolated dashboard'
+    Confirm-Preview 'Switch to open tab' 'Saved isolated dashboard' 'Existing tab · Space: Isolated Space · STAGING'
     Confirm-NoRequest $requestsBefore $altNewTab 3
     Type-Command 'tab 127.0.0.1'
     Confirm-Preview 'Switch to open tab' '127.0.0.1' 'Existing tab · Space: Fixture Space'

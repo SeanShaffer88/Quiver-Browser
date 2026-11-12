@@ -24,6 +24,7 @@ import type { Store } from './store';
 import {
   CANONICAL_NEW_TAB_URL,
   hasSavedNewTabPlaceholder,
+  normalizeTabTitle,
   rememberClosed,
   restorableUrl,
   restoreRecentlyClosed,
@@ -46,6 +47,7 @@ interface Tab {
   crashUrl: string | null;
   errorFor: string | null;
   title: string;
+  titleIsExplicit: boolean;
   favicon: string;
   loading: boolean;
   errors: number;
@@ -332,6 +334,7 @@ export class TabManager {
       crashUrl: null,
       errorFor: null,
       title: '',
+      titleIsExplicit: false,
       favicon: '',
       loading: false,
       errors: 0,
@@ -389,8 +392,9 @@ export class TabManager {
     const wc = tab.view.webContents;
     this.attachShortcuts(wc);
     const touch = () => this.emit();
-    wc.on('page-title-updated', (_e, title) => {
+    wc.on('page-title-updated', (_e, title, explicitSet) => {
       tab.title = title;
+      tab.titleIsExplicit = explicitSet;
       touch();
       this.persist();
     });
@@ -421,6 +425,7 @@ export class TabManager {
       if (!isMainFrame) return;
       tab.commandRevision++;
       if (isSameDocument) return;
+      tab.titleIsExplicit = false;
       tab.navigation++;
       tab.cssKeys.clear();
       tab.tsBoosts.clear();
@@ -1045,7 +1050,7 @@ export class TabManager {
     for (const space of this.spaces) {
       const list = [...this.tabs.values()]
         .filter((tab) => tab.spaceId === space.id)
-        .map((tab) => ({ id: tab.id, url: this.tabUrl(tab) }));
+        .map((tab) => ({ id: tab.id, url: this.tabUrl(tab), title: tab.titleIsExplicit ? tab.title : undefined }));
       if (list.length === 1 && list[0].url === CANONICAL_NEW_TAB_URL) soleNewTabs.set(space.id, list[0].id);
       const { tabs, activeIndex } = snapshotSpace(list, this.lastActive[space.id]);
       st.tabsBySpace[space.id] = tabs;
@@ -1070,8 +1075,10 @@ export class TabManager {
         const { entries, activeIndex } = restoreSelection(saved, activeIndexBySpace?.[space.id] ?? 0);
         if (entries.length) restored.spaces++;
         restored.tabs += entries.length;
-        entries.forEach(({ url }, index) => {
+        entries.forEach(({ url, title }, index) => {
           const tab = this.openTab(url, { spaceId: space.id, activate: false, lazy: true });
+          tab.title = normalizeTabTitle(title, url);
+          tab.titleIsExplicit = !!tab.title;
           if (index === activeIndex) this.lastActive[space.id] = tab.id;
           if (hasSavedNewTabPlaceholder(saved)) soleNewTabs.set(space.id, tab.id);
         });

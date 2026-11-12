@@ -1,4 +1,4 @@
-type SessionEntry = { url: string };
+type SessionEntry = { url: string; title?: string };
 type LiveEntry = SessionEntry & { id: number };
 export type ClosedTab = LiveEntry & { title: string; spaceId: string; index: number; placeholderId?: number };
 export type PersistedClosedTab = Omit<ClosedTab, 'id' | 'placeholderId'> & { replacePlaceholder?: true };
@@ -41,9 +41,19 @@ export function restoreSelection<T extends SessionEntry>(entries: readonly T[], 
 export function snapshotSpace(entries: readonly LiveEntry[], activeId: number | undefined) {
   const selected = entries.findIndex((entry) => entry.id === activeId);
   const { entries: available, activeIndex } = restoreSelection(entries, selected);
-  return { tabs: available.map(({ url }) => ({ url })), activeIndex };
+  const tabs = available.map(({ url, title }) => {
+    const label = normalizeTabTitle(title, url);
+    return label ? { url, title: label } : { url };
+  });
+  return { tabs, activeIndex };
 }
 
+export function normalizeTabTitle(value: unknown, url: string): string {
+  if (typeof value !== 'string') return '';
+  const title = value.trim();
+  if (title === url || /^(?:https?|file|data|about|quiver):/i.test(title)) return '';
+  return title.slice(0, 200).replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, ' ').trim();
+}
 function isNewTab(url: string): boolean {
   return /^quiver:\/\/(?:app\/newtab\.html|newtab)(?:[?#]|$)/.test(url);
 }

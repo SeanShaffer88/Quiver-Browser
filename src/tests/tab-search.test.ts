@@ -10,7 +10,7 @@ const context: CommandContext = {
 };
 const url = 'https://user:password@prod.example:8443/dashboard?token=secret#private';
 const groups = [{ name: 'App', local: '', staging: 'https://staging.example', prod: 'https://prod.example:8443' }];
-const tab = { id: 4, spaceId: 'isolated', title: 'Orders dashboard', commandRevision: 2 };
+const tab = { id: 4, spaceId: 'isolated', title: 'Orders dashboard', titleIsExplicit: true, commandRevision: 2 };
 const target = tabCommandTarget(tab, url, 'Isolated', groups);
 
 test('tab search reserves only the complete command prefix', () => {
@@ -31,6 +31,8 @@ test('search uses titles and hostnames, prioritizes the active Space, and limits
   assert.deepEqual(results('no matches', []), ['noop']);
   const many = Array.from({ length: 25 }, (_, index) => ({ ...target, id: index + 2 }));
   assert.deepEqual(results('', [...many, sameSpace]), [1, ...many.slice(0, 19).map(({ id }) => id)]);
+  const current = Array.from({ length: 25 }, (_, index) => ({ ...sameSpace, id: index + 10 }));
+  assert.deepEqual(results('', [...current, target]), [...current.slice(0, 19).map(({ id }) => id), target.id]);
 });
 
 test('the result previews the existing tab and sends only display metadata to the command bar', () => {
@@ -46,6 +48,7 @@ test('the result previews the existing tab and sends only display metadata to th
   assert.equal(choice.alternative, undefined);
   assert.doesNotMatch(JSON.stringify(choice), /password|dashboard\?|token=|#private/);
   assert.equal(tabCommandTarget({ ...tab, title: url }, url, 'Isolated', groups).title, 'prod.example:8443');
+  assert.equal(tabCommandTarget({ ...tab, titleIsExplicit: false }, url, 'Isolated', groups).title, 'prod.example:8443');
   const [noMatch] = tabSearchSuggestions('missing', context.spaceId, [target]);
   assert.equal(commandChoice(noMatch, context).preview.canRun, false);
 });

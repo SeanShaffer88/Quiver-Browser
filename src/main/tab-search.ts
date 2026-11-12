@@ -1,5 +1,6 @@
 import { badgeFor } from '../shared/env';
 import type { EnvGroup, Suggestion, TabCommandTarget } from '../shared/types';
+import { normalizeTabTitle } from './session-recovery';
 
 const RESULT_LIMIT = 20;
 
@@ -13,7 +14,7 @@ export function tabSearchQuery(text: string): string | undefined {
 }
 
 export function tabCommandTarget(
-  tab: { id: number; spaceId: string; title: string; commandRevision: number; internalPage?: 'newtab' | 'settings' | 'boosts' },
+  tab: { id: number; spaceId: string; title: string; titleIsExplicit: boolean; commandRevision: number; internalPage?: 'newtab' | 'settings' | 'boosts' },
   url: string,
   spaceName: string,
   envGroups: EnvGroup[],
@@ -22,8 +23,7 @@ export function tabCommandTarget(
   const host = parsed?.protocol === 'http:' || parsed?.protocol === 'https:' ? parsed.host.slice(0, 260) : '';
   const fallback = tab.internalPage === 'settings' ? 'Settings' : tab.internalPage === 'boosts' ? 'Boosts'
     : tab.internalPage === 'newtab' ? 'New Tab' : parsed?.protocol === 'file:' ? 'Local file' : host || 'Untitled tab';
-  // Chromium can use the address as a title when a document supplies none.
-  const title = tab.title === url || /^(?:https?|file|data|about|quiver):/i.test(tab.title.trim()) ? '' : safeLabel(tab.title);
+  const title = tab.titleIsExplicit ? normalizeTabTitle(tab.title, url) : '';
   return {
     id: tab.id, spaceId: tab.spaceId, spaceName: safeLabel(spaceName), revision: tab.commandRevision,
     url, title: title || fallback, host, environment: host ? badgeFor(url, envGroups) : null,
@@ -38,9 +38,11 @@ export function tabSearchSuggestions(query: string, activeSpaceId: string, targe
     if (!matches) continue;
     const group = target.spaceId === activeSpaceId ? current : other;
     if (group.length < RESULT_LIMIT) group.push({ kind: 'tab', label: target.title, action: { type: 'activate-tab', target } });
-    if (current.length === RESULT_LIMIT) break;
+    if (current.length === RESULT_LIMIT && other.length) break;
   }
-  const results = current.concat(other).slice(0, RESULT_LIMIT);
+  // A busy current Space should still leave room for a matching tab elsewhere.
+  const currentLimit = other.length ? RESULT_LIMIT - 1 : RESULT_LIMIT;
+  const results = current.slice(0, currentLimit).concat(other).slice(0, RESULT_LIMIT);
   return results.length ? results : [{ kind: 'tab', label: 'No matching open tabs', action: { type: 'noop' } }];
 }
 
