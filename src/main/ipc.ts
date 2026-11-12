@@ -1,7 +1,9 @@
 import { clipboard, ipcMain, Menu, type IpcMainInvokeEvent, type WebContentsView } from 'electron';
+import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
 import { INTERNAL_ORIGIN } from '../shared/constants';
+import { detectEnv } from '../shared/env';
 import { parseCommand, resolveInput } from '../shared/parser';
-import type { BookmarkImportResult, EnvGroup, Settings, Suggestion, SuggestionAction } from '../shared/types';
+import type { BookmarkImportResult, CommandCommitResult, CommandMode, EnvGroup, Settings, Suggestion } from '../shared/types';
 import { mergeBookmarks } from './bookmarks';
 import { isValidBoostName, type Boosts } from './boosts';
 import { discoverBookmarkProfiles, readChromiumBookmarks } from './chromium-bookmarks';
@@ -18,6 +20,8 @@ export interface IpcDeps {
   shell: WebContentsView;
 }
 
+const MAX_COMMAND_LENGTH = 65536;
+
 export function sanitizeEnvGroups(input: unknown): EnvGroup[] {
   if (!Array.isArray(input)) return [];
   const s = (v: unknown) => (typeof v === 'string' ? v.trim().slice(0, 300) : '');
@@ -27,7 +31,7 @@ export function sanitizeEnvGroups(input: unknown): EnvGroup[] {
     .filter((g) => g.local || g.staging || g.prod);
 }
 
-export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?: 'new' | 'current') => void; toggleSidebar: () => void } {
+export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?: CommandMode) => void; toggleSidebar: () => void } {
   const { tabs, store, boosts, devWatcher, overlay, shell } = d;
 
   const handle = (channel: string, fn: (e: IpcMainInvokeEvent, ...args: any[]) => unknown) => {
@@ -38,35 +42,44 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     });
   };
 
-  const closeOverlay = () => tabs.setOverlayOpen(false);
+  let nextCommandId = 0;
+  let command: {
+    id: number;
+    mode: CommandMode;
+    request: number;
+    context?: CommandContext;
+    suggestions: Suggestion[];
+  } | null = null;
 
-  const runAction = (action: SuggestionAction, mode: 'new' | 'current') => {
-    switch (action.type) {
-      case 'navigate':
-        tabs.navigate(action.url, { newTab: mode === 'new' });
-        closeOverlay();
-        break;
-      case 'copy':
-        clipboard.writeText(action.text);
-        closeOverlay();
-        break;
-      case 'boost':
-        if (isValidBoostName(action.name)) {
-          boosts.create(action.name);
-          tabs.navigate(`quiver://boosts?file=${encodeURIComponent(action.name)}`);
-        }
-        closeOverlay();
-        break;
-      case 'env':
-        tabs.switchEnvironment(action.target);
-        closeOverlay();
-        break;
-      case 'internal':
-        tabs.navigate(`quiver://${action.page}`);
-        closeOverlay();
-        break;
-      case 'noop':
-        break;
+  const closeOverlay = (restoreFocus: boolean) => {
+    command = null;
+    tabs.setOverlayOpen(false, restoreFocus);
+  };
+
+  const commandContext = (mode: CommandMode): CommandContext => {
+    const tab = tabs.activeTab;
+    const spaceId = tabs.activeSpaceId;
+    const url = tab ? tabs.tabUrl(tab) : '';
+    return {
+      spaceId,
+      spaceName: tabs.spaces.find((space) => space.id === spaceId)?.name ?? '',
+      tabId: tab?.id ?? null,
+      url,
+      internal: tab?.internal ?? false,
+      mode,
+      environment: tab && !tab.internal ? detectEnv(url, store.state.settings.envGroups)?.env : undefined,
+    };
+  };
+
+  const parseContext = (context: CommandContext) => ({
+    searchEngine: store.state.settings.searchEngine,
+    envGroups: store.state.settings.envGroups,
+    currentUrl: context.internal ? undefined : context.url,
+  });
+
+  const fromOverlay = (e: IpcMainInvokeEvent) => {
+    if (e.sender !== overlay.webContents || new URL(e.senderFrame!.url).pathname !== '/commandbar.html') {
+      throw new Error('forbidden sender');
     }
   };
 
@@ -110,17 +123,64 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   }
 
   // command bar
-  handle('cmd:open', (_e, text?: string, mode?: 'new' | 'current') => openCommandBar(text, mode));
-  handle('cmd:close', () => closeOverlay());
-  handle('cmd:suggest', (_e, text: string): Suggestion[] => {
-    const cur = tabs.activeTab;
-    return parseCommand(String(text ?? ''), {
-      searchEngine: store.state.settings.searchEngine,
-      envGroups: store.state.settings.envGroups,
-      currentUrl: cur && !cur.internal ? tabs.tabUrl(cur) : undefined,
-    });
+  handle('cmd:open', (e, text?: string, mode?: CommandMode, invoker?: unknown) => {
+    if (e.sender !== shell.webContents) throw new Error('forbidden sender');
+    openCommandBar(text, mode === 'new' ? 'new' : 'current', invoker === 'address' || invoker === 'new-tab' ? invoker : undefined);
   });
-  handle('cmd:run', (_e, action: SuggestionAction, mode: 'new' | 'current') => runAction(action, mode === 'new' ? 'new' : 'current'));
+  handle('cmd:close', (e, id: number) => {
+    fromOverlay(e);
+    if (command?.id === id) closeOverlay(true);
+  });
+  handle('cmd:suggest', (e, id: number, request: number, text: string) => {
+    fromOverlay(e);
+    if (!command || command.id !== id || !Number.isSafeInteger(request) || request <= command.request) return [];
+    command.request = request;
+    command.suggestions = [];
+    if (typeof text !== 'string' || text.length > MAX_COMMAND_LENGTH) return [];
+    const context = commandContext(command.mode);
+    command.context = context;
+    command.suggestions = parseCommand(text, parseContext(context));
+    return command.suggestions.map((suggestion) => commandChoice(suggestion, context));
+  });
+  handle('cmd:commit', (e, id: number, request: number, index: number, alternate: boolean): CommandCommitResult => {
+    fromOverlay(e);
+    if (!command?.context || command.id !== id || command.request !== request || !Number.isSafeInteger(index)) return 'stale';
+    const suggestion = command.suggestions[index];
+    if (!suggestion || suggestion.action.type === 'noop') return 'unavailable';
+    const { action } = suggestion;
+    const context = commandContext(command.mode);
+    if (!commandContextMatches(command.context, context, action, parseContext(context))) return 'stale';
+    const choice = commandChoice(suggestion, context);
+    if (alternate === true && !choice.alternative) return 'unavailable';
+    const preview = alternate === true ? choice.alternative : choice.preview;
+    switch (action.type) {
+      case 'navigate':
+        tabs.navigate(action.url, { newTab: preview?.tab === 'new' });
+        break;
+      case 'copy':
+        clipboard.writeText(action.text);
+        closeOverlay(true);
+        return 'done';
+      case 'boost':
+        if (!isValidBoostName(action.name)) return 'unavailable';
+        boosts.create(action.name);
+        tabs.navigate(`quiver://boosts?file=${encodeURIComponent(action.name)}`);
+        break;
+      case 'env':
+        tabs.navigate(action.url);
+        break;
+      case 'internal':
+        tabs.navigate(`quiver://${action.page}`);
+        break;
+    }
+    closeOverlay(false);
+    return 'done';
+  });
+  handle('cmd:run', (e, action: unknown) => {
+    if (e.sender !== shell.webContents) throw new Error('forbidden sender');
+    const choice = action as Partial<{ type: string; page: string }> | null;
+    if (choice?.type === 'internal' && (choice.page === 'boosts' || choice.page === 'settings')) tabs.navigate(`quiver://${choice.page}`);
+  });
   handle('clipboard:write', (_e, text: string) => clipboard.writeText(String(text).slice(0, 100000)));
 
   // settings
@@ -199,11 +259,16 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   });
   handle('devserver:refresh', () => devWatcher.tick());
 
-  function openCommandBar(text?: string, mode: 'new' | 'current' = 'current') {
+  function openCommandBar(text?: string, mode: CommandMode = 'current', invoker?: 'address' | 'new-tab') {
     const cur = tabs.activeTab;
     const prefill = typeof text === 'string' ? text : cur && !cur.internal ? displayUrl(tabs.tabUrl(cur)) : '';
-    tabs.setOverlayOpen(true);
-    overlay.webContents.send('cmd:opened', { text: prefill, mode });
+    command = { id: ++nextCommandId, mode, request: 0, suggestions: [] };
+    tabs.setOverlayOpen(true, false, invoker);
+    const tooLong = prefill.length > MAX_COMMAND_LENGTH;
+    overlay.webContents.send('cmd:opened', {
+      id: command.id, mode, text: tooLong ? '' : prefill, maxInputLength: MAX_COMMAND_LENGTH,
+      message: tooLong ? 'This address is too long to edit here. Enter a shorter command.' : undefined,
+    });
   }
 
   return { openCommandBar, toggleSidebar };

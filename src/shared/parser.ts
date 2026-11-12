@@ -1,6 +1,6 @@
 import { decodeJwt, decodeUnix, looksLikeJwt, relativeTime } from './decoders';
 import { DEFAULT_SEARCH } from './constants';
-import { detectEnv, isLocalHost, switchEnv } from './env';
+import { detectEnv, isLocalHost, resolveEnvironment } from './env';
 import type { EnvBadge, ParseContext, Suggestion } from './types';
 
 const enc = encodeURIComponent;
@@ -12,9 +12,13 @@ export function searchUrl(template: string, q: string): string {
 
 /** Turn free text into a URL: explicit URL, host-like string, :port, or a web search. */
 export function resolveInput(raw: string, searchEngine: string): string {
+  return resolveAddress(raw) ?? searchUrl(searchEngine, raw.trim());
+}
+
+function resolveAddress(raw: string): string | null {
   const t = raw.trim();
   if (!t) return 'about:blank';
-  if (/^quiver:\/\//i.test(t)) return t;
+  if (/^quiver:\/\//i.test(t)) return 'quiver://' + t.slice('quiver://'.length);
   if (/^(https?|file|about|data):/i.test(t)) return t;
   if (/^:\d{2,5}(\/.*)?$/.test(t)) return `http://localhost${t}`;
   if (!/\s/.test(t)) {
@@ -23,7 +27,7 @@ export function resolveInput(raw: string, searchEngine: string): string {
     if (/^\d{1,3}(\.\d{1,3}){3}(:\d+)?([/?#].*)?$/.test(t)) return `http://${t}`;
     if (/^([a-z0-9-]+\.)+[a-z]{2,}(:\d+)?([/?#].*)?$/i.test(t)) return `https://${t}`;
   }
-  return searchUrl(searchEngine, t);
+  return null;
 }
 
 function nav(kind: string, label: string, url: string, detail?: string): Suggestion {
@@ -152,15 +156,23 @@ function envSuggestions(rest: string, ctx: ParseContext): Suggestion[] {
   }
   const want = rest.trim().toLowerCase();
   const map: Record<string, EnvBadge> = { local: 'LOCAL', localhost: 'LOCAL', dev: 'LOCAL', stage: 'STAGING', staging: 'STAGING', prod: 'PROD', production: 'PROD' };
-  const targets: (EnvBadge | undefined)[] = want && map[want] ? [map[want]] : want ? [] : [undefined];
+  const target = Object.hasOwn(map, want) ? map[want] : undefined;
+  const targets: (EnvBadge | undefined)[] = target ? [target] : [undefined];
+  if (want && !target) {
+    return [{ kind: 'env', label: 'No matching environment', detail: 'Try env local, env staging, or env prod', action: { type: 'noop' } }];
+  }
   if (!want) targets.push('LOCAL', 'STAGING', 'PROD');
   const out: Suggestion[] = [];
   const seen = new Set<string>();
   for (const t of targets) {
-    const url = switchEnv(cur, ctx.envGroups, t);
-    if (!url || seen.has(url) || url === cur) continue;
-    seen.add(url);
-    out.push({ kind: 'env', label: t ? `Jump to ${t}` : 'Jump to next environment', detail: url, action: { type: 'env', target: t } });
+    const destination = resolveEnvironment(cur, ctx.envGroups, t);
+    if (!destination || seen.has(destination.url) || destination.url === cur) continue;
+    seen.add(destination.url);
+    out.push({ kind: 'env', label: `Switch to ${destination.target}`, detail: destination.url, action: { type: 'env', ...destination } });
+  }
+  if (!out.length && target) {
+    const label = target === m.env ? `Already in ${target}` : `No ${target} URL configured`;
+    return [{ kind: 'env', label, detail: 'Check Settings → Environments or try another command', action: { type: 'noop' } }];
   }
   return out.length ? out : [{ kind: 'env', label: 'No other environment configured for this group', action: { type: 'noop' } }];
 }
@@ -206,7 +218,8 @@ export function parseCommand(input: string, ctx: ParseContext): Suggestion[] {
       break;
   }
 
-  const url = resolveInput(text, ctx.searchEngine);
-  const isSearch = url.startsWith(ctx.searchEngine.split('%s')[0]) && url !== text && !/^https?:\/\//i.test(text);
-  return [nav(isSearch ? 'search' : 'url', isSearch ? `Search: ${text}` : `Go to ${url}`, url)];
+  const url = resolveAddress(text);
+  return url
+    ? [nav('url', `Go to ${url}`, url)]
+    : [nav('search', `Search: ${text}`, searchUrl(ctx.searchEngine, text))];
 }

@@ -72,7 +72,7 @@ export type SuggestionAction =
   | { type: 'navigate'; url: string }
   | { type: 'copy'; text: string }
   | { type: 'boost'; name: string }
-  | { type: 'env'; target?: EnvBadge }
+  | { type: 'env'; target: EnvBadge; url: string }
   | { type: 'internal'; page: 'boosts' | 'settings' }
   | { type: 'noop' };
 
@@ -82,6 +82,37 @@ export interface Suggestion {
   detail?: string;
   action: SuggestionAction;
 }
+
+export type CommandMode = 'new' | 'current';
+
+export interface CommandOpen {
+  id: number;
+  text: string;
+  mode: CommandMode;
+  maxInputLength: number;
+  message?: string;
+}
+
+export interface CommandPreview {
+  title: string;
+  destination?: string;
+  space?: string;
+  tab?: CommandMode;
+  environment?: EnvBadge;
+  source?: EnvBadge;
+  canRun: boolean;
+}
+
+export interface CommandChoice {
+  kind: string;
+  label: string;
+  detail?: string;
+  accessibleLabel: string;
+  preview: CommandPreview;
+  alternative?: CommandPreview;
+}
+
+export type CommandCommitResult = 'done' | 'stale' | 'unavailable';
 
 export interface BoostFileInfo {
   name: string;

@@ -21,6 +21,22 @@ const toolbar = document.getElementById('toolbar')!;
 let state: ShellState | null = null;
 let addingSpace = false;
 let renamingSpace: string | null = null;
+let lastShellFocus: string | undefined;
+
+function focusShellControl(key?: string): boolean {
+  if (!key) return false;
+  const control = document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`);
+  if (!control || !control.getClientRects().length || control.matches(':disabled')) return false;
+  control.focus({ preventScroll: true });
+  return document.activeElement === control;
+}
+
+document.addEventListener('focusin', (event) => {
+  if (event.target instanceof HTMLElement && event.target.dataset.focusKey) lastShellFocus = event.target.dataset.focusKey;
+});
+quiver.on('cmd:restore-focus', (key: unknown) => {
+  if (!focusShellControl(typeof key === 'string' ? key : lastShellFocus)) focusShellControl('address');
+});
 
 const ICON = {
   back: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg>',
@@ -34,7 +50,7 @@ const ICON = {
 };
 
 function icon(svg: string, label: string, onClick: () => void, extra: Record<string, any> = {}): HTMLButtonElement {
-  const b = h('button', { class: 'icon-btn' + (extra.on ? ' on' : ''), title: label, 'aria-label': label, disabled: extra.disabled, onClick });
+  const b = h('button', { class: 'icon-btn' + (extra.on ? ' on' : ''), title: label, 'aria-label': label, disabled: extra.disabled, dataset: { focusKey: label }, onClick });
   b.innerHTML = svg;
   return b;
 }
@@ -45,7 +61,7 @@ function renderSpaces(s: ShellState): HTMLElement {
   const wrap = h('div', { class: 'spaces', role: 'tablist', 'aria-label': 'Spaces' });
   for (const sp of s.spaces) {
     if (renamingSpace === sp.id) {
-      const input = h('input', { class: 'space-edit', value: sp.name, 'aria-label': 'Rename space', maxLength: 40 });
+      const input = h('input', { class: 'space-edit', value: sp.name, 'aria-label': 'Rename space', maxLength: 40, dataset: { focusKey: `rename-${sp.id}` } });
       const finish = (save: boolean) => {
         renamingSpace = null;
         if (save && input.value.trim()) void call('space:rename', sp.id, input.value);
@@ -71,6 +87,7 @@ function renderSpaces(s: ShellState): HTMLElement {
         class: 'space' + (sp.id === s.activeSpaceId ? ' active' : ''),
         role: 'tab',
         'aria-selected': String(sp.id === s.activeSpaceId),
+        dataset: { focusKey: sp.id },
         title: `${sp.name}${sp.isolated ? ' — separate cookies & storage' : ' — shared cookies'}\nRight-click: rename or delete · Double-click: rename`,
         onClick: () => call('space:activate', sp.id),
         onDblclick: () => {
@@ -97,8 +114,8 @@ function renderSpaces(s: ShellState): HTMLElement {
 }
 
 function renderAddForm(): HTMLElement {
-  const name = h('input', { placeholder: 'Space name', 'aria-label': 'Space name', maxLength: 40 });
-  const iso = h('input', { type: 'checkbox', checked: true, id: 'iso' });
+  const name = h('input', { placeholder: 'Space name', 'aria-label': 'Space name', maxLength: 40, dataset: { focusKey: 'space-name' } });
+  const iso = h('input', { type: 'checkbox', checked: true, id: 'iso', dataset: { focusKey: 'space-isolated' } });
   const submit = () => {
     void call('space:create', name.value || 'Space', iso.checked);
     addingSpace = false;
@@ -117,7 +134,7 @@ function renderAddForm(): HTMLElement {
     { class: 'add-space-form' },
     name,
     h('label', { title: 'Own cookie jar, logins and storage, separate from other Spaces' }, iso, 'Separate cookies & logins'),
-    h('div', { class: 'row' }, h('button', { class: 'btn primary', onClick: submit }, 'Create'), h('button', { class: 'btn', onClick: () => { addingSpace = false; render(); } }, 'Cancel')),
+    h('div', { class: 'row' }, h('button', { class: 'btn primary', dataset: { focusKey: 'space-create' }, onClick: submit }, 'Create'), h('button', { class: 'btn', dataset: { focusKey: 'space-cancel' }, onClick: () => { addingSpace = false; render(); } }, 'Cancel')),
   );
 }
 
@@ -126,7 +143,7 @@ function renderTab(t: TabInfo, active: boolean): HTMLElement {
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
   if (t.local && t.errors > 0) kids.push(h('span', { class: 'err', title: `${t.errors} console error(s) since last navigation` }, String(t.errors > 99 ? '99+' : t.errors)));
-  kids.push(h('button', { class: 'close', title: 'Close tab (Ctrl+W)', 'aria-label': 'Close tab', onClick: (e: Event) => { e.stopPropagation(); void call('tab:close', t.id); } }, '×'));
+  kids.push(h('button', { class: 'close', title: 'Close tab (Ctrl+W)', 'aria-label': 'Close tab', dataset: { focusKey: `close-tab-${t.id}` }, onClick: (e: Event) => { e.stopPropagation(); void call('tab:close', t.id); } }, '×'));
   return h(
     'div',
     {
@@ -134,6 +151,7 @@ function renderTab(t: TabInfo, active: boolean): HTMLElement {
       role: 'tab',
       tabIndex: 0,
       'aria-selected': String(active),
+      dataset: { focusKey: `tab-${t.id}` },
       title: `${t.title}\n${t.url}`,
       onClick: () => call('tab:activate', t.id),
       onKeydown: (e: KeyboardEvent) => {
@@ -153,16 +171,16 @@ function renderSidebar(s: ShellState): void {
   const logo = h('img', { src: 'quiver-icon.png', width: 22, height: 22, alt: '' });
   brand.append(logo, h('span', { class: 'name' }, 'Quiver'), icon(ICON.sidebar, 'Collapse / expand sidebar (Ctrl+B)', () => call('sidebar:toggle')));
 
-  const newtab = h('button', { class: 'newtab', title: 'Open the command bar in a new tab (Ctrl+T)', onClick: () => call('cmd:open', '', 'new') }, h('span', {}, '＋ New tab'), h('kbd', {}, 'Ctrl+T'));
+  const newtab = h('button', { class: 'newtab', title: 'Open the command bar in a new tab (Ctrl+T)', dataset: { focusKey: 'new-tab' }, onClick: () => call('cmd:open', '', 'new', 'new-tab') }, h('span', {}, '＋ New tab'), h('kbd', {}, 'Ctrl+T'));
 
   const tabsEl = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Tabs' }, ...spaceTabs.map((t) => renderTab(t, t.id === s.activeTabId)));
 
-  const servers = h('section', { class: 'servers', 'aria-label': 'Local servers' }, h('h3', {}, h('span', {}, 'Local servers'), h('button', { class: 'icon-btn', style: undefined, title: 'Rescan now', 'aria-label': 'Rescan local servers', onClick: () => call('devserver:refresh') }, '↻')));
+  const servers = h('section', { class: 'servers', 'aria-label': 'Local servers' }, h('h3', {}, h('span', {}, 'Local servers'), h('button', { class: 'icon-btn', style: undefined, title: 'Rescan now', 'aria-label': 'Rescan local servers', dataset: { focusKey: 'rescan' }, onClick: () => call('devserver:refresh') }, '↻')));
   if (!s.settings.devServerScan) servers.append(h('div', { class: 'empty' }, 'Scanning is off (Settings).'));
   else if (s.devServers.length === 0) servers.append(h('div', { class: 'empty' }, 'No HTTP servers found on localhost.'));
   for (const d of s.devServers) {
     servers.append(
-      h('button', { class: 'server', title: `${d.title}\n${d.url}`, onClick: () => call('devserver:open', d.url) }, h('span', { class: 'port' }, `:${d.port}`), h('span', { class: 'stitle' }, d.title)),
+      h('button', { class: 'server', title: `${d.title}\n${d.url}`, dataset: { focusKey: d.url }, onClick: () => call('devserver:open', d.url) }, h('span', { class: 'port' }, `:${d.port}`), h('span', { class: 'stitle' }, d.title)),
     );
   }
 
@@ -175,7 +193,7 @@ function activeTab(s: ShellState): TabInfo | undefined {
 
 function renderToolbar(s: ShellState): void {
   const t = activeTab(s);
-  const addr = h('button', { id: 'address', title: 'Search or enter a command (Ctrl+K / Ctrl+L)', 'aria-label': 'Address and command bar', onClick: () => call('cmd:open', undefined, 'current') });
+  const addr = h('button', { id: 'address', title: 'Search or enter a command (Ctrl+K / Ctrl+L)', 'aria-label': 'Address and command bar', dataset: { focusKey: 'address' }, onClick: () => call('cmd:open', undefined, 'current', 'address') });
   if (t?.env) addr.append(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env));
   addr.append(h('span', { class: 'url' + (t?.url ? '' : ' placeholder') }, t?.url || 'Search, paste a URL, JWT, or type gh / npm / mdn / env / boost…'), h('span', { class: 'hint' }, 'Ctrl+K'));
   toolbar.replaceChildren(
@@ -185,13 +203,14 @@ function renderToolbar(s: ShellState): void {
     addr,
     icon(ICON.env, 'Switch environment: local → staging → prod (Ctrl+Alt+E)', () => call('env:switch'), { disabled: !t?.env }),
     icon(ICON.phone, 'Toggle phone preview, 393 px with touch and mobile UA (Ctrl+Shift+P)', () => call('preview:toggle'), { on: s.preview }),
-    icon(ICON.boost, 'Boosts: site CSS / TypeScript (Ctrl+Shift+B)', () => call('cmd:run', { type: 'internal', page: 'boosts' }, 'current')),
-    icon(ICON.gear, 'Settings', () => call('cmd:run', { type: 'internal', page: 'settings' }, 'current')),
+    icon(ICON.boost, 'Boosts: site CSS / TypeScript (Ctrl+Shift+B)', () => call('cmd:run', { type: 'internal', page: 'boosts' })),
+    icon(ICON.gear, 'Settings', () => call('cmd:run', { type: 'internal', page: 'settings' })),
   );
 }
 
 function render(): void {
   if (!state) return;
+  const focused = document.hasFocus() && document.activeElement instanceof HTMLElement ? document.activeElement : null;
   document.body.classList.toggle('collapsed', state.settings.sidebarCollapsed);
   document.body.classList.toggle('preview', state.preview);
   document.body.style.setProperty('--sb', state.settings.sidebarCollapsed ? '56px' : '264px');
@@ -199,6 +218,7 @@ function render(): void {
   document.title = `Quiver — ${sp?.name ?? ''}`;
   renderSidebar(state);
   renderToolbar(state);
+  if (focused && !focused.isConnected) focusShellControl(focused.dataset.focusKey);
 }
 
 quiver.on('state', (s: ShellState) => {

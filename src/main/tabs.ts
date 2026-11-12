@@ -1,4 +1,4 @@
-import { BaseWindow, WebContentsView, session, type Rectangle, type WebContents } from 'electron';
+import { BaseWindow, WebContentsView, session, webContents, type Rectangle, type WebContents } from 'electron';
 import path from 'node:path';
 import {
   INTERNAL_ORIGIN,
@@ -87,6 +87,7 @@ export class TabManager {
   private readonly preparedPartitions = new Set<string>();
   private emitTimer: NodeJS.Timeout | null = null;
   private overlayOpen = false;
+  private commandFocus: { contents: WebContents; invoker?: 'address' | 'new-tab' } | null = null;
 
   constructor(
     private readonly win: BaseWindow,
@@ -501,13 +502,33 @@ export class TabManager {
     return this.settings.sidebarCollapsed ? SIDEBAR_COLLAPSED_W : SIDEBAR_W;
   }
 
-  setOverlayOpen(open: boolean): void {
+  setOverlayOpen(open: boolean, restoreFocus = false, invoker?: 'address' | 'new-tab'): void {
+    if (open && !this.overlayOpen) {
+      const origin = invoker ? this.shell.webContents : webContents.getFocusedWebContents();
+      if (origin) this.commandFocus = { contents: origin, invoker };
+    }
     this.overlayOpen = open;
     this.overlay.setVisible(open);
     if (open) {
       this.bringOverlayToTop();
       this.overlay.webContents.focus();
-    } else this.activeTab?.view.webContents.focus();
+      return;
+    }
+    const origin = this.commandFocus;
+    this.commandFocus = null;
+    const current = this.activeTab?.view.webContents;
+    if (restoreFocus && origin && !origin.contents.isDestroyed()) {
+      if (origin.contents === this.shell.webContents) {
+        origin.contents.focus();
+        origin.contents.send('cmd:restore-focus', origin.invoker);
+        return;
+      }
+      if (origin.contents === current || (this.preview && origin.contents === this.phone?.webContents)) {
+        origin.contents.focus();
+        return;
+      }
+    }
+    if (current && !current.isDestroyed()) current.focus();
   }
 
   layout(): void {

@@ -7,7 +7,8 @@ export function normalizeOrigin(raw: string): string | null {
   if (!t) return null;
   const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(t) ? t : `${isLocalHost(t.split(/[/:]/)[0]) ? 'http' : 'https'}://${t}`;
   try {
-    return new URL(withScheme).origin;
+    const url = new URL(withScheme);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.origin : null;
   } catch {
     return null;
   }
@@ -60,7 +61,7 @@ export function badgeFor(url: string, groups: EnvGroup[]): EnvBadge | null {
  * Jump to the next (or a named) environment of the matching group, keeping path + query + hash.
  * Environments with an empty origin are skipped. Returns null when the URL is in no group.
  */
-export function switchEnv(url: string, groups: EnvGroup[], target?: EnvBadge): string | null {
+export function resolveEnvironment(url: string, groups: EnvGroup[], target?: EnvBadge): { target: EnvBadge; url: string } | null {
   const m = detectEnv(url, groups);
   if (!m) return null;
   let u: URL;
@@ -78,5 +79,9 @@ export function switchEnv(url: string, groups: EnvGroup[], target?: EnvBadge): s
   }
   const origin = groupOrigin(m.group, next);
   if (!origin) return null;
-  return origin + u.pathname + u.search + u.hash;
+  return { target: next, url: origin + u.pathname + u.search + u.hash };
+}
+
+export function switchEnv(url: string, groups: EnvGroup[], target?: EnvBadge): string | null {
+  return resolveEnvironment(url, groups, target)?.url ?? null;
 }
