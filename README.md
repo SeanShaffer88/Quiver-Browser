@@ -44,9 +44,9 @@ npm.cmd run build:msi      # optional MSI
 
 Outputs in `release\`:
 
-- `Quiver-v0.1.0-x64-Setup.exe` - installer (per-user, choose folder)
-- `Quiver-v0.1.0-x64-Portable.exe` - portable, stores all data in a `data\` folder next to the exe
-- `Quiver-v0.1.0-x64-Setup.msi` - from `build:msi`
+- `Quiver-v0.1.0-beta.1-x64-Setup.exe` - installer (per-user, choose folder)
+- `Quiver-v0.1.0-beta.1-x64-Portable.exe` - portable, stores all data in a `data\` folder next to the exe
+- `Quiver-v0.1.0-beta.1-x64-Setup.msi` - from `build:msi`
 
 Local packages are unsigned unless you configure code signing. Windows SmartScreen may show a warning.
 
@@ -153,7 +153,7 @@ Quiver currently covers these Flecha workflows. Pinned tabs, folders, archives, 
 
 On Windows 11 x64, all 10 unit tests passed. The unpacked and portable builds verified tab restoration, Space cookie isolation, IPv4 and IPv6 dev-server discovery, CSS and TypeScript Boosts, and a 393 px phone preview with touch emulation.
 
-The unsigned NSIS installer was built. Windows 10, installer lifecycle, MSI packaging, and screen-reader behavior remain unverified.
+The Windows beta workflow checks clean NSIS installation, upgrade from a synthetic older build, and uninstallation on an isolated GitHub-hosted runner. Windows 10, MSI packaging, and screen-reader behavior remain unverified.
 
 ## License
 
