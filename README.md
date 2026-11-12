@@ -175,6 +175,21 @@ Follow [Electron releases](https://releases.electronjs.org/) for Chromium and El
 
 For the first stable release, verify trusted signatures on both distributables and test on a clean Windows 11 x64 desktop. Cover default browser selection, upgrading from the latest beta with an existing profile, keyboard and Narrator operation, and portable use from removable storage. Check site permissions, navigation, and IPC whenever a change affects what web pages can reach.
 
+### Windows signing
+
+Configure a public-trust signing identity with a [Windows signing provider](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control). Use the provider's integration for [electron-builder 26](https://www.electron.build/v26/docs/win/) and enable `forceCodeSigning` for the Windows setup build. Sign the application, uninstaller, and final setup with SHA-256 and a timestamp.
+
+Use the signed `win-unpacked` application as the PortableApps input. Pass a PowerShell script block that signs its one file-path argument in place, timestamps it, and throws on failure. Use the expected certificate subject from your provider. A thumbprint is optional when the provider rotates signing certificates.
+
+```powershell
+./scripts/Build-PortableApps.ps1 -InstallerRoot $installerRoot -UnpackedDirectory $signedUnpacked `
+  -OutputDirectory $newOutput -SignFile $signFile -SignTool $signTool -PublisherSubject $publisherSubject
+./scripts/Test-WindowsSignatures.ps1 -Path $setupExe, $portableInstallerExe `
+  -SignTool $signTool -PublisherSubject $publisherSubject
+```
+
+The PortableApps build checks the signed application, signs the launcher before compression, and signs the final installer after branding. Record checksums after signing. On a clean Windows 11 x64 system, verify both exact downloads with normal Windows trust settings and complete the desktop checks above.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
