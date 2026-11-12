@@ -44,13 +44,13 @@ npm.cmd run build:msi      # optional MSI
 
 Outputs in `release\`:
 
-- `Quiver-v0.1.0-beta.2-x64-Setup.exe` - installer (per-user, choose folder)
-- `QuiverPortable_0.1.0-beta.2_English.paf.exe` - offline PortableApps.com installer for a portable Quiver folder
-- `Quiver-v0.1.0-beta.2-x64-Setup.msi` - from `build:msi`
+- `Quiver-v0.1.0-beta.3-x64-Setup.exe` - installer (per-user, choose folder)
+- `QuiverPortable_0.1.0-beta.3_English.paf.exe` - offline PortableApps.com installer for a portable Quiver folder
+- `Quiver-v0.1.0-beta.3-x64-Setup.msi` - from `build:msi`
 
 Windows setup adds Quiver to Windows Default Apps. Select **Open Windows Default Apps after setup** to choose Quiver there. Setup can also open Quiver’s bookmark importer and add a launch-at-sign-in shortcut. Each option is opt-in on a fresh install. For unattended setup, `/S /currentuser /STARTATLOGIN` opts in to startup without opening Windows Settings or the importer.
 
-Start the PortableApps edition with `QuiverPortable.exe`. It keeps the browser profile, cache, temporary files, and logs in `QuiverPortable\Data`. Downloads start in `Data\Downloads`, and the Save As dialog lets you choose another destination. To build it locally, first build the Windows setup to populate `release\win-unpacked`. Then run `pwsh -File scripts/Build-PortableApps.ps1 -InstallerRoot <PortableApps.comInstaller-folder>`. This requires the official PortableApps.com Installer toolchain. The GitHub workflow pins and verifies the tool archive.
+Start the PortableApps edition with `QuiverPortable.exe`. It keeps the browser profile, cache, temporary files, and logs in `QuiverPortable\Data`. Downloads start in `Data\Downloads`, and the Save As dialog lets you choose another destination. Portable crash dumps are kept in `Data\CrashDumps` with uploads disabled. To build it locally, first build the Windows setup to populate `release\win-unpacked`. Then run `pwsh -File scripts/Build-PortableApps.ps1 -InstallerRoot <PortableApps.comInstaller-folder>`. This requires the official PortableApps.com Installer toolchain. The GitHub workflow pins and verifies the tool archive.
 
 In **Settings → Bookmarks**, choose a local profile from Chrome, Edge, Brave, or Vivaldi and select **Review import**. **Choose HTML file** accepts a bookmark export from Firefox or another browser. Setup opens the same importer when you select its bookmark option. The review shows a sample and totals for new, duplicate, unsupported, and excess entries before you confirm. **Undo this import** removes the latest batch, even after restart. Quiver stores HTTP and HTTPS bookmarks locally and opens pages only when you select a bookmark.
 

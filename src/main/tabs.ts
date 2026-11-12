@@ -242,7 +242,12 @@ export class TabManager {
         // Chromium otherwise prefers the last folder selected in Save As.
         const name = path.basename(item.getFilename());
         const safeName = name && name !== '.' && name !== '..' && !/[<>:"/\\|?*\u0000-\u001f]/u.test(name);
-        item.setSaveDialogOptions({ ...item.getSaveDialogOptions(), defaultPath: safeName ? path.join(downloadPath, name) : downloadPath });
+        const options = item.getSaveDialogOptions();
+        item.setSaveDialogOptions({
+          ...options,
+          defaultPath: safeName ? path.join(downloadPath, name) : downloadPath,
+          properties: [...new Set([...(options.properties ?? []), 'dontAddToRecent' as const])],
+        });
       });
     }
     const allowed = new Set(['fullscreen', 'clipboard-sanitized-write']);
