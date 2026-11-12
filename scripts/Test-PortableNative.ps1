@@ -14,6 +14,37 @@ using System.Text;
 public static class QuiverPortableInput {
     [StructLayout(LayoutKind.Sequential)]
     private struct Point { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ThreadInfo {
+        public int Size;
+        public uint Flags;
+        public IntPtr Active, Focus, Capture, MenuOwner, MoveSize, Caret;
+        public Rect CaretRect;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MouseInput {
+        public int X, Y;
+        public uint Data, Flags, Time;
+        public UIntPtr Extra;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KeyInput {
+        public ushort Key, Scan;
+        public uint Flags, Time;
+        public UIntPtr Extra;
+    }
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputValue {
+        [FieldOffset(0)] public MouseInput Mouse;
+        [FieldOffset(0)] public KeyInput Key;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Input {
+        public uint Type;
+        public InputValue Value;
+    }
 
     [DllImport("user32")] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32")] private static extern IntPtr GetForegroundWindow();
@@ -21,7 +52,12 @@ public static class QuiverPortableInput {
     [DllImport("user32")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
     [DllImport("user32")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
     [DllImport("user32")] private static extern bool EnumWindows(WindowCallback callback, IntPtr state);
+    [DllImport("user32")] private static extern bool EnumChildWindows(IntPtr window, WindowCallback callback, IntPtr state);
     [DllImport("user32")] private static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32")] private static extern bool IsWindowEnabled(IntPtr window);
+    [DllImport("user32")] private static extern int GetDlgCtrlID(IntPtr window);
+    [DllImport("user32")] private static extern IntPtr GetDlgItem(IntPtr window, int id);
+    [DllImport("user32")] private static extern bool GetGUIThreadInfo(uint thread, ref ThreadInfo info);
     [DllImport("user32", CharSet = CharSet.Unicode)]
     private static extern int GetClassName(IntPtr window, StringBuilder text, int size);
     [DllImport("user32", CharSet = CharSet.Unicode)]
@@ -29,17 +65,28 @@ public static class QuiverPortableInput {
     [DllImport("user32")] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32")] private static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
     [DllImport("user32")] private static extern bool PostMessage(IntPtr window, uint message, IntPtr wparam, IntPtr lparam);
+    [DllImport("user32", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern IntPtr ReadText(IntPtr window, uint message, IntPtr capacity, StringBuilder text,
+        uint flags, uint timeout, out IntPtr result);
+    [DllImport("user32", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern IntPtr WriteText(IntPtr window, uint message, IntPtr unused, string text,
+        uint flags, uint timeout, out IntPtr result);
+    [DllImport("user32")] private static extern uint SendInput(uint count, Input[] inputs, int size);
 
     private delegate bool WindowCallback(IntPtr window, IntPtr state);
+
+    private static string ClassName(IntPtr window) {
+        var text = new StringBuilder(128);
+        return GetClassName(window, text, text.Capacity) != 0 ? text.ToString() : "";
+    }
 
     public static IntPtr FindDialog(uint processId, string title) {
         IntPtr result = IntPtr.Zero;
         EnumWindows((window, state) => {
             if (GetWindowThreadProcessId(window, out uint owner) == 0 || owner != processId ||
                 !IsWindowVisible(window)) return true;
+            if (ClassName(window) != "#32770") return true;
             var text = new StringBuilder(256);
-            if (GetClassName(window, text, text.Capacity) == 0 || text.ToString() != "#32770") return true;
-            text.Clear();
             if (GetWindowText(window, text, text.Capacity) == 0 || text.ToString() != title) return true;
             result = window;
             return false;
@@ -50,6 +97,99 @@ public static class QuiverPortableInput {
     public static bool CloseDialog(uint processId, string title) {
         IntPtr dialog = FindDialog(processId, title);
         return dialog == IntPtr.Zero || PostMessage(dialog, 0x0010, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    private static bool OwnedControl(IntPtr control, IntPtr dialog, uint processId) =>
+        control != IntPtr.Zero && GetAncestor(control, 2) == dialog &&
+        GetWindowThreadProcessId(control, out uint owner) != 0 && owner == processId &&
+        IsWindowEnabled(control) && IsWindowVisible(control);
+
+    private static bool TryReadControl(IntPtr control, out string value) {
+        var text = new StringBuilder(1024);
+        bool read = ReadText(control, 0x000D, (IntPtr)text.Capacity, text, 2, 250, out _) != IntPtr.Zero;
+        value = read ? text.ToString() : "";
+        return read;
+    }
+
+    public static bool SetFileName(uint processId, string title, string name, string stem, string target) {
+        IntPtr dialog = FindDialog(processId, title);
+        if (dialog == IntPtr.Zero) return false;
+        IntPtr match = IntPtr.Zero;
+        int matches = 0;
+        EnumChildWindows(dialog, (control, state) => {
+            if (ClassName(control) == "Edit" && OwnedControl(control, dialog, processId) &&
+                TryReadControl(control, out string text) && (text == name || text == stem)) {
+                match = control;
+                matches++;
+            }
+            return matches < 2;
+        }, IntPtr.Zero);
+        return matches == 1 && OwnedControl(match, dialog, processId) &&
+            WriteText(match, 0x000C, IntPtr.Zero, target, 2, 500, out _) != IntPtr.Zero &&
+            TryReadControl(match, out string actual) && actual == target;
+    }
+
+    private static Input Key(ushort key, ushort scan = 0, uint flags = 0) =>
+        new Input { Type = 1, Value = new InputValue { Key = new KeyInput { Key = key, Scan = scan, Flags = flags } } };
+
+    private static bool SendKeys(Input[] keys) => SendInput((uint)keys.Length, keys, Marshal.SizeOf<Input>()) == keys.Length;
+
+    public static bool FocusFileName(uint processId, string title) {
+        IntPtr dialog = FindDialog(processId, title);
+        // Alt+N selects the File name field in the English Common Item Dialog.
+        return Focus(dialog, processId) && SendKeys(new[] { Key(0x12), Key(0x4E), Key(0x4E, flags: 2), Key(0x12, flags: 2) });
+    }
+
+    private static IntPtr FindFocusedFileName(uint processId, string title) {
+        IntPtr dialog = FindDialog(processId, title);
+        if (dialog == IntPtr.Zero || GetForegroundWindow() != dialog) return IntPtr.Zero;
+        var info = new ThreadInfo { Size = Marshal.SizeOf<ThreadInfo>() };
+        uint thread = GetWindowThreadProcessId(dialog, out _);
+        return thread != 0 && GetGUIThreadInfo(thread, ref info) && OwnedControl(info.Focus, dialog, processId) &&
+            ClassName(info.Focus) == "Edit" ? info.Focus : IntPtr.Zero;
+    }
+
+    public static bool TypeFileName(uint processId, string title, string name, string stem, string target) {
+        IntPtr edit = FindFocusedFileName(processId, title);
+        if (edit == IntPtr.Zero || !TryReadControl(edit, out string value) || (value != name && value != stem))
+            return false;
+        var keys = new Input[4 + target.Length * 2];
+        keys[0] = Key(0x11);
+        keys[1] = Key(0x41);
+        keys[2] = Key(0x41, flags: 2);
+        keys[3] = Key(0x11, flags: 2);
+        for (int index = 0; index < target.Length; index++) {
+            keys[4 + index * 2] = Key(0, target[index], 4);
+            keys[5 + index * 2] = Key(0, target[index], 6);
+        }
+        return SendKeys(keys);
+    }
+
+    public static bool VerifyTypedFileName(uint processId, string title, string target) {
+        IntPtr edit = FindFocusedFileName(processId, title);
+        return edit != IntPtr.Zero && TryReadControl(edit, out string value) && value == target;
+    }
+
+    public static bool ClickSave(uint processId, string title) {
+        IntPtr dialog = FindDialog(processId, title);
+        if (!Focus(dialog, processId)) return false;
+        IntPtr button = GetDlgItem(dialog, 1);
+        return OwnedControl(button, dialog, processId) && ClassName(button) == "Button" &&
+            TryReadControl(button, out string caption) && caption.TrimStart('&') == "Save" &&
+            PostMessage(button, 0x00F5, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    public static string DescribeDialog(uint processId, string title) {
+        IntPtr dialog = FindDialog(processId, title);
+        if (dialog == IntPtr.Zero) return "Owned dialog no longer present";
+        var controls = new StringBuilder();
+        int count = 0;
+        EnumChildWindows(dialog, (control, state) => {
+            if (OwnedControl(control, dialog, processId))
+                controls.Append(ClassName(control)).Append('#').Append(GetDlgCtrlID(control)).Append(' ');
+            return ++count < 40;
+        }, IntPtr.Zero);
+        return controls.ToString();
     }
 
     private static bool Focus(IntPtr window, uint processId) {
@@ -77,12 +217,6 @@ function Get-PortableWindow([Diagnostics.Process]$Browser) {
     }
 }
 
-function Get-PortableControl($Root, $Property, [string]$Value) {
-    if (!$Root) { return }
-    $condition = [Windows.Automation.PropertyCondition]::new($Property, $Value)
-    $Root.FindFirst([Windows.Automation.TreeScope]::Descendants, $condition)
-}
-
 function Get-PortableNamedControl([Diagnostics.Process]$Browser, [string]$Name, $Type) {
     try {
         $root = Get-PortableWindow $Browser
@@ -108,10 +242,9 @@ function Invoke-PortableClick([Diagnostics.Process]$Browser, [string]$Name, $Typ
     }
 }
 
-function Get-PortableSaveDialog([Diagnostics.Process]$Browser, [string]$Title) {
+function Test-PortableSaveDialog([Diagnostics.Process]$Browser, [string]$Title) {
     if ($Browser.HasExited) { throw "Owned Quiver exited early with $($Browser.ExitCode)." }
-    $handle = [QuiverPortableInput]::FindDialog($Browser.Id, $Title)
-    if ($handle -ne [IntPtr]::Zero) { [Windows.Automation.AutomationElement]::FromHandle($handle) }
+    [QuiverPortableInput]::FindDialog($Browser.Id, $Title) -ne [IntPtr]::Zero
 }
 
 function Invoke-PortableSaveAs([Diagnostics.Process]$Browser, [string]$Root, [string]$Origin) {
@@ -134,40 +267,30 @@ function Invoke-PortableSaveAs([Diagnostics.Process]$Browser, [string]$Root, [st
         }
         Invoke-PortableClick $Browser $test.link ([Windows.Automation.ControlType]::Hyperlink)
         try {
-            $dialog = Wait-For "the native Save As dialog for $($test.name)" { Get-PortableSaveDialog $Browser $dialogTitle }
-            $fileEdit = Wait-For 'the Save As file name field' {
-                try {
-                    $editType = [Windows.Automation.PropertyCondition]::new(
-                        [Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Edit)
-                    foreach ($id in '1148','1001') {
-                        $editId = [Windows.Automation.PropertyCondition]::new(
-                            [Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
-                        $edit = $dialog.FindFirst([Windows.Automation.TreeScope]::Descendants,
-                            [Windows.Automation.AndCondition]::new($editType, $editId))
-                        $pattern = $null
-                        if ($edit -and $edit.Current.IsEnabled -and !$edit.Current.IsOffscreen -and
-                            $edit.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern) -and
-                            !$pattern.Current.IsReadOnly) {
-                            return $pattern
-                        }
+            $null = Wait-For "the native Save As dialog for $($test.name)" { Test-PortableSaveDialog $Browser $dialogTitle }
+            if (!$useDefaultDestination) {
+                $stem = [IO.Path]::GetFileNameWithoutExtension($test.name)
+                if (![QuiverPortableInput]::SetFileName($Browser.Id, $dialogTitle, $test.name, $stem, $target)) {
+                    $null = Wait-For 'the owned Save As dialog to focus its File name field' {
+                        [QuiverPortableInput]::FocusFileName($Browser.Id, $dialogTitle)
                     }
-                } catch [Windows.Automation.ElementNotAvailableException] { }
+                    $null = Wait-For 'the verified native filename edit to accept the custom path' {
+                        [QuiverPortableInput]::TypeFileName($Browser.Id, $dialogTitle, $test.name, $stem, $target)
+                    }
+                    $null = Wait-For 'the custom path to appear in the verified filename edit' {
+                        [QuiverPortableInput]::VerifyTypedFileName($Browser.Id, $dialogTitle, $target)
+                    }
+                }
             }
-            $initialName = $fileEdit.Current.Value
-            if ($initialName -cne $test.name -and $initialName -cne [IO.Path]::GetFileNameWithoutExtension($test.name)) {
-                throw "Save As suggested '$initialName' instead of '$($test.name)'."
+            $null = Wait-For 'the owned native Save button to accept a click' {
+                [QuiverPortableInput]::ClickSave($Browser.Id, $dialogTitle)
             }
-            if (!$useDefaultDestination) { $fileEdit.SetValue($target) }
-            $save = Get-PortableControl $dialog ([Windows.Automation.AutomationElement]::AutomationIdProperty) '1'
-            if (!$save -or $save.Current.Name.TrimStart('&') -cne 'Save' -or !$save.Current.IsEnabled) {
-                throw 'Could not identify the enabled Save button in the owned dialog.'
-            }
-            $save.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
-            $null = Wait-For 'the owned native Save As dialog to close' { !(Get-PortableSaveDialog $Browser $dialogTitle) }
+            $null = Wait-For 'the owned native Save As dialog to close' { !(Test-PortableSaveDialog $Browser $dialogTitle) }
         } catch {
+            Write-Warning "Owned Save As control classes and IDs: $([QuiverPortableInput]::DescribeDialog($Browser.Id, $dialogTitle))"
             if ([QuiverPortableInput]::CloseDialog($Browser.Id, $dialogTitle)) {
                 try {
-                    $null = Wait-For 'the failed Save As dialog to close' { !(Get-PortableSaveDialog $Browser $dialogTitle) } -Seconds 5
+                    $null = Wait-For 'the failed Save As dialog to close' { !(Test-PortableSaveDialog $Browser $dialogTitle) } -Seconds 5
                 } catch { Write-Warning $_.Exception.Message }
             }
             throw
@@ -184,7 +307,6 @@ function Invoke-PortableSaveAs([Diagnostics.Process]$Browser, [string]$Root, [st
             throw 'The custom download unexpectedly also appeared at the default destination.'
         }
         [ordered]@{
-            initialName = $initialName
             usedDefaultDestination = $useDefaultDestination
             savedPath = [IO.Path]::GetRelativePath($Root, $target)
             sha256 = $hash
