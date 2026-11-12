@@ -103,7 +103,7 @@ The selected result shows the action before you confirm, including the destinati
 
 ### Tab and window recovery
 
-The sidebar's **Reopen in …** action and `Ctrl+Shift+T` restore the latest closed tab at its original position in the same Space. Quiver reloads saved tab URLs after restart and shows a notice when it recovers a prior session that was left open. Use **Retry page** if a tab's renderer stops. Quiver fits a saved window to an available display if its old position is offscreen.
+The sidebar's **Reopen in …** action and `Ctrl+Shift+T` restore the latest closed tab at its original position in the same Space, even after a restart. Quiver keeps up to 20 recently closed tabs in the local profile and skips saving addresses with embedded sign-in credentials. Quiver reloads saved tab URLs after restart and shows a notice when it recovers a prior session that was left open. Use **Retry page** if a tab's renderer stops. Quiver fits a saved window to an available display if its old position is offscreen.
 
 ### Environments
 Settings → Environments: add a group with LOCAL / STAGING / PROD origins (e.g. `localhost:3000`, `https://staging.example.com`, `https://example.com`). Then `Ctrl+Alt+E` cycles them keeping path, query and hash. The address bar and tab list show `LOCAL` / `STG` / `PROD`. Any `localhost` URL shows `LOCAL` even without a group.

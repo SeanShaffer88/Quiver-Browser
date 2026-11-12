@@ -18,7 +18,17 @@ import { boostKind, boostMatchesHost, transpileBoost, wrapScript, type Boosts } 
 import { EndpointStatus, type EndpointFailure } from './endpoint-status';
 import { shortcutFor, type ShortcutAction } from './shortcuts';
 import type { Store } from './store';
-import { rememberClosed, restorableUrl, restoreSelection, snapshotSpace, type ClosedTab } from './session-recovery';
+import {
+  CANONICAL_NEW_TAB_URL,
+  hasSavedNewTabPlaceholder,
+  rememberClosed,
+  restorableUrl,
+  restoreRecentlyClosed,
+  restoreSelection,
+  snapshotRecentlyClosed,
+  snapshotSpace,
+  type ClosedTab,
+} from './session-recovery';
 
 interface Tab {
   id: number;
@@ -483,7 +493,7 @@ export class TabManager {
     const inSpace = [...this.tabs.values()].filter((tab) => tab.spaceId === entry.spaceId);
     const placeholder = inSpace.length === 1 && inSpace[0].id === entry.placeholderId ? inSpace[0] : undefined;
     const reopened = this.openTab(entry.url, { spaceId: entry.spaceId, index: entry.index, activate: false, lazy: true });
-    if (placeholder && this.tabUrl(placeholder) === 'quiver://app/newtab.html') this.discardTab(placeholder);
+    if (placeholder && this.tabUrl(placeholder) === CANONICAL_NEW_TAB_URL) this.discardTab(placeholder);
     this.recentlyClosed.shift();
     this.activateTab(reopened.id);
   }
@@ -994,19 +1004,26 @@ export class TabManager {
     const st = this.store.state;
     st.tabsBySpace = {};
     st.activeIndexBySpace = {};
+    const soleNewTabs = new Map<string, number>();
     for (const space of this.spaces) {
       const list = [...this.tabs.values()]
         .filter((tab) => tab.spaceId === space.id)
         .map((tab) => ({ id: tab.id, url: this.tabUrl(tab) }));
+      if (list.length === 1 && list[0].url === CANONICAL_NEW_TAB_URL) soleNewTabs.set(space.id, list[0].id);
       const { tabs, activeIndex } = snapshotSpace(list, this.lastActive[space.id]);
       st.tabsBySpace[space.id] = tabs;
       st.activeIndexBySpace[space.id] = activeIndex;
+    }
+    st.recentlyClosed = snapshotRecentlyClosed(this.recentlyClosed, new Set(this.spaces.map(({ id }) => id)), soleNewTabs);
+    for (const entry of st.recentlyClosed) {
+      if (entry.replacePlaceholder) st.tabsBySpace[entry.spaceId][0].automaticPlaceholder = true;
     }
     this.store.save();
   }
 
   restore(): { tabs: number; spaces: number } {
-    const { tabsBySpace, activeIndexBySpace, activeSpaceId } = this.store.state;
+    const { tabsBySpace, activeIndexBySpace, activeSpaceId, recentlyClosed } = this.store.state;
+    const soleNewTabs = new Map<string, number>();
     const restored = { tabs: 0, spaces: 0 };
     this.restoring = true;
     try {
@@ -1019,8 +1036,10 @@ export class TabManager {
         entries.forEach(({ url }, index) => {
           const tab = this.openTab(url, { spaceId: space.id, activate: false, lazy: true });
           if (index === activeIndex) this.lastActive[space.id] = tab.id;
+          if (hasSavedNewTabPlaceholder(saved)) soleNewTabs.set(space.id, tab.id);
         });
       }
+      this.recentlyClosed = restoreRecentlyClosed(recentlyClosed, () => this.nextId++, soleNewTabs);
       this.activateSpace(activeSpaceId);
     } finally {
       this.restoring = false;
