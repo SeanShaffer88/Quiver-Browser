@@ -2,7 +2,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Installer,
-    [Parameter(Mandatory)][ValidatePattern('\A[0-9a-fA-F]{64}\z')][string]$AsarSha256
+    [Parameter(Mandatory)][ValidatePattern('\A[0-9a-fA-F]{64}\z')][string]$AsarSha256,
+    [Parameter(Mandatory)][string]$PreviousInstaller
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,13 +16,21 @@ $artifact = Get-Item -LiteralPath $Installer
 if ($artifact -isnot [IO.FileInfo] -or $artifact.Name -notlike 'QuiverPortable_*_English.paf.exe') {
     throw 'Expected a Quiver PortableApps installer.'
 }
+$previousArtifact = Get-Item -LiteralPath $PreviousInstaller
+$previousHash = 'A21E135F0971269AA61734439C3AB7B6561303616AA6C47A6FDCA9DD1E81F761'
+if ($previousArtifact -isnot [IO.FileInfo] -or $previousArtifact.Name -cne 'QuiverPortable_0.1.0-beta.2_English.paf.exe' -or
+    (Get-FileHash -LiteralPath $previousArtifact.FullName -Algorithm SHA256).Hash -cne $previousHash) {
+    throw 'The previous installer does not match the published Beta 2 portable asset.'
+}
 
 $runnerTemp = (Get-Item -LiteralPath $env:RUNNER_TEMP).FullName
 $destination = Join-Path $runnerTemp ('Quiver portable ' + [guid]::NewGuid().ToString('N'))
 $package = Join-Path $destination 'QuiverPortable'
 $profileDir = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Quiver'
 $evidencePath = Join-Path $runnerTemp 'quiver-portable-runtime-evidence.json'
-$evidence = [ordered]@{ installer = $artifact.Name; asarSha256 = $AsarSha256; checks = [ordered]@{} }
+$evidence = [ordered]@{ installer = $artifact.Name; installerSha256 = (Get-FileHash -LiteralPath $artifact.FullName).Hash;
+    asarSha256 = $AsarSha256; previousInstaller = $previousArtifact.Name; previousInstallerSha256 = $previousHash;
+    checks = [ordered]@{}; failures = [ordered]@{} }
 $startupPaths = @('Startup','CommonStartup') | ForEach-Object {
     Join-Path ([Environment]::GetFolderPath($_)) 'Quiver Browser.lnk'
 }
@@ -30,6 +39,8 @@ $registrationPaths = foreach ($hive in 'HKCU:','HKLM:','HKLM:\Software\WOW6432No
     "$software\Clients\StartMenuInternet\Quiver"
     "$software\Classes\Quiver.Url"
 }
+
+. (Join-Path $PSScriptRoot 'Test-PortableNative.ps1')
 
 function Get-HostState {
     $keys = foreach ($path in $registrationPaths) {
@@ -52,7 +63,12 @@ function Get-HostState {
     }
     $profileState = Join-Path $profileDir 'quiver-state.json'
     $profileHash = if (Test-Path -LiteralPath $profileState -PathType Leaf) { (Get-FileHash -LiteralPath $profileState).Hash }
-    [ordered]@{ keys = @($keys); browsers = @($browserValues); choices = @($choices); startup = @($startup); profileExists = Test-Path -LiteralPath $profileDir; profileHash = $profileHash } |
+    $wer = Get-Item -LiteralPath 'HKCU:\Software\Microsoft\Windows\Windows Error Reporting\RuntimeExceptionHelperModules' -ErrorAction SilentlyContinue
+    $quiverWer = if ($wer) {
+        $wer.GetValueNames() | Where-Object { [IO.Path]::GetFileName($_) -ieq 'Quiver_wer.dll' } | Sort-Object |
+            ForEach-Object { [ordered]@{ name = $_; kind = $wer.GetValueKind($_).ToString(); value = $wer.GetValue($_) } }
+    }
+    [ordered]@{ keys = @($keys); browsers = @($browserValues); choices = @($choices); startup = @($startup); quiverWer = @($quiverWer); profileExists = Test-Path -LiteralPath $profileDir; profileHash = $profileHash } |
         ConvertTo-Json -Depth 6 -Compress
 }
 
@@ -106,18 +122,19 @@ public static class QuiverPortableWizard {
     }
 }
 "@
-function Install-Package {
-    $info = [Diagnostics.ProcessStartInfo]::new($artifact.FullName)
+function Install-Package([IO.FileInfo]$File, [string]$Root, [string]$ExpectedAsar) {
+    $parent = Split-Path -Parent $Root
+    $info = [Diagnostics.ProcessStartInfo]::new($File.FullName)
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
-    $info.WorkingDirectory = $destination
+    $info.WorkingDirectory = $parent
     # The official installer appends its AppID to this parent path.
-    $info.Arguments = '/DESTINATION="' + $destination + '\"'
+    $info.Arguments = '/DESTINATION="' + $parent + '\"'
     $process = [Diagnostics.Process]::Start($info)
     try {
         foreach ($step in 'Next','Install','Finish') {
             $watch = [Diagnostics.Stopwatch]::StartNew()
-            while (![QuiverPortableWizard]::TryAdvance($process.Id, $step, $package)) {
+            while (![QuiverPortableWizard]::TryAdvance($process.Id, $step, $Root)) {
                 if ($process.HasExited) { throw "PortableApps exited $($process.ExitCode) before $step." }
                 if ($watch.Elapsed.TotalSeconds -ge 120) { throw "Timed out waiting for PortableApps $step." }
                 Start-Sleep -Milliseconds 250
@@ -133,14 +150,19 @@ function Install-Package {
     }
 
     foreach ($relative in 'QuiverPortable.exe','App/Quiver/Quiver.exe','App/AppInfo/appinfo.ini','App/Quiver/resources/app.asar') {
-        if (!(Test-Path -LiteralPath (Join-Path $package $relative) -PathType Leaf)) { throw "Missing installed file $relative." }
+        if (!(Test-Path -LiteralPath (Join-Path $Root $relative) -PathType Leaf)) { throw "Missing installed file $relative." }
     }
-    if ((Get-FileHash -LiteralPath (Join-Path $package 'App/Quiver/resources/app.asar')).Hash -ine $AsarSha256) {
+    $installedAsar = (Get-FileHash -LiteralPath (Join-Path $Root 'App/Quiver/resources/app.asar')).Hash
+    if ($ExpectedAsar -and $installedAsar -ine $ExpectedAsar) {
         throw 'Installed PortableApps ASAR differs from the build output.'
     }
+    if ($ExpectedAsar -and (Test-Path -LiteralPath (Join-Path $Root 'App/Quiver/Quiver_wer.dll'))) {
+        throw 'The portable payload includes the WER helper that would register its path on the host.'
+    }
+    $installedAsar
 }
 
-function Get-TreeState([IO.FileSystemInfo[]]$Roots) {
+function Get-TreeState([IO.FileSystemInfo[]]$Roots, [string]$RelativeTo) {
     $items = foreach ($root in $Roots) {
         $root
         if ($root.PSIsContainer -and !($root.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
@@ -154,7 +176,7 @@ function Get-TreeState([IO.FileSystemInfo[]]$Roots) {
             throw 'Portable footprint scope contains an unexpected reparse point.'
         }
         [ordered]@{
-            path = $item.FullName
+            path = if ($RelativeTo) { [IO.Path]::GetRelativePath($RelativeTo, $item.FullName) } else { $item.FullName }
             directory = $item.PSIsContainer
             hash = if (!$item.PSIsContainer) { (Get-FileHash -LiteralPath $item.FullName).Hash }
         }
@@ -179,6 +201,10 @@ function Get-QuiverHostFiles {
     $roots += @(Get-ChildItem -LiteralPath $temp -Force | Where-Object {
         $_.Name -match '^(Quiver([ ._-]|Portable|$)|electron_debug\.log$)' -and $_.FullName -ine $destination
     })
+    $localDumps = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'CrashDumps'
+    if (Test-Path -LiteralPath $localDumps -PathType Container) {
+        $roots += @(Get-ChildItem -LiteralPath $localDumps -File -Force -Filter 'Quiver.exe*.dmp')
+    }
     Get-TreeState @($roots)
 }
 
@@ -192,7 +218,13 @@ function Wait-For([string]$Description, [scriptblock]$Probe, [int]$Seconds = 25)
     throw "Timed out waiting for $Description."
 }
 
-function Invoke-PortableRuntime([string]$Root, [string]$Url, [string]$Pass, [string]$Records) {
+function Write-PortableFailure([string]$Phase, [Management.Automation.ErrorRecord]$Failure) {
+    $evidence.failures[$Phase] = $Failure.Exception.Message
+    Write-Warning "$Phase failed. $($Failure.Exception.Message)"
+}
+
+function Invoke-PortableRuntime([string]$Root, [string]$Url, [string]$Pass, [string]$Records,
+    [string]$ExpectedProbe = $Pass, [switch]$Restore, [switch]$PreviousBeta, [string]$SaveAsOrigin) {
     $launcherPath = (Get-Item -LiteralPath (Join-Path $Root 'QuiverPortable.exe')).FullName
     $browserPath = (Get-Item -LiteralPath (Join-Path $Root 'App/Quiver/Quiver.exe')).FullName
     $info = [Diagnostics.ProcessStartInfo]::new($launcherPath)
@@ -201,11 +233,15 @@ function Invoke-PortableRuntime([string]$Root, [string]$Url, [string]$Pass, [str
     $outsideLog = Join-Path $destination "escaped-$Pass.log"
     $outsideSwitchLog = Join-Path $destination "escaped-switch-$Pass.log"
     $outsideNetLog = Join-Path $destination "escaped-net-$Pass.json"
-    $info.Environment['ELECTRON_ENABLE_LOGGING'] = '1'
-    $info.Environment['ELECTRON_LOG_FILE'] = $outsideLog
-    $info.ArgumentList.Add("--log-file=$outsideSwitchLog")
-    $info.ArgumentList.Add("--log-net-log=$outsideNetLog")
-    $info.ArgumentList.Add($Url)
+    if (!$PreviousBeta) {
+        $info.Environment['ELECTRON_ENABLE_LOGGING'] = '1'
+        $info.Environment['ELECTRON_LOG_FILE'] = $outsideLog
+        $info.ArgumentList.Add("--log-file=$outsideSwitchLog")
+        $info.ArgumentList.Add("--log-net-log=$outsideNetLog")
+    }
+    if (!$Restore) { $info.ArgumentList.Add($Url) }
+    # A restored tab revisits the same probe URL. Clear prior results before each launch.
+    [IO.File]::WriteAllText($Records, '')
     $launcher = [Diagnostics.Process]::Start($info)
     $browser = $null
     try {
@@ -223,16 +259,23 @@ function Invoke-PortableRuntime([string]$Root, [string]$Url, [string]$Pass, [str
             if (Test-Path -LiteralPath $Records) {
                 Get-Content -LiteralPath $Records | ForEach-Object {
                     try { $_ | ConvertFrom-Json -ErrorAction Stop } catch { }
-                } | Where-Object pass -CEQ $Pass | Select-Object -Last 1
+                } | Where-Object pass -CEQ $ExpectedProbe | Select-Object -First 1
             }
         }
-        $hasCookie = $Pass -ceq 'relocated'
+        $hasCookie = $Restore -or $Pass -ceq 'relocated'
         if ($record.cookie -ne $hasCookie -or $record.storage -ne $hasCookie) {
             throw "Unexpected cookie or localStorage persistence on $Pass launch."
         }
         $null = Wait-For 'owned Quiver window' {
             $browser.Refresh()
             $browser.MainWindowHandle -ne [IntPtr]::Zero
+        }
+        if ($SaveAsOrigin) {
+            try {
+                $evidence.checks.saveAs = Invoke-PortableSaveAs -Browser $browser -Root $Root -Origin $SaveAsOrigin
+            } catch {
+                Write-PortableFailure 'saveAs' $_
+            }
         }
         if (!$browser.CloseMainWindow() -or !$browser.WaitForExit(15000) -or $browser.ExitCode -ne 0 -or
             !$launcher.WaitForExit(10000) -or $launcher.ExitCode -ne 0) {
@@ -242,12 +285,16 @@ function Invoke-PortableRuntime([string]$Root, [string]$Url, [string]$Pass, [str
             !(Get-CimInstance Win32_Process -Filter "Name='Quiver.exe'" | Where-Object ExecutablePath -IEQ $browserPath)
         } -Seconds 10
         $data = Join-Path $Root 'Data'
-        foreach ($relative in 'quiver-state.json','boosts','Partitions','Temp','Logs','CrashDumps','Downloads','Cache') {
-            if (!(Test-Path -LiteralPath (Join-Path $data $relative))) { throw "Portable runtime did not produce Data/$relative." }
-        }
         $state = Get-Content -LiteralPath (Join-Path $data 'quiver-state.json') -Raw | ConvertFrom-Json
-        if ($state.sessionOpen -ne $false -or !(@($state.tabsBySpace.'space-main'.url) -ccontains $Url)) {
+        if ((!$PreviousBeta -and $state.sessionOpen -ne $false) -or !(@($state.tabsBySpace.'space-main'.url) -ccontains $Url)) {
             throw 'Portable browser did not save its visited fixture URL and clean session state under Data.'
+        }
+        if ($PreviousBeta) {
+            return [ordered]@{ pass = $Pass; browserExit = $browser.ExitCode; launcherExit = $launcher.ExitCode;
+                cookieRestored = $record.cookie; localStorageRestored = $record.storage; settings = 'Data/quiver-state.json' }
+        }
+        foreach ($relative in 'boosts','Partitions','Temp','Logs','CrashDumps','Downloads','Cache') {
+            if (!(Test-Path -LiteralPath (Join-Path $data $relative))) { throw "Portable runtime did not produce Data/$relative." }
         }
         if (!(Get-ChildItem -LiteralPath (Join-Path $data 'Partitions') -File -Recurse -Force | Where-Object Name -CEQ 'Cookies')) {
             throw 'Chromium did not persist its partition cookies under Data.'
@@ -269,10 +316,134 @@ function Invoke-PortableRuntime([string]$Root, [string]$Url, [string]$Pass, [str
             cacheExamples = $cacheExamples; logs = 'Data/Logs/electron.log' }
     } finally {
         if ($browser) {
-            if (!$browser.HasExited) { [void]$browser.CloseMainWindow(); [void]$browser.WaitForExit(5000) }
+            if (!$browser.HasExited -and (!$browser.CloseMainWindow() -or !$browser.WaitForExit(5000))) {
+                $browser.Kill($true)
+                [void]$browser.WaitForExit(5000)
+            }
             $browser.Dispose()
         }
+        if (!$launcher.HasExited -and !$launcher.WaitForExit(5000)) { $launcher.Kill($true); [void]$launcher.WaitForExit(5000) }
         $launcher.Dispose()
+    }
+}
+
+function Assert-SeededPortableProfile([string]$Data, [string]$Url, [string]$BookmarkUrl) {
+    $state = Get-Content -LiteralPath (Join-Path $Data 'quiver-state.json') -Raw | ConvertFrom-Json
+    $bookmark = @($state.bookmarks | Where-Object { $_.url -ceq $BookmarkUrl -and $_.title -ceq 'Portable Beta 2 bookmark' })
+    if ($bookmark.Count -ne 1 -or $state.settings.devServerScan -ne $false -or
+        !(@($state.tabsBySpace.'space-main'.url) -ccontains $Url)) {
+        throw 'The saved Beta 2 bookmark, setting, or tab did not survive.'
+    }
+}
+
+function Test-UpgradeAndDriveChange([string]$Origin, [string]$Records) {
+    # DiskPart creates only this new image. Destructive disk operations below use
+    # the specific MSFT_Disk associated with that image, never a free disk guess.
+    $imagePath = Join-Path $destination 'Quiver portable drive.vhdx'
+    $diskpartScript = Join-Path $destination 'create-portable-drive.txt'
+    if ($imagePath -notmatch '\A[\x20-\x7e]+\z' -or
+        (Test-Path -LiteralPath $imagePath) -or (Test-Path -LiteralPath $diskpartScript)) {
+        throw 'The disposable virtual disk paths must be new.'
+    }
+    $diskpart = (Get-Command diskpart.exe -CommandType Application).Source
+    'create vdisk file="{0}" maximum=2048 type=expandable' -f $imagePath |
+        Set-Content -LiteralPath $diskpartScript -Encoding ascii
+    & $diskpart /s $diskpartScript | Write-Host
+    if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $imagePath -PathType Leaf)) {
+        throw "DiskPart could not create the disposable VHDX (exit $LASTEXITCODE)."
+    }
+    try {
+        $occupied = @([IO.DriveInfo]::GetDrives().Name)
+        $freeLetters = @('Q','R','S','T','U','V','W','X','Y','Z' | Where-Object { $occupied -inotcontains "${_}:\" })
+        if ($freeLetters.Count -lt 2) { throw 'Two unused drive letters are required for the portable drive test.' }
+        $oldLetter, $newLetter = $freeLetters[0], $freeLetters[1]
+        $image = Mount-DiskImage -ImagePath $imagePath -NoDriveLetter -PassThru
+        $disk = @($image | Get-Disk)
+        if ($image.ImagePath -ine $imagePath -or $disk.Count -ne 1 -or $disk[0].PartitionStyle -ne 'RAW' -or
+            $disk[0].IsBoot -or $disk[0].IsSystem -or $disk[0].Size -ne 2GB) {
+            throw 'Refusing to initialize a disk without the expected new VHDX identity.'
+        }
+        $disk = $disk[0]
+        if ($disk.IsOffline) { Set-Disk -InputObject $disk -IsOffline $false }
+        $initializedDisk = Initialize-Disk -InputObject $disk -PartitionStyle GPT -PassThru
+        $partition = New-Partition -InputObject $initializedDisk -UseMaximumSize -DriveLetter $oldLetter
+        $null = Format-Volume -Partition $partition -FileSystem NTFS -NewFileSystemLabel 'Quiver QA' -Confirm:$false
+        $oldRoot = "${oldLetter}:\"
+        $newRoot = "${newLetter}:\"
+        $null = Wait-For 'the disposable NTFS volume' { [IO.Directory]::Exists($oldRoot) }
+        $partition = Get-Partition -DriveLetter $oldLetter
+        $volume = Get-Volume -Partition $partition
+        if ($partition.DiskNumber -ne $disk.Number -or !$partition.Guid -or !$volume.UniqueId -or $volume.FileSystem -ne 'NTFS') {
+            throw 'The disposable NTFS volume identity was not established.'
+        }
+
+        $relativePackage = 'Quiver upgrade and relocation\QuiverPortable'
+        $oldPackage = Join-Path $oldRoot $relativePackage
+        $null = New-Item -ItemType Directory -Path (Split-Path -Parent $oldPackage)
+        $oldAsar = Install-Package $previousArtifact $oldPackage
+        $oldAppInfo = Get-Content -LiteralPath (Join-Path $oldPackage 'App/AppInfo/appinfo.ini')
+        if ($oldAsar -ieq $AsarSha256 -or $oldAppInfo -cnotcontains 'DisplayVersion=0.1.0-beta.2') {
+            throw 'The installed previous package does not identify Beta 2.'
+        }
+        $url = "$Origin/portable-check?pass=beta2"
+        $bookmarkUrl = "$Origin/portable-bookmark-fixture"
+        $evidence.checks.previousRuntime = Invoke-PortableRuntime $oldPackage $url 'beta2' $Records -PreviousBeta
+        $oldData = Join-Path $oldPackage 'Data'
+        $statePath = Join-Path $oldData 'quiver-state.json'
+        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+        # Seed harmless known state in the real, closed Beta 2 profile, then
+        # require Beta 2 itself to reopen the tab and preserve the fixture.
+        $state.settings.devServerScan = $false
+        $state.bookmarks = @(@{ url = $bookmarkUrl; title = 'Portable Beta 2 bookmark' })
+        [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json -Depth 30))
+        $evidence.checks.previousProfileReload = Invoke-PortableRuntime $oldPackage $url 'beta2-reopen' $Records -ExpectedProbe 'beta2' -Restore -PreviousBeta
+        Assert-SeededPortableProfile $oldData $url $bookmarkUrl
+
+        $stateBeforeUpgrade = Get-TreeState @((Get-Item -LiteralPath $oldData))
+        $hostBeforeUpgrade = Get-HostState
+        $filesBeforeUpgrade = Get-QuiverHostFiles
+        $null = Install-Package $artifact $oldPackage $AsarSha256
+        if ((Get-TreeState @((Get-Item -LiteralPath $oldData))) -cne $stateBeforeUpgrade) {
+            throw 'Upgrading the published Beta 2 package changed files under Data.'
+        }
+        $evidence.checks.previousBetaUpgradePreservedData = $true
+        $packageBefore = Get-PackageOutsideData $oldPackage
+        $evidence.checks.upgradedRuntime = Invoke-PortableRuntime $oldPackage $url 'upgraded' $Records -ExpectedProbe 'beta2' -Restore
+        Assert-SeededPortableProfile $oldData $url $bookmarkUrl
+        if ((Get-PackageOutsideData $oldPackage) -cne $packageBefore -or
+            (Get-HostState) -cne $hostBeforeUpgrade -or (Get-QuiverHostFiles) -cne $filesBeforeUpgrade) {
+            throw 'Upgrade or the upgraded runtime changed scoped host or package files.'
+        }
+        Write-Host 'PASS: upgraded the published Beta 2 PAF in place and restored its seeded profile and browser storage.'
+
+        $treeBefore = Get-TreeState @((Get-Item -LiteralPath $oldPackage)) $oldPackage
+        Set-Partition -InputObject $partition -NewDriveLetter $newLetter
+        $null = Wait-For 'the new drive letter and disappearance of the old letter' {
+            [IO.Directory]::Exists($newRoot) -and ![IO.Directory]::Exists($oldRoot)
+        }
+        $newPartition = Get-Partition -DriveLetter $newLetter
+        $newVolume = Get-Volume -Partition $newPartition
+        if ($newPartition.DiskNumber -ne $partition.DiskNumber -or $newPartition.Guid -ine $partition.Guid -or
+            $newVolume.UniqueId -ine $volume.UniqueId) {
+            throw 'The new drive letter did not refer to the same partition and volume.'
+        }
+        $newPackage = Join-Path $newRoot $relativePackage
+        if ((Get-TreeState @((Get-Item -LiteralPath $newPackage)) $newPackage) -cne $treeBefore) {
+            throw 'Changing the drive letter changed the package or Data bytes before launch.'
+        }
+        $packageBefore = Get-PackageOutsideData $newPackage
+        $runtime = Invoke-PortableRuntime $newPackage $url 'new-drive-letter' $Records -ExpectedProbe 'beta2' -Restore
+        Assert-SeededPortableProfile (Join-Path $newPackage 'Data') $url $bookmarkUrl
+        if ([IO.Directory]::Exists($oldRoot) -or (Get-PackageOutsideData $newPackage) -cne $packageBefore -or
+            (Get-HostState) -cne $hostBeforeUpgrade -or (Get-QuiverHostFiles) -cne $filesBeforeUpgrade) {
+            throw 'The new-drive runtime changed scoped host or package files, or restored the previous letter.'
+        }
+        $evidence.checks.driveLetterChange = [ordered]@{ oldLetter = $oldLetter; newLetter = $newLetter; oldLetterUnavailable = $true;
+            samePartitionAndVolume = $true; identicalTreeBeforeLaunch = $true; bookmarkRetained = $true; settingRetained = $true; tabRestored = $true; runtime = $runtime }
+        Write-Host "PASS: the same VHDX volume changed from $oldLetter to $newLetter and restored bookmarks, settings, tabs, and browser storage."
+    } finally {
+        if ((Get-DiskImage -ImagePath $imagePath).Attached) { Dismount-DiskImage -ImagePath $imagePath | Out-Null }
+        if ((Get-DiskImage -ImagePath $imagePath).Attached) { throw 'The disposable VHDX remained attached.' }
     }
 }
 
@@ -280,7 +451,7 @@ $fixture = $null
 try {
     $before = Get-HostState
     $null = New-Item -ItemType Directory -Path $destination
-    Install-Package
+    $null = Install-Package $artifact $package $AsarSha256
     if ((Get-HostState) -cne $before) { throw 'Installation changed scoped host browser, startup, or installed-profile state.' }
     $hostFilesBefore = Get-QuiverHostFiles
     $data = Join-Path $package 'Data'
@@ -304,13 +475,23 @@ const server = http.createServer((request, response) => {
   const url = new URL(request.url, 'http://127.0.0.1');
   if (url.pathname === '/portable-check') {
     const pass = url.searchParams.get('pass');
-    if (pass !== 'fresh' && pass !== 'relocated') { response.writeHead(400).end(); return; }
-    response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' }).end(`<!doctype html><title>Quiver Portable verification</title><script>
+    if (!['fresh', 'relocated', 'beta2'].includes(pass)) { response.writeHead(400).end(); return; }
+    response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' }).end(`<!doctype html><title>Quiver Portable verification</title>
+    ${pass === 'fresh' ? '<a href="/portable-download?name=quiver-default.txt">Quiver Default Download</a><br><a href="/portable-download?name=quiver-custom.txt">Quiver Custom Download</a><br><a href="/portable-download?name=quiver-reopened.txt">Quiver Reopened Download</a>' : ''}
+    <script>
       const stored = localStorage.getItem('quiver-portable-fixture') === 'present';
       localStorage.setItem('quiver-portable-fixture', 'present');
       fetch('/cacheable').then(r => r.text()).then(() => fetch('/probe'))
         .then(r => r.text()).then(cookie => fetch('/done?pass=${pass}&stored=' + stored + '&cookie=' + cookie));
     </script>`);
+  } else if (url.pathname === '/portable-download') {
+    const name = url.searchParams.get('name');
+    if (!['quiver-default.txt', 'quiver-custom.txt', 'quiver-reopened.txt'].includes(name)) { response.writeHead(400).end(); return; }
+    response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'no-store' })
+      .end(`Quiver portable download: ${name}\n`);
+  } else if (url.pathname === '/portable-crash') {
+    response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' })
+      .end('<!doctype html><title>Quiver portable crash fixture</title><h1>Quiver portable crash fixture</h1>');
   } else if (url.pathname === '/cacheable') {
     response.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'public, max-age=600' }).end('portable cache fixture '.repeat(2048));
   } else if (url.pathname === '/probe') {
@@ -336,38 +517,72 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(originFile, 'http://127.0.0
         if (Test-Path -LiteralPath $originFile) { Get-Content -LiteralPath $originFile -Raw }
     }
     if ($origin -notmatch '\Ahttp://127\.0\.0\.1:\d{1,5}\z') { throw 'Invalid loopback fixture origin.' }
-    $evidence.checks.freshRuntime = Invoke-PortableRuntime $package "$origin/portable-check?pass=fresh" 'fresh' $records
-    if ((Get-PackageOutsideData $package) -cne $packageBefore) { throw 'First launch changed package files outside Data.' }
-    if ((Get-QuiverHostFiles) -cne $hostFilesBefore -or (Get-HostState) -cne $before) { throw 'First launch changed scoped Quiver host state.' }
-    Write-Host 'PASS: fresh launcher recreated Data and kept browser state, partition cookies, cache and logs inside it.'
+    $runtimePhase = 'freshRuntime'
+    try {
+        $evidence.checks.freshRuntime = Invoke-PortableRuntime $package "$origin/portable-check?pass=fresh" 'fresh' $records -SaveAsOrigin $origin
+        if ((Get-PackageOutsideData $package) -cne $packageBefore) { throw 'First launch changed package files outside Data.' }
+        if ((Get-QuiverHostFiles) -cne $hostFilesBefore -or (Get-HostState) -cne $before) { throw 'First launch changed scoped Quiver host state.' }
+        Write-Host 'PASS: fresh launcher recreated Data and kept browser state, partition cookies, cache and logs inside it.'
 
-    $dataBeforeReinstall = Get-TreeState @((Get-Item -LiteralPath $data))
-    Install-Package
-    if ((Get-TreeState @((Get-Item -LiteralPath $data))) -cne $dataBeforeReinstall) { throw 'Reinstallation changed the portable Data tree.' }
-    if ((Get-HostState) -cne $before) { throw 'Reinstallation changed scoped host browser, startup, or installed-profile state.' }
-    $evidence.checks.reinstallPreservedData = $true
+        $runtimePhase = 'reinstall'
+        $dataBeforeReinstall = Get-TreeState @((Get-Item -LiteralPath $data))
+        $null = Install-Package $artifact $package $AsarSha256
+        if ((Get-TreeState @((Get-Item -LiteralPath $data))) -cne $dataBeforeReinstall) { throw 'Reinstallation changed the portable Data tree.' }
+        if ((Get-HostState) -cne $before) { throw 'Reinstallation changed scoped host browser, startup, or installed-profile state.' }
+        $evidence.checks.reinstallPreservedData = $true
 
-    $relocated = Join-Path $destination 'Relocated Quiver Portable'
-    $packageItem = Get-Item -LiteralPath $package -Force
-    $source = $packageItem.FullName
-    $destinationItem = Get-Item -LiteralPath $destination -Force
-    if (!$packageItem.PSIsContainer -or ($packageItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-        ($destinationItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-        $destinationItem.Parent.FullName -ine $runnerTemp -or
-        $source -ine (Join-Path $destinationItem.FullName 'QuiverPortable') -or (Test-Path -LiteralPath $relocated)) {
-        throw 'Refusing to move a package outside the verified disposable destination.'
+        $runtimePhase = 'sameDriveRelocation'
+        $relocated = Join-Path $destination 'Relocated Quiver Portable'
+        $packageItem = Get-Item -LiteralPath $package -Force
+        $source = $packageItem.FullName
+        $destinationItem = Get-Item -LiteralPath $destination -Force
+        if (!$packageItem.PSIsContainer -or ($packageItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+            ($destinationItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+            $destinationItem.Parent.FullName -ine $runnerTemp -or
+            $source -ine (Join-Path $destinationItem.FullName 'QuiverPortable') -or (Test-Path -LiteralPath $relocated)) {
+            throw 'Refusing to move a package outside the verified disposable destination.'
+        }
+        Move-Item -LiteralPath $source -Destination $relocated
+        $packageBefore = Get-PackageOutsideData $relocated
+        $evidence.checks.relocatedRuntime = Invoke-PortableRuntime $relocated "$origin/portable-check?pass=relocated" 'relocated' $records
+        if ((Get-PackageOutsideData $relocated) -cne $packageBefore -or (Test-Path -LiteralPath $source)) {
+            throw 'Relocated launch changed package files outside Data or recreated the old package path.'
+        }
+        if ((Get-QuiverHostFiles) -cne $hostFilesBefore -or (Get-HostState) -cne $before) {
+            throw 'Relocated launch changed scoped host browser, startup, or app-file state.'
+        }
+        $evidence.checks.scopedHostAndPackageUnchanged = $true
+        Write-Host 'PASS: reinstall preserved the Data tree and the relocated launcher restored cookie and localStorage without changing scoped host or package files.'
+    } catch {
+        Write-PortableFailure $runtimePhase $_
     }
-    Move-Item -LiteralPath $source -Destination $relocated
-    $packageBefore = Get-PackageOutsideData $relocated
-    $evidence.checks.relocatedRuntime = Invoke-PortableRuntime $relocated "$origin/portable-check?pass=relocated" 'relocated' $records
-    if ((Get-PackageOutsideData $relocated) -cne $packageBefore -or (Test-Path -LiteralPath $source)) {
-        throw 'Relocated launch changed package files outside Data or recreated the old package path.'
+
+    if ($evidence.checks.scopedHostAndPackageUnchanged) {
+        try {
+            $evidence.checks.crashDump = Invoke-PortableCrashDump -Root $relocated -Origin $origin
+        } catch {
+            Write-PortableFailure 'crashDump' $_
+        }
+        try {
+            if ((Get-PackageOutsideData $relocated) -cne $packageBefore -or
+                (Get-QuiverHostFiles) -cne $hostFilesBefore -or (Get-HostState) -cne $before) {
+                throw 'The crash and recovery changed scoped host or package files.'
+            }
+        } catch {
+            Write-PortableFailure 'crashFootprint' $_
+        }
+    } else {
+        $evidence.skipped = [ordered]@{ crashDump = 'The relocated package and its scoped footprint were not verified.' }
+        Write-Warning $evidence.skipped.crashDump
     }
-    if ((Get-QuiverHostFiles) -cne $hostFilesBefore -or (Get-HostState) -cne $before) {
-        throw 'Relocated launch changed scoped host browser, startup, or app-file state.'
+    try {
+        Test-UpgradeAndDriveChange $origin $records
+    } catch {
+        Write-PortableFailure 'upgradeOrDriveChange' $_
     }
-    $evidence.checks.scopedHostAndPackageUnchanged = $true
-    Write-Host 'PASS: reinstall preserved the Data tree and the relocated launcher restored cookie and localStorage without changing scoped host or package files.'
+    if ($evidence.failures.Count) {
+        throw "PortableApps verification failed in $($evidence.failures.Keys -join ', '). See the runtime evidence."
+    }
 } catch {
     $evidence.failure = $_.Exception.Message
     throw

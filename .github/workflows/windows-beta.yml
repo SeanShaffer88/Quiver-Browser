@@ -87,12 +87,17 @@ jobs:
 
       - name: Verify the PortableApps installer and hash the release assets
         id: packages
+        shell: pwsh -STA -NoProfile -Command . '{0}'
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $setup = "release/Quiver-v$version-x64-Setup.exe"
           $portable = "release/portableapps-build/QuiverPortable_${version}_English.paf.exe"
           $asarHash = (Get-FileHash -Algorithm SHA256 -LiteralPath 'release/win-unpacked/resources/app.asar').Hash
-          ./scripts/Test-PortableApps.ps1 -Installer $portable -AsarSha256 $asarHash
+          $previous = Join-Path $env:RUNNER_TEMP 'QuiverPortable_0.1.0-beta.2_English.paf.exe'
+          $previousUrl = 'https://github.com/SeanShaffer88/Quiver-Browser/releases/download/v0.1.0-beta.2/QuiverPortable_0.1.0-beta.2_English.paf.exe'
+          & curl.exe --fail --location --silent --show-error --proto '=https' --proto-redir '=https' --max-time 120 --retry 2 --output $previous $previousUrl
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./scripts/Test-PortableApps.ps1 -Installer $portable -AsarSha256 $asarHash -PreviousInstaller $previous
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Get-FileHash -Algorithm SHA256 -LiteralPath $setup, $portable | ForEach-Object {
             '{0}  {1}' -f $_.Hash.ToLowerInvariant(), (Split-Path -Leaf $_.Path)

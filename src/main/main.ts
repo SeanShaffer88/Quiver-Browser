@@ -1,4 +1,4 @@
-import { app, BaseWindow, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
+import { app, BaseWindow, crashReporter, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME } from '../shared/constants';
@@ -99,6 +99,11 @@ async function main(): Promise<void> {
   if (!app.requestSingleInstanceLock({ argv: process.argv })) {
     app.quit();
     return;
+  }
+  if (portableDownloadPath && app.isPackaged) {
+    // Crashpad can otherwise prefer an inherited location over Electron's configured path.
+    process.env.BREAKPAD_DUMP_LOCATION = app.getPath('crashDumps');
+    crashReporter.start({ uploadToServer: false });
   }
   type LaunchTargets = ReturnType<typeof parseLaunchArgs>;
   let handleSecondInstance: ((targets: LaunchTargets) => void) | undefined;
