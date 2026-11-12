@@ -30,7 +30,7 @@ jobs:
 
       - name: Import through the browser UI and verify persistence
         run: |
-          powershell.exe -NoProfile -STA -File scripts/verification/Test-BookmarkSettings.ps1 -Workspace $env:BOOKMARK_TEST_ROOT
+          pwsh -NoProfile -STA -File scripts/verification/Test-BookmarkSettings.ps1 -Workspace $env:BOOKMARK_TEST_ROOT
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

@@ -15,6 +15,38 @@ if (!$workspacePath.StartsWith($runnerTemp, [StringComparison]::OrdinalIgnoreCas
 }
 
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class QuiverTestInput
+{
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Point { public int X, Y; }
+
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
+
+    public static bool Click(IntPtr window, uint processId, int x, int y)
+    {
+        uint owner;
+        if (window == IntPtr.Zero || GetWindowThreadProcessId(window, out owner) == 0 || owner != processId)
+            return false;
+        SetForegroundWindow(window);
+        var point = new Point { X = x, Y = y };
+        if (GetForegroundWindow() != window || GetAncestor(WindowFromPoint(point), 2) != window || !SetCursorPos(x, y))
+            return false;
+        mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+        return true;
+    }
+}
+'@
 $statePath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Quiver\quiver-state.json'
 $evidencePath = Join-Path $workspacePath 'settings-e2e.json'
 $expectedProfile = @(
@@ -24,6 +56,7 @@ $expectedProfile = @(
 $expectedAll = $expectedProfile + @{ title = 'Quiver fixture export & one'; url = 'https://example.invalid/html-one' }
 $installerRoute = 'quiver://app/settings.html?import=bookmarks'
 $settingsRoute = 'quiver://app/settings.html'
+$newTabRoute = 'quiver://app/newtab.html'
 $steps = [Collections.Generic.List[object]]::new()
 $script:appProcess = $null
 
@@ -106,6 +139,37 @@ function Get-ActiveRoute($State) {
     $tabs = @($State.tabsBySpace.$space)
     $index = [int]$State.activeIndexBySpace.$space
     if ($index -lt $tabs.Count) { $tabs[$index].url }
+}
+
+function Reset-FixtureSession {
+    if (!$script:appProcess.HasExited) { throw 'The fixture session can only be reset with Quiver closed.' }
+    $state = Read-State
+    $state.tabsBySpace = [pscustomobject]@{}
+    $state.activeIndexBySpace = [pscustomobject]@{}
+    $json = $state | ConvertTo-Json -Depth 20
+    [IO.File]::WriteAllText($statePath, $json, [Text.UTF8Encoding]::new($false))
+}
+
+function Open-SettingsFromNewTab {
+    $null = Wait-For 'fresh New Tab route before the Settings click' {
+        (Get-ActiveRoute (Read-State)) -ceq $newTabRoute
+    }
+    $null = Wait-For 'Settings gear to open the Settings route' {
+        $route = Get-ActiveRoute (Read-State)
+        if ($route -ceq $settingsRoute) { return $true }
+        if ($route -cne $newTabRoute) { return }
+        $window = Get-QuiverWindow
+        $button = Find-Control $window 'Settings' ([Windows.Automation.ControlType]::Button)
+        if (!$button -or !$button.Current.IsEnabled -or $button.Current.IsOffscreen) { return }
+        $bounds = $button.Current.BoundingRectangle
+        if ($bounds.IsEmpty -or $bounds.Width -le 0 -or $bounds.Height -le 0) { return }
+        $x = [int]($bounds.X + $bounds.Width / 2)
+        $y = [int]($bounds.Y + $bounds.Height / 2)
+        if ([QuiverTestInput]::Click([IntPtr]$window.Current.NativeWindowHandle, $script:appProcess.Id, $x, $y)) {
+            Start-Sleep -Milliseconds 900
+        }
+    }
+    Confirm-Route $settingsRoute
 }
 
 function Confirm-Route {
@@ -255,9 +319,9 @@ try {
     Confirm-Bookmarks $expectedProfile 'Installer-launched Chrome import' $installerRoute 'Imported 2 bookmarks.'
     Stop-Quiver
 
+    Reset-FixtureSession
     Start-Quiver
-    Invoke-Button 'Settings'
-    Confirm-Route $settingsRoute
+    Open-SettingsFromNewTab
     Import-HtmlFile
     Confirm-ImportStatus 'Imported 1 bookmark.'
     Confirm-Bookmarks $expectedAll 'Settings HTML import' $settingsRoute 'Imported 1 bookmark.'
@@ -268,7 +332,6 @@ try {
     Stop-Quiver
 
     Start-Quiver
-    Invoke-Button 'Settings'
     Confirm-Route $settingsRoute
     Confirm-Bookmarks $expectedAll 'Quiver restart' $settingsRoute
     Stop-Quiver
@@ -278,7 +341,15 @@ try {
 } catch {
     $failure = $_
     $diagnostics = try { @(Get-UiDiagnostics) } catch { @() }
-    [ordered]@{ passed = $false; error = $failure.ToString(); steps = $steps.ToArray(); ui = $diagnostics } |
+    $state = try { Read-State } catch { $null }
+    [ordered]@{
+        passed = $false
+        error = $failure.ToString()
+        steps = $steps.ToArray()
+        activeRoute = Get-ActiveRoute $state
+        tabs = $state.tabsBySpace
+        ui = $diagnostics
+    } |
         ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
     throw $failure
 } finally {
