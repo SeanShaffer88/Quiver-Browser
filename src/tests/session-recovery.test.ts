@@ -85,6 +85,19 @@ test('session and undo preserve local files and an intentional blank tab', () =>
   assert.equal(rememberClosed([], { ...entries[1], title: 'Blank', spaceId: 'work', index: 2 })[0].url, entries[1].url);
 });
 
+test('session snapshots preserve bounded page titles and omit URL and legacy title fallbacks', () => {
+  const url = 'https://example.test/doc?token=fixture#section';
+  const entries = [
+    { id: 1, url, title: 'Saved dashboard' },
+    { id: 2, url, title: url },
+    { id: 3, url, title: 'x'.repeat(300) },
+    { id: 4, url },
+  ];
+  assert.deepEqual(snapshotSpace(entries, 1).tabs, [
+    { url, title: 'Saved dashboard' }, { url }, { url, title: 'x'.repeat(200) }, { url },
+  ]);
+});
+
 test('Ctrl+Shift+T reopens a tab and Ctrl+T still opens the command bar', () => {
   const key = { type: 'keyDown', code: 'KeyT', control: true, shift: false, alt: false } as Input;
   assert.equal(shortcutFor({ ...key, shift: true }), 'reopen-tab');

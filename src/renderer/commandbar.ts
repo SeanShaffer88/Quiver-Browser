@@ -12,7 +12,7 @@ const context = document.getElementById('context')!;
 const enter = document.getElementById('enter')!;
 const alternate = document.getElementById('alternate')!;
 const announcement = document.getElementById('announcement')!;
-const examples = 'Try a URL, gh facebook/react, env, a JWT, or 1700000000.';
+const examples = 'Try tab to find open tabs, a URL, gh facebook/react, env, or a JWT.';
 
 let id: number | null = null;
 let request = 0;
@@ -29,7 +29,8 @@ function announce(text: string): void {
 function updatePreview(): void {
   const item = items[selected];
   const choice = showAlternate && item?.alternative ? item.alternative : item?.preview;
-  const tab = choice?.tab === 'new' ? 'New tab' : choice?.tab === 'current' ? 'Current tab' : '';
+  const tab = choice?.tab === 'new' ? 'New tab' : choice?.tab === 'current' ? 'Current tab'
+    : choice?.tab === 'existing' ? 'Existing tab' : '';
   preview.hidden = !choice;
   enter.hidden = !choice?.canRun;
   alternate.hidden = !item?.alternative;
@@ -39,9 +40,10 @@ function updatePreview(): void {
   destination.textContent = choice.destination ?? '';
   destination.title = choice.destination ?? '';
   destination.hidden = !choice.destination;
-  context.textContent = [tab, choice.space && `Space: ${choice.space}`, choice.source && `From ${choice.source}`].filter(Boolean).join(' · ');
+  const location = [tab, choice.space && `Space: ${choice.space}`, choice.tab === 'existing' && choice.environment];
+  context.textContent = [...location, choice.source && `From ${choice.source}`].filter(Boolean).join(' · ');
   context.hidden = !context.textContent;
-  announce([choice.title, tab, choice.space && `Space: ${choice.space}`].filter(Boolean).join('. '));
+  announce([choice.title, ...location].filter(Boolean).join('. '));
 }
 
 function choose(index: number, scroll = false): void {

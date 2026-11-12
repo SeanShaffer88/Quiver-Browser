@@ -10,6 +10,7 @@ import { hasSavedNewTabPlaceholder, normalizeRecentlyClosed, type PersistedClose
 
 export interface PersistedTab {
   url: string;
+  title?: string;
   automaticPlaceholder?: true;
 }
 

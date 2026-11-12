@@ -64,6 +64,8 @@ This section describes the current source. See the release notes for the feature
 
 ### Shortcuts
 
+Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a title or hostname to narrow the results. Use the arrow keys and Enter to switch directly to a tab in its Space. Each result shows its Space and, when available, its environment.
+
 | Keys | Action |
 |---|---|
 | `Ctrl+K` / `Ctrl+L` | Command bar, current tab |

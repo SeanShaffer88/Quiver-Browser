@@ -73,6 +73,16 @@ export function commandChoice(suggestion: Suggestion, context: CommandContext): 
     case 'boost':
       preview = { title: 'Edit Boost', destination: action.name, space: context.spaceName, tab: 'new', canRun: true };
       break;
+    case 'activate-tab': {
+      const { title, host, spaceName, environment } = action.target;
+      detail = [host, spaceName, environment].filter(Boolean).join(' · ');
+      preview = {
+        title: 'Switch to open tab', destination: [title, host].filter(Boolean).join(' · '),
+        space: spaceName, tab: 'existing', environment: environment ?? undefined, canRun: true,
+      };
+      accessibleLabel = [`Switch to ${title}`, host, `Space: ${spaceName}`, environment].filter(Boolean).join(', ');
+      break;
+    }
     case 'noop':
       preview = { title: kind === 'jwt' ? 'Decode locally' : label, destination: detail, canRun: false };
       if (kind === 'jwt') accessibleLabel = 'JWT decode result';

@@ -239,10 +239,10 @@ function Read-Session {
     }
 }
 
-function Wait-Session([string]$Url, [int]$Count) {
+function Wait-Session([string]$Url, [int]$Count, [string]$Space = 'space-main') {
     $null = Wait-For "persisted tab $Url and $Count tabs" {
         $s = Read-Session
-        $s.route -ceq $Url -and $s.count -eq $Count -and $s.space -ceq 'space-main'
+        $s.route -ceq $Url -and $s.count -eq $Count -and $s.space -ceq $Space
     }
 }
 
@@ -340,12 +340,19 @@ try {
     $newTab = "$prod/docs"
     $altNewTab = "$prod/keyboard-new-tab"
     $searchResult = "$staging/search?q=fixture%20release%20notes"
+    $isolatedTab = "$staging/isolated-target?fixture-token=only-in-url#private"
     $seed = [ordered]@{
         version = 1
-        spaces = @(@{ id = 'space-main'; name = 'Fixture Space'; color = '#5b8cff'; isolated = $false })
+        spaces = @(
+            @{ id = 'space-main'; name = 'Fixture Space'; color = '#5b8cff'; isolated = $false },
+            @{ id = 'space-isolated'; name = 'Isolated Space'; color = '#ff7a59'; isolated = $true }
+        )
         activeSpaceId = 'space-main'
-        tabsBySpace = @{ 'space-main' = @(@{ url = $initial }) }
-        activeIndexBySpace = @{ 'space-main' = 0 }
+        tabsBySpace = @{
+            'space-main' = @(@{ url = $initial })
+            'space-isolated' = @(@{ url = $isolatedTab; title = 'Saved isolated dashboard' })
+        }
+        activeIndexBySpace = @{ 'space-main' = 0; 'space-isolated' = 0 }
         settings = @{
             envGroups = @(@{ name = 'Fixture'; local = ''; staging = $staging; prod = $prod })
             searchEngine = "$staging/search?q=%s"
@@ -460,6 +467,39 @@ try {
     Wait-Session $altNewTab 3
     $null = Wait-For 'Alt+Enter new tab fixture request' { Read-Requests | Where-Object { $_.path -ceq '/keyboard-new-tab' } }
     Record-Pass 'Alt+Enter confirms navigation when the command bar is already in new-tab mode'
+
+    Open-Command 0x4b
+    $requestsBefore = @(Read-Requests).Count
+    Type-Command 'tab no fixture matches this'
+    Confirm-Preview 'No matching open tabs'
+    Press-Key 0x0d
+    Confirm-NoRequest $requestsBefore $altNewTab 3
+    Type-Command 'tab saved isolated dashboard'
+    Confirm-Preview 'Switch to open tab' 'Saved isolated dashboard' 'Existing tab · Space: Isolated Space · STAGING'
+    Confirm-NoRequest $requestsBefore $altNewTab 3
+    Type-Command 'tab 127.0.0.1'
+    Confirm-Preview 'Switch to open tab' '127.0.0.1' 'Existing tab · Space: Fixture Space'
+    Press-Key 0x26
+    Confirm-Preview 'Switch to open tab' '127.0.0.1' 'Existing tab · Space: Isolated Space · STAGING'
+    $names = @(Get-VisibleNames) -join '|'
+    if (!$names.Contains('STAGING') -or $names.Contains('fixture-token=') -or $names.Contains('#private')) {
+        throw 'The open-tab result is missing its environment or includes a private URL component.'
+    }
+    Press-Key 0x0d 0x12
+    Confirm-NoRequest $requestsBefore $altNewTab 3
+    Confirm-Preview 'Switch to open tab' '127.0.0.1' 'Existing tab · Space: Isolated Space · STAGING'
+    Press-Key 0x0d
+    Wait-Session $isolatedTab 1 'space-isolated'
+    $null = Wait-For 'selected isolated tab fixture request' {
+        Read-Requests | Where-Object { $_.path -ceq '/isolated-target?fixture-token=only-in-url' }
+    }
+    $session = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+    if (@($session.tabsBySpace.'space-main').Count -ne 3 -or
+        !($session.spaces | Where-Object { $_.id -ceq 'space-isolated' -and $_.isolated })) {
+        throw 'Tab search changed the source tab list or the target Space isolation.'
+    }
+    Record-Pass 'Ctrl+K tab search stays local, previews the target Space, and switches to the existing isolated tab on Enter'
+
     Write-Evidence 'passed'
 } catch {
     $failure = $_
