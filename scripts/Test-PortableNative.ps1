@@ -28,7 +28,7 @@ public static class QuiverPortableInput {
     private static extern int GetWindowText(IntPtr window, StringBuilder text, int size);
     [DllImport("user32")] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32")] private static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
-    [DllImport("user32")] private static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
+    [DllImport("user32")] private static extern bool PostMessage(IntPtr window, uint message, IntPtr wparam, IntPtr lparam);
 
     private delegate bool WindowCallback(IntPtr window, IntPtr state);
 
@@ -47,6 +47,11 @@ public static class QuiverPortableInput {
         return result;
     }
 
+    public static bool CloseDialog(uint processId, string title) {
+        IntPtr dialog = FindDialog(processId, title);
+        return dialog == IntPtr.Zero || PostMessage(dialog, 0x0010, IntPtr.Zero, IntPtr.Zero);
+    }
+
     private static bool Focus(IntPtr window, uint processId) {
         if (window == IntPtr.Zero || GetWindowThreadProcessId(window, out uint owner) == 0 || owner != processId)
             return false;
@@ -59,22 +64,6 @@ public static class QuiverPortableInput {
             !SetCursorPos(x, y)) return false;
         mouse_event(2, 0, 0, 0, UIntPtr.Zero);
         mouse_event(4, 0, 0, 0, UIntPtr.Zero);
-        return true;
-    }
-
-    public static bool ShowAddress(IntPtr window, uint processId) {
-        if (!Focus(window, processId)) return false;
-        keybd_event(0x11, 0, 0, UIntPtr.Zero);
-        keybd_event(0x4C, 0, 0, UIntPtr.Zero);
-        keybd_event(0x4C, 0, 2, UIntPtr.Zero);
-        keybd_event(0x11, 0, 2, UIntPtr.Zero);
-        return true;
-    }
-
-    public static bool CloseAddress(IntPtr window, uint processId) {
-        if (!Focus(window, processId)) return false;
-        keybd_event(0x1B, 0, 0, UIntPtr.Zero);
-        keybd_event(0x1B, 0, 2, UIntPtr.Zero);
         return true;
     }
 }
@@ -125,32 +114,6 @@ function Get-PortableSaveDialog([Diagnostics.Process]$Browser, [string]$Title) {
     if ($handle -ne [IntPtr]::Zero) { [Windows.Automation.AutomationElement]::FromHandle($handle) }
 }
 
-function Get-PortableDialogFolder($Dialog, [int]$ProcessId) {
-    $handle = [IntPtr]$Dialog.Current.NativeWindowHandle
-    if (![QuiverPortableInput]::ShowAddress($handle, $ProcessId)) { throw 'Could not focus the owned Save As address bar.' }
-    $folder = Wait-For 'the full folder in the Save As address bar' {
-        try {
-            $focused = [Windows.Automation.AutomationElement]::FocusedElement
-            if (!$focused -or $focused.Current.ProcessId -ne $ProcessId -or
-                $focused.Current.ControlType -ne [Windows.Automation.ControlType]::Edit) { return }
-            $parent = $focused
-            $walker = [Windows.Automation.TreeWalker]::RawViewWalker
-            while ($parent -and $parent.Current.NativeWindowHandle -ne $handle.ToInt64()) {
-                $parent = $walker.GetParent($parent)
-            }
-            if (!$parent) { return }
-            $pattern = $null
-            if (!$focused.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) { return }
-            $value = $pattern.Current.Value
-            if ($value -and [IO.Path]::IsPathFullyQualified($value)) { [IO.Path]::GetFullPath($value) }
-        } catch [Windows.Automation.ElementNotAvailableException] {
-            # Ctrl+L replaces the breadcrumb control with an edit.
-        }
-    }
-    if (![QuiverPortableInput]::CloseAddress($handle, $ProcessId)) { throw 'Could not close the owned Save As address edit.' }
-    $folder
-}
-
 function Invoke-PortableSaveAs([Diagnostics.Process]$Browser, [string]$Root, [string]$Origin) {
     if ($Origin -notmatch '\Ahttp://127\.0\.0\.1:\d{1,5}\z') { throw 'Invalid local download fixture origin.' }
     $downloads = Join-Path $Root 'Data/Downloads'
@@ -163,43 +126,52 @@ function Invoke-PortableSaveAs([Diagnostics.Process]$Browser, [string]$Root, [st
     )
     $proof = foreach ($test in $tests) {
         $target = Join-Path $test.folder $test.name
+        $defaultTarget = Join-Path $downloads $test.name
+        $useDefaultDestination = $test.folder -ieq $downloads
         $dialogTitle = "$Origin/portable-download?name=$($test.name)"
-        if (Test-Path -LiteralPath $target) { throw 'A portable download fixture already exists.' }
+        if ((Test-Path -LiteralPath $target) -or (Test-Path -LiteralPath $defaultTarget)) {
+            throw 'A portable download fixture already exists.'
+        }
         Invoke-PortableClick $Browser $test.link ([Windows.Automation.ControlType]::Hyperlink)
-        $dialog = Wait-For "the native Save As dialog for $($test.name)" { Get-PortableSaveDialog $Browser $dialogTitle }
-        $initialFolder = Get-PortableDialogFolder $dialog $Browser.Id
-        if ($initialFolder -ine [IO.Path]::GetFullPath($downloads)) {
-            throw "Save As opened in '$initialFolder' instead of portable Data/Downloads."
-        }
-
-        $fileEdit = Wait-For 'the Save As file name field' {
-            try {
-                $editType = [Windows.Automation.PropertyCondition]::new(
-                    [Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Edit)
-                foreach ($id in '1148','1001') {
-                    $editId = [Windows.Automation.PropertyCondition]::new(
-                        [Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
-                    $edit = $dialog.FindFirst([Windows.Automation.TreeScope]::Descendants,
-                        [Windows.Automation.AndCondition]::new($editType, $editId))
-                    $pattern = $null
-                    if ($edit -and $edit.Current.IsEnabled -and !$edit.Current.IsOffscreen -and
-                        $edit.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern) -and
-                        !$pattern.Current.IsReadOnly) {
-                        return $pattern
+        try {
+            $dialog = Wait-For "the native Save As dialog for $($test.name)" { Get-PortableSaveDialog $Browser $dialogTitle }
+            $fileEdit = Wait-For 'the Save As file name field' {
+                try {
+                    $editType = [Windows.Automation.PropertyCondition]::new(
+                        [Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Edit)
+                    foreach ($id in '1148','1001') {
+                        $editId = [Windows.Automation.PropertyCondition]::new(
+                            [Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
+                        $edit = $dialog.FindFirst([Windows.Automation.TreeScope]::Descendants,
+                            [Windows.Automation.AndCondition]::new($editType, $editId))
+                        $pattern = $null
+                        if ($edit -and $edit.Current.IsEnabled -and !$edit.Current.IsOffscreen -and
+                            $edit.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern) -and
+                            !$pattern.Current.IsReadOnly) {
+                            return $pattern
+                        }
                     }
-                }
-            } catch [Windows.Automation.ElementNotAvailableException] { }
+                } catch [Windows.Automation.ElementNotAvailableException] { }
+            }
+            $initialName = $fileEdit.Current.Value
+            if ($initialName -cne $test.name -and $initialName -cne [IO.Path]::GetFileNameWithoutExtension($test.name)) {
+                throw "Save As suggested '$initialName' instead of '$($test.name)'."
+            }
+            if (!$useDefaultDestination) { $fileEdit.SetValue($target) }
+            $save = Get-PortableControl $dialog ([Windows.Automation.AutomationElement]::AutomationIdProperty) '1'
+            if (!$save -or $save.Current.Name.TrimStart('&') -cne 'Save' -or !$save.Current.IsEnabled) {
+                throw 'Could not identify the enabled Save button in the owned dialog.'
+            }
+            $save.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+            $null = Wait-For 'the owned native Save As dialog to close' { !(Get-PortableSaveDialog $Browser $dialogTitle) }
+        } catch {
+            if ([QuiverPortableInput]::CloseDialog($Browser.Id, $dialogTitle)) {
+                try {
+                    $null = Wait-For 'the failed Save As dialog to close' { !(Get-PortableSaveDialog $Browser $dialogTitle) } -Seconds 5
+                } catch { Write-Warning $_.Exception.Message }
+            }
+            throw
         }
-        $initialName = $fileEdit.Current.Value
-        if ($initialName -cne $test.name -and $initialName -cne [IO.Path]::GetFileNameWithoutExtension($test.name)) {
-            throw "Save As suggested '$initialName' instead of '$($test.name)'."
-        }
-        if ($test.folder -ine $downloads) { $fileEdit.SetValue($target) }
-        $save = Get-PortableControl $dialog ([Windows.Automation.AutomationElement]::AutomationIdProperty) '1'
-        if (!$save -or $save.Current.Name.TrimStart('&') -cne 'Save' -or !$save.Current.IsEnabled) {
-            throw 'Could not identify the enabled Save button in the owned dialog.'
-        }
-        $save.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
 
         $body = [Text.Encoding]::ASCII.GetBytes("Quiver portable download: $($test.name)" + [char]10)
         $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($body))
@@ -208,15 +180,17 @@ function Invoke-PortableSaveAs([Diagnostics.Process]$Browser, [string]$Root, [st
                 try { (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ceq $hash } catch [IO.IOException] { }
             }
         }
-        if (Get-PortableSaveDialog $Browser $dialogTitle) { throw 'Save As remained open after saving.' }
+        if (!$useDefaultDestination -and (Test-Path -LiteralPath $defaultTarget)) {
+            throw 'The custom download unexpectedly also appeared at the default destination.'
+        }
         [ordered]@{
-            initialFolder = [IO.Path]::GetRelativePath($Root, $initialFolder)
             initialName = $initialName
+            usedDefaultDestination = $useDefaultDestination
             savedPath = [IO.Path]::GetRelativePath($Root, $target)
             sha256 = $hash
         }
     }
-    Write-Host 'PASS: native Save As started in Data/Downloads, saved exact bytes to the chosen destination, and reopened in Data/Downloads.'
+    Write-Host 'PASS: native Save As saved exact bytes to Data/Downloads, the chosen folder, and then Data/Downloads again.'
     [ordered]@{ dialog = 'Save As'; downloads = @($proof) }
 }
 
