@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+<title>Command bar</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="cmd.css">
+</head>
+<body>
+<div id="backdrop">
+  <div id="panel" role="dialog" aria-modal="true" aria-label="Command bar">
+    <div id="bar">
+      <span class="mode" id="mode">Current tab</span>
+      <input id="input" type="text" spellcheck="false" autocomplete="off" aria-label="Command or address" placeholder="URL, search, gh, npm, mdn, caniuse, so, env, boost, JWT, Unix time">
+    </div>
+    <div id="list" role="listbox" aria-label="Suggestions"></div>
+    <div id="foot">
+      <span><code>↑↓</code> select</span><span><code>Enter</code> run</span><span><code>Alt+Enter</code> new tab</span><span><code>Esc</code> close</span>
+      <span>Everything here is parsed on this device — no network until you navigate.</span>
+    </div>
+  </div>
+</div>
+<script type="module" src="commandbar.js"></script>
+</body>
+</html>
