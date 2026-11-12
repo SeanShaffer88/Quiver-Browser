@@ -14,9 +14,11 @@ import {
 import { badgeFor, isLocalHost, switchEnv } from '../shared/env';
 import type { DevServer, EnvBadge, LocalServerStatus, PhoneStatus, RecoveryNotice, ShellState, Space, TabInfo } from '../shared/types';
 import { boostKind, boostMatchesHost, transpileBoost, wrapScript, type Boosts } from './boosts';
-import { allowsInternalNavigation, allowsWebNavigation, configureSitePermissions, isInternalTabPage } from './browser-policy';
+import {
+  allowsInternalNavigation, allowsWebNavigation, configureSitePermissions, internalTabUrl, isInternalTabPage, type InternalTabPage,
+} from './browser-policy';
 import { EndpointStatus, type EndpointFailure } from './endpoint-status';
-import { internalPage } from './internal-access';
+import { internalPage, type InternalPage } from './internal-access';
 import { shortcutFor, type ShortcutAction } from './shortcuts';
 import type { Store } from './store';
 import {
@@ -37,6 +39,8 @@ interface Tab {
   partition: string;
   view: WebContentsView;
   internal: boolean;
+  readonly internalPage: InternalTabPage | undefined;
+  readonly initialInternalUrl: string | undefined;
   pendingUrl: string | null;
   requestedLoad: { url: string } | null;
   crashUrl: string | null;
@@ -80,12 +84,9 @@ function errorPage(url: string, desc: string): string {
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html).replace(/^%3C!--quiver-error--%3E/, '%3C!--quiver-error--%3E');
 }
 
-export function restrictInternalNavigation(wc: WebContents, fixedPage?: 'shell' | 'commandbar'): void {
+export function restrictInternalNavigation(wc: WebContents, fixedPage: InternalPage): void {
   const guard = (event: { url: string; isMainFrame: boolean; preventDefault(): void }) => {
-    const current = fixedPage ?? internalPage(wc.getURL());
-    if ((!fixedPage && !isInternalTabPage(current)) || !allowsInternalNavigation(event.url, event.isMainFrame, current)) {
-      event.preventDefault();
-    }
+    if (!allowsInternalNavigation(event.url, event.isMainFrame, fixedPage)) event.preventDefault();
   };
   wc.on('will-frame-navigate', guard);
   wc.on('will-redirect', guard);
@@ -165,15 +166,28 @@ export class TabManager {
   }
 
   tabUrl(t: Tab): string {
-    if (t.crashUrl) return t.crashUrl;
-    if (t.errorFor) return t.errorFor;
-    if (t.pendingUrl) return t.pendingUrl;
+    if (t.crashUrl) return this.allowedTabUrl(t, t.crashUrl);
+    if (t.errorFor) return this.allowedTabUrl(t, t.errorFor);
+    if (t.pendingUrl) return this.allowedTabUrl(t, t.pendingUrl);
     const u = t.view.webContents.isDestroyed() ? '' : t.view.webContents.getURL();
-    return u || t.requestedLoad?.url || '';
+    return this.allowedTabUrl(t, u || t.requestedLoad?.url || '');
+  }
+
+  private allowedTabUrl(t: Tab, url: string): string {
+    return t.internalPage && t.initialInternalUrl ? internalTabUrl(t.internalPage, t.initialInternalUrl, url) : url;
+  }
+
+  private canNavigateHistory(t: Tab, offset: -1 | 1): boolean {
+    const contents = t.view.webContents;
+    if (contents.isDestroyed()) return false;
+    const history = contents.navigationHistory;
+    if (!(offset < 0 ? history.canGoBack() : history.canGoForward())) return false;
+    if (!t.internalPage) return true;
+    const entry = history.getEntryAtIndex(history.getActiveIndex() + offset);
+    return !!entry && internalPage(entry.url) === t.internalPage;
   }
 
   private info(t: Tab): TabInfo {
-    const wc = t.view.webContents;
     const url = this.tabUrl(t);
     let local = false;
     try {
@@ -182,7 +196,6 @@ export class TabManager {
     } catch {
       /* ignore */
     }
-    const nav = wc.isDestroyed() ? null : wc.navigationHistory;
     return {
       id: t.id,
       spaceId: t.spaceId,
@@ -190,9 +203,9 @@ export class TabManager {
       title: t.title || displayUrl(url) || 'New Tab',
       favicon: t.favicon,
       loading: t.loading,
-      canGoBack: nav ? nav.canGoBack() : false,
+      canGoBack: this.canNavigateHistory(t, -1),
       canRetryCrash: t.crashUrl !== null,
-      canGoForward: nav ? nav.canGoForward() : false,
+      canGoForward: this.canNavigateHistory(t, 1),
       errors: t.errors,
       local,
       internal: t.internal,
@@ -275,7 +288,7 @@ export class TabManager {
     });
   }
 
-  private createView(partition: string, internal: boolean): WebContentsView {
+  private createView(partition: string, page?: InternalTabPage): WebContentsView {
     this.prepareSession(partition);
     const view = new WebContentsView({
       webPreferences: {
@@ -285,10 +298,10 @@ export class TabManager {
         sandbox: true,
         webSecurity: true,
         allowRunningInsecureContent: false,
-        preload: internal ? PRELOAD : undefined,
+        preload: page ? PRELOAD : undefined,
       },
     });
-    if (internal) restrictInternalNavigation(view.webContents);
+    if (page) restrictInternalNavigation(view.webContents, page);
     else restrictWebNavigation(view.webContents);
     return view;
   }
@@ -302,14 +315,18 @@ export class TabManager {
     const spaceId = opts.spaceId ?? this.activeSpaceId;
     const internal = rawUrl.startsWith('quiver://') || rawUrl === '';
     const url = internal ? toInternalUrl(rawUrl || 'quiver://newtab') : rawUrl;
+    const parsedPage = internal ? internalPage(url) : undefined;
+    const page = isInternalTabPage(parsedPage) ? parsedPage : undefined;
     const partition = this.partitionFor(spaceId, internal);
-    const view = this.createView(partition, internal);
+    const view = this.createView(partition, page);
     const tab: Tab = {
       id: this.nextId++,
       spaceId,
       partition,
       view,
       internal,
+      internalPage: page,
+      initialInternalUrl: page ? url : undefined,
       pendingUrl: null,
       requestedLoad: null,
       crashUrl: null,
@@ -356,7 +373,7 @@ export class TabManager {
 
   private load(tab: Tab, url: string): void {
     tab.pendingUrl = null;
-    const request = { url };
+    const request = { url: this.allowedTabUrl(tab, url) };
     tab.requestedLoad = request;
     tab.crashUrl = null;
     tab.errorFor = null;
@@ -365,7 +382,7 @@ export class TabManager {
       if (tab.requestedLoad === request) tab.requestedLoad = null;
     };
     // loadURL rejects on error or cancellation. The matching request clears in both cases.
-    void tab.view.webContents.loadURL(url).then(finish, finish);
+    void tab.view.webContents.loadURL(request.url).then(finish, finish);
   }
 
   private wire(tab: Tab): void {
@@ -560,18 +577,19 @@ export class TabManager {
   }
 
   goBack(): void {
-    const wc = this.activeTab?.view.webContents;
-    if (wc?.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
+    const tab = this.activeTab;
+    if (tab && this.canNavigateHistory(tab, -1)) tab.view.webContents.navigationHistory.goBack();
   }
   goForward(): void {
-    const wc = this.activeTab?.view.webContents;
-    if (wc?.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
+    const tab = this.activeTab;
+    if (tab && this.canNavigateHistory(tab, 1)) tab.view.webContents.navigationHistory.goForward();
   }
   reload(): void {
     const t = this.activeTab;
     if (!t) return;
     if (t.crashUrl) this.retryCrashedTab(t.id);
     else if (t.errorFor) this.load(t, t.errorFor);
+    else if (t.initialInternalUrl && internalPage(t.view.webContents.getURL()) !== t.internalPage) this.load(t, t.initialInternalUrl);
     else t.view.webContents.reload();
   }
 
@@ -775,7 +793,7 @@ export class TabManager {
     if (!this.phone) {
       this.phonePartition = t.partition;
       this.phoneSpaceId = t.spaceId;
-      const phone = this.createView(t.partition, false);
+      const phone = this.createView(t.partition);
       this.phone = phone;
       const wc = phone.webContents;
       wc.setUserAgent(MOBILE_UA);

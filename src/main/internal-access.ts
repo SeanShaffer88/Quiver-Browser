@@ -2,7 +2,6 @@ import { INTERNAL_ORIGIN, INTERNAL_SCHEME } from '../shared/constants';
 
 export type InternalRole = 'shell' | 'commandbar' | 'settings' | 'boosts';
 export type InternalPage = InternalRole | 'newtab';
-type SenderKind = 'shell' | 'overlay' | 'tab' | undefined;
 
 export function internalPage(url: string): InternalPage | undefined {
   if (!url.startsWith(INTERNAL_ORIGIN)) return undefined;
@@ -22,14 +21,7 @@ export function internalPage(url: string): InternalPage | undefined {
   }
 }
 
-export function internalRole(url: string, sender: SenderKind, isMainFrame: boolean): InternalRole | undefined {
-  if (!sender || !isMainFrame) return undefined;
-  const page = internalPage(url);
-  switch (page) {
-    case 'shell': return sender === 'shell' ? page : undefined;
-    case 'commandbar': return sender === 'overlay' ? page : undefined;
-    case 'settings':
-    case 'boosts': return sender === 'tab' ? page : undefined;
-    default: return undefined;
-  }
+export function internalRole(url: string, assignedPage: InternalPage | undefined, isMainFrame: boolean): InternalRole | undefined {
+  if (!isMainFrame || !assignedPage || assignedPage === 'newtab') return undefined;
+  return internalPage(url) === assignedPage ? assignedPage : undefined;
 }

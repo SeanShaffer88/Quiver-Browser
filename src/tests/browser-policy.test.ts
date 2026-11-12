@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { allowsInternalNavigation, allowsSitePermission, allowsWebNavigation, isInternalTabPage } from '../main/browser-policy';
+import { allowsInternalNavigation, allowsSitePermission, allowsWebNavigation, internalTabUrl, isInternalTabPage } from '../main/browser-policy';
 
 test('web views permit ordinary URLs and local links with a local file initiator', () => {
   for (const url of ['http://localhost:3000/dev', 'http://[::1]:8080/', 'https://example.test/', 'about:blank',
@@ -34,6 +34,14 @@ test('internal renderer navigation stays within its exact top-level document', (
   assert.equal(isInternalTabPage('newtab'), true);
   assert.equal(isInternalTabPage('shell'), false);
   assert.equal(isInternalTabPage('commandbar'), false);
+});
+
+test('internal tab recovery keeps the assigned document after a same-document URL change', () => {
+  const initial = 'quiver://app/settings.html?import=bookmarks';
+  const sameRole = 'quiver://app/settings.html?import=bookmarks#status';
+  assert.equal(internalTabUrl('settings', initial, sameRole), sameRole);
+  assert.equal(internalTabUrl('settings', initial, 'quiver://app/boosts.html'), initial);
+  assert.equal(internalTabUrl('settings', initial, 'about:blank'), initial);
 });
 
 const request = {

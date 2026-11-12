@@ -5,8 +5,15 @@ export function allowsInternalNavigation(target: string, isMainFrame: boolean, c
   return isMainFrame && current !== undefined && internalPage(target) === current;
 }
 
-export function isInternalTabPage(page: InternalPage | undefined): page is 'newtab' | 'settings' | 'boosts' {
+export type InternalTabPage = 'newtab' | 'settings' | 'boosts';
+
+export function isInternalTabPage(page: InternalPage | undefined): page is InternalTabPage {
   return page === 'newtab' || page === 'settings' || page === 'boosts';
+}
+
+export function internalTabUrl(assigned: InternalTabPage, initialUrl: string, currentUrl: string): string {
+  // History state can change a renderer's URL without a cancellable navigation event.
+  return internalPage(currentUrl) === assigned ? currentUrl : initialUrl;
 }
 
 function isHttpUrl(url: URL | null): url is URL & { protocol: 'http:' | 'https:' } {

@@ -7,7 +7,7 @@ import { BookmarkImports } from './bookmark-import';
 import { isValidBoostName, type Boosts } from './boosts';
 import { BookmarkProfileReadError, bookmarkProfileLabel, discoverBookmarkProfiles, readChromiumBookmarkCandidates } from './chromium-bookmarks';
 import type { DevServerWatcher } from './devservers';
-import { internalRole, type InternalRole } from './internal-access';
+import { internalRole, type InternalPage, type InternalRole } from './internal-access';
 import type { Store } from './store';
 import { displayUrl, type TabManager } from './tabs';
 
@@ -39,18 +39,18 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     ipcMain.handle(channel, (e, ...args) => {
       const frame = e.senderFrame;
       if (!frame) throw new Error('forbidden sender');
-      let sender: 'shell' | 'overlay' | 'tab' | undefined;
-      if (e.sender === shell.webContents) sender = 'shell';
-      else if (e.sender === overlay.webContents) sender = 'overlay';
+      let assignedPage: InternalPage | undefined;
+      if (e.sender === shell.webContents) assignedPage = 'shell';
+      else if (e.sender === overlay.webContents) assignedPage = 'commandbar';
       else {
         for (const tab of tabs.tabs.values()) {
-          if (tab.internal && e.sender === tab.view.webContents) {
-            sender = 'tab';
+          if (tab.internalPage && e.sender === tab.view.webContents) {
+            assignedPage = tab.internalPage;
             break;
           }
         }
       }
-      if (internalRole(frame.url, sender, frame === e.sender.mainFrame) !== role) throw new Error('forbidden sender');
+      if (internalRole(frame.url, assignedPage, frame === e.sender.mainFrame) !== role) throw new Error('forbidden sender');
       return fn(e as AuthorizedInvokeEvent, ...args);
     });
   };
