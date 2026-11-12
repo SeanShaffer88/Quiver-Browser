@@ -14,7 +14,10 @@ param(
     [string]$CandidateVersion,
     [Parameter(Mandatory)]
     [ValidatePattern('\A[0-9a-fA-F]{64}\z')]
-    [string]$CandidateAsarSha256
+    [string]$CandidateAsarSha256,
+    [Parameter(Mandatory)]
+    [ValidatePattern('\A[0-9a-fA-F]{64}\z')]
+    [string]$CandidateExeSha256
 )
 
 $ErrorActionPreference = 'Stop'
@@ -137,6 +140,7 @@ function Assert-Installed([string]$Version) {
     [pscustomobject]@{
         Uninstaller = $uninstaller.FullName
         AsarSha256 = (Get-FileHash -LiteralPath $asar.FullName -Algorithm SHA256).Hash
+        ExeSha256 = (Get-FileHash -LiteralPath $app.FullName -Algorithm SHA256).Hash
     }
 }
 
@@ -182,6 +186,9 @@ Assert-BrowserIntegration $false
 if ($cleanInstall.AsarSha256 -ine $CandidateAsarSha256) {
     throw 'Clean installation ASAR differs from the build output.'
 }
+if ($cleanInstall.ExeSha256 -ine $CandidateExeSha256) {
+    throw 'Clean installation Quiver.exe differs from the verified build output.'
+}
 Remove-TestInstallation $cleanInstall.Uninstaller 'Clean beta uninstall'
 
 Invoke-Nsis $fixturePath "/STARTATLOGIN $installArguments" 'Install synthetic 0.0.9 fixture'
@@ -196,7 +203,8 @@ Invoke-Nsis $candidatePath $installArguments 'Upgrade fixture to beta'
 $upgraded = Assert-Installed $CandidateVersion
 Assert-BrowserIntegration $true
 if ($upgraded.AsarSha256 -ieq $priorInstall.AsarSha256 -or
-    $upgraded.AsarSha256 -ine $cleanInstall.AsarSha256) {
+    $upgraded.AsarSha256 -ine $cleanInstall.AsarSha256 -or
+    $upgraded.ExeSha256 -ine $CandidateExeSha256) {
     throw 'Upgrade did not replace the fixture payload with the verified beta payload.'
 }
 if ([IO.File]::ReadAllText($sentinelPath) -cne $sentinel) {

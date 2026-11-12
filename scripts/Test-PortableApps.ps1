@@ -3,6 +3,7 @@
 param(
     [Parameter(Mandatory)][string]$Installer,
     [Parameter(Mandatory)][ValidatePattern('\A[0-9a-fA-F]{64}\z')][string]$AsarSha256,
+    [Parameter(Mandatory)][ValidatePattern('\A[0-9a-fA-F]{64}\z')][string]$ExeSha256,
     [Parameter(Mandatory)][string]$PreviousInstaller
 )
 
@@ -29,7 +30,8 @@ $package = Join-Path $destination 'QuiverPortable'
 $profileDir = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Quiver'
 $evidencePath = Join-Path $runnerTemp 'quiver-portable-runtime-evidence.json'
 $evidence = [ordered]@{ installer = $artifact.Name; installerSha256 = (Get-FileHash -LiteralPath $artifact.FullName).Hash;
-    asarSha256 = $AsarSha256; previousInstaller = $previousArtifact.Name; previousInstallerSha256 = $previousHash;
+    asarSha256 = $AsarSha256; exeSha256 = $ExeSha256;
+    previousInstaller = $previousArtifact.Name; previousInstallerSha256 = $previousHash;
     checks = [ordered]@{}; failures = [ordered]@{} }
 $startupPaths = @('Startup','CommonStartup') | ForEach-Object {
     Join-Path ([Environment]::GetFolderPath($_)) 'Quiver Browser.lnk'
@@ -122,7 +124,7 @@ public static class QuiverPortableWizard {
     }
 }
 "@
-function Install-Package([IO.FileInfo]$File, [string]$Root, [string]$ExpectedAsar) {
+function Install-Package([IO.FileInfo]$File, [string]$Root, [string]$ExpectedAsar, [string]$ExpectedExe) {
     $parent = Split-Path -Parent $Root
     $info = [Diagnostics.ProcessStartInfo]::new($File.FullName)
     $info.UseShellExecute = $false
@@ -155,6 +157,9 @@ function Install-Package([IO.FileInfo]$File, [string]$Root, [string]$ExpectedAsa
     $installedAsar = (Get-FileHash -LiteralPath (Join-Path $Root 'App/Quiver/resources/app.asar')).Hash
     if ($ExpectedAsar -and $installedAsar -ine $ExpectedAsar) {
         throw 'Installed PortableApps ASAR differs from the build output.'
+    }
+    if ($ExpectedExe -and (Get-FileHash -LiteralPath (Join-Path $Root 'App/Quiver/Quiver.exe') -Algorithm SHA256).Hash -ine $ExpectedExe) {
+        throw 'Installed PortableApps Quiver.exe differs from the verified build output.'
     }
     if ($ExpectedAsar -and (Test-Path -LiteralPath (Join-Path $Root 'App/Quiver/Quiver_wer.dll'))) {
         throw 'The portable payload includes the WER helper that would register its path on the host.'
@@ -402,7 +407,7 @@ function Test-UpgradeAndDriveChange([string]$Origin, [string]$Records) {
         $stateBeforeUpgrade = Get-TreeState @((Get-Item -LiteralPath $oldData))
         $hostBeforeUpgrade = Get-HostState
         $filesBeforeUpgrade = Get-QuiverHostFiles
-        $null = Install-Package $artifact $oldPackage $AsarSha256
+        $null = Install-Package $artifact $oldPackage $AsarSha256 $ExeSha256
         if ((Get-TreeState @((Get-Item -LiteralPath $oldData))) -cne $stateBeforeUpgrade) {
             throw 'Upgrading the published Beta 2 package changed files under Data.'
         }
@@ -451,7 +456,7 @@ $fixture = $null
 try {
     $before = Get-HostState
     $null = New-Item -ItemType Directory -Path $destination
-    $null = Install-Package $artifact $package $AsarSha256
+    $null = Install-Package $artifact $package $AsarSha256 $ExeSha256
     if ((Get-HostState) -cne $before) { throw 'Installation changed scoped host browser, startup, or installed-profile state.' }
     $hostFilesBefore = Get-QuiverHostFiles
     $data = Join-Path $package 'Data'
@@ -526,7 +531,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(originFile, 'http://127.0.0
 
         $runtimePhase = 'reinstall'
         $dataBeforeReinstall = Get-TreeState @((Get-Item -LiteralPath $data))
-        $null = Install-Package $artifact $package $AsarSha256
+        $null = Install-Package $artifact $package $AsarSha256 $ExeSha256
         if ((Get-TreeState @((Get-Item -LiteralPath $data))) -cne $dataBeforeReinstall) { throw 'Reinstallation changed the portable Data tree.' }
         if ((Get-HostState) -cne $before) { throw 'Reinstallation changed scoped host browser, startup, or installed-profile state.' }
         $evidence.checks.reinstallPreservedData = $true

@@ -66,17 +66,30 @@ jobs:
       - name: Build unsigned Windows setup
         run: npm run build:win -- --config.win.signExecutable=false --config.nsis.differentialPackage=false --publish never
 
+      - name: Verify packaged Electron fuses
+        id: payload
+        run: |
+          $exe = 'release/win-unpacked/Quiver.exe'
+          node scripts/verify-electron-fuses.mjs $exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $exeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
+          $asarHash = (Get-FileHash -Algorithm SHA256 -LiteralPath 'release/win-unpacked/resources/app.asar').Hash
+          "exe-sha256=$exeHash" >> $env:GITHUB_OUTPUT
+          "asar-sha256=$asarHash" >> $env:GITHUB_OUTPUT
+
       - name: Build synthetic upgrade fixture
         run: |
           & ./node_modules/.bin/electron-builder.cmd --win nsis --x64 --config.extraMetadata.version=0.0.9 --config.directories.output=release/upgrade-fixture --config.compression=store --config.nsis.differentialPackage=false --config.win.signExecutable=false --publish never
 
       - name: Verify Windows setup and browser integration
+        env:
+          QUIVER_EXE_SHA256: ${{ steps.payload.outputs.exe-sha256 }}
+          QUIVER_ASAR_SHA256: ${{ steps.payload.outputs.asar-sha256 }}
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $setup = "release/Quiver-v$version-x64-Setup.exe"
           $fixture = 'release/upgrade-fixture/Quiver-v0.0.9-x64-Setup.exe'
-          $asarHash = (Get-FileHash -Algorithm SHA256 -LiteralPath 'release/win-unpacked/resources/app.asar').Hash
-          ./scripts/Test-WindowsInstaller.ps1 -Candidate $setup -Fixture $fixture -CandidateVersion $version -CandidateAsarSha256 $asarHash
+          ./scripts/Test-WindowsInstaller.ps1 -Candidate $setup -Fixture $fixture -CandidateVersion $version -CandidateAsarSha256 $env:QUIVER_ASAR_SHA256 -CandidateExeSha256 $env:QUIVER_EXE_SHA256
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - name: Build the offline PortableApps installer
@@ -88,16 +101,18 @@ jobs:
       - name: Verify the PortableApps installer and hash the release assets
         id: packages
         shell: pwsh -STA -NoProfile -Command . '{0}'
+        env:
+          QUIVER_EXE_SHA256: ${{ steps.payload.outputs.exe-sha256 }}
+          QUIVER_ASAR_SHA256: ${{ steps.payload.outputs.asar-sha256 }}
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $setup = "release/Quiver-v$version-x64-Setup.exe"
           $portable = "release/portableapps-build/QuiverPortable_${version}_English.paf.exe"
-          $asarHash = (Get-FileHash -Algorithm SHA256 -LiteralPath 'release/win-unpacked/resources/app.asar').Hash
           $previous = Join-Path $env:RUNNER_TEMP 'QuiverPortable_0.1.0-beta.2_English.paf.exe'
           $previousUrl = 'https://github.com/SeanShaffer88/Quiver-Browser/releases/download/v0.1.0-beta.2/QuiverPortable_0.1.0-beta.2_English.paf.exe'
           & curl.exe --fail --location --silent --show-error --proto '=https' --proto-redir '=https' --max-time 120 --retry 2 --output $previous $previousUrl
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          ./scripts/Test-PortableApps.ps1 -Installer $portable -AsarSha256 $asarHash -PreviousInstaller $previous
+          ./scripts/Test-PortableApps.ps1 -Installer $portable -AsarSha256 $env:QUIVER_ASAR_SHA256 -ExeSha256 $env:QUIVER_EXE_SHA256 -PreviousInstaller $previous
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Get-FileHash -Algorithm SHA256 -LiteralPath $setup, $portable | ForEach-Object {
             '{0}  {1}' -f $_.Hash.ToLowerInvariant(), (Split-Path -Leaf $_.Path)
