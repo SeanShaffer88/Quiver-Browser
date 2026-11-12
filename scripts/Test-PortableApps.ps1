@@ -29,7 +29,8 @@ $package = Join-Path $destination 'QuiverPortable'
 $profileDir = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Quiver'
 $evidencePath = Join-Path $runnerTemp 'quiver-portable-runtime-evidence.json'
 $evidence = [ordered]@{ installer = $artifact.Name; installerSha256 = (Get-FileHash -LiteralPath $artifact.FullName).Hash;
-    asarSha256 = $AsarSha256; previousInstaller = $previousArtifact.Name; previousInstallerSha256 = $previousHash; checks = [ordered]@{} }
+    asarSha256 = $AsarSha256; previousInstaller = $previousArtifact.Name; previousInstallerSha256 = $previousHash;
+    checks = [ordered]@{}; failures = [ordered]@{} }
 $startupPaths = @('Startup','CommonStartup') | ForEach-Object {
     Join-Path ([Environment]::GetFolderPath($_)) 'Quiver Browser.lnk'
 }
@@ -217,6 +218,11 @@ function Wait-For([string]$Description, [scriptblock]$Probe, [int]$Seconds = 25)
     throw "Timed out waiting for $Description."
 }
 
+function Write-PortableFailure([string]$Phase, [Management.Automation.ErrorRecord]$Failure) {
+    $evidence.failures[$Phase] = $Failure.Exception.Message
+    Write-Warning "$Phase failed. $($Failure.Exception.Message)"
+}
+
 function Invoke-PortableRuntime([string]$Root, [string]$Url, [string]$Pass, [string]$Records,
     [string]$ExpectedProbe = $Pass, [switch]$Restore, [switch]$PreviousBeta, [string]$SaveAsOrigin) {
     $launcherPath = (Get-Item -LiteralPath (Join-Path $Root 'QuiverPortable.exe')).FullName
@@ -264,7 +270,13 @@ function Invoke-PortableRuntime([string]$Root, [string]$Url, [string]$Pass, [str
             $browser.Refresh()
             $browser.MainWindowHandle -ne [IntPtr]::Zero
         }
-        if ($SaveAsOrigin) { $evidence.checks.saveAs = Invoke-PortableSaveAs -Browser $browser -Root $Root -Origin $SaveAsOrigin }
+        if ($SaveAsOrigin) {
+            try {
+                $evidence.checks.saveAs = Invoke-PortableSaveAs -Browser $browser -Root $Root -Origin $SaveAsOrigin
+            } catch {
+                Write-PortableFailure 'saveAs' $_
+            }
+        }
         if (!$browser.CloseMainWindow() -or !$browser.WaitForExit(15000) -or $browser.ExitCode -ne 0 -or
             !$launcher.WaitForExit(10000) -or $launcher.ExitCode -ne 0) {
             throw 'Portable browser and launcher did not exit cleanly.'
@@ -505,45 +517,72 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(originFile, 'http://127.0.0
         if (Test-Path -LiteralPath $originFile) { Get-Content -LiteralPath $originFile -Raw }
     }
     if ($origin -notmatch '\Ahttp://127\.0\.0\.1:\d{1,5}\z') { throw 'Invalid loopback fixture origin.' }
-    $evidence.checks.freshRuntime = Invoke-PortableRuntime $package "$origin/portable-check?pass=fresh" 'fresh' $records -SaveAsOrigin $origin
-    if ((Get-PackageOutsideData $package) -cne $packageBefore) { throw 'First launch changed package files outside Data.' }
-    if ((Get-QuiverHostFiles) -cne $hostFilesBefore -or (Get-HostState) -cne $before) { throw 'First launch changed scoped Quiver host state.' }
-    Write-Host 'PASS: fresh launcher recreated Data and kept browser state, partition cookies, cache and logs inside it.'
+    $runtimePhase = 'freshRuntime'
+    try {
+        $evidence.checks.freshRuntime = Invoke-PortableRuntime $package "$origin/portable-check?pass=fresh" 'fresh' $records -SaveAsOrigin $origin
+        if ((Get-PackageOutsideData $package) -cne $packageBefore) { throw 'First launch changed package files outside Data.' }
+        if ((Get-QuiverHostFiles) -cne $hostFilesBefore -or (Get-HostState) -cne $before) { throw 'First launch changed scoped Quiver host state.' }
+        Write-Host 'PASS: fresh launcher recreated Data and kept browser state, partition cookies, cache and logs inside it.'
 
-    $dataBeforeReinstall = Get-TreeState @((Get-Item -LiteralPath $data))
-    $null = Install-Package $artifact $package $AsarSha256
-    if ((Get-TreeState @((Get-Item -LiteralPath $data))) -cne $dataBeforeReinstall) { throw 'Reinstallation changed the portable Data tree.' }
-    if ((Get-HostState) -cne $before) { throw 'Reinstallation changed scoped host browser, startup, or installed-profile state.' }
-    $evidence.checks.reinstallPreservedData = $true
+        $runtimePhase = 'reinstall'
+        $dataBeforeReinstall = Get-TreeState @((Get-Item -LiteralPath $data))
+        $null = Install-Package $artifact $package $AsarSha256
+        if ((Get-TreeState @((Get-Item -LiteralPath $data))) -cne $dataBeforeReinstall) { throw 'Reinstallation changed the portable Data tree.' }
+        if ((Get-HostState) -cne $before) { throw 'Reinstallation changed scoped host browser, startup, or installed-profile state.' }
+        $evidence.checks.reinstallPreservedData = $true
 
-    $relocated = Join-Path $destination 'Relocated Quiver Portable'
-    $packageItem = Get-Item -LiteralPath $package -Force
-    $source = $packageItem.FullName
-    $destinationItem = Get-Item -LiteralPath $destination -Force
-    if (!$packageItem.PSIsContainer -or ($packageItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-        ($destinationItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-        $destinationItem.Parent.FullName -ine $runnerTemp -or
-        $source -ine (Join-Path $destinationItem.FullName 'QuiverPortable') -or (Test-Path -LiteralPath $relocated)) {
-        throw 'Refusing to move a package outside the verified disposable destination.'
+        $runtimePhase = 'sameDriveRelocation'
+        $relocated = Join-Path $destination 'Relocated Quiver Portable'
+        $packageItem = Get-Item -LiteralPath $package -Force
+        $source = $packageItem.FullName
+        $destinationItem = Get-Item -LiteralPath $destination -Force
+        if (!$packageItem.PSIsContainer -or ($packageItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+            ($destinationItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+            $destinationItem.Parent.FullName -ine $runnerTemp -or
+            $source -ine (Join-Path $destinationItem.FullName 'QuiverPortable') -or (Test-Path -LiteralPath $relocated)) {
+            throw 'Refusing to move a package outside the verified disposable destination.'
+        }
+        Move-Item -LiteralPath $source -Destination $relocated
+        $packageBefore = Get-PackageOutsideData $relocated
+        $evidence.checks.relocatedRuntime = Invoke-PortableRuntime $relocated "$origin/portable-check?pass=relocated" 'relocated' $records
+        if ((Get-PackageOutsideData $relocated) -cne $packageBefore -or (Test-Path -LiteralPath $source)) {
+            throw 'Relocated launch changed package files outside Data or recreated the old package path.'
+        }
+        if ((Get-QuiverHostFiles) -cne $hostFilesBefore -or (Get-HostState) -cne $before) {
+            throw 'Relocated launch changed scoped host browser, startup, or app-file state.'
+        }
+        $evidence.checks.scopedHostAndPackageUnchanged = $true
+        Write-Host 'PASS: reinstall preserved the Data tree and the relocated launcher restored cookie and localStorage without changing scoped host or package files.'
+    } catch {
+        Write-PortableFailure $runtimePhase $_
     }
-    Move-Item -LiteralPath $source -Destination $relocated
-    $packageBefore = Get-PackageOutsideData $relocated
-    $evidence.checks.relocatedRuntime = Invoke-PortableRuntime $relocated "$origin/portable-check?pass=relocated" 'relocated' $records
-    if ((Get-PackageOutsideData $relocated) -cne $packageBefore -or (Test-Path -LiteralPath $source)) {
-        throw 'Relocated launch changed package files outside Data or recreated the old package path.'
-    }
-    if ((Get-QuiverHostFiles) -cne $hostFilesBefore -or (Get-HostState) -cne $before) {
-        throw 'Relocated launch changed scoped host browser, startup, or app-file state.'
-    }
-    $evidence.checks.scopedHostAndPackageUnchanged = $true
-    Write-Host 'PASS: reinstall preserved the Data tree and the relocated launcher restored cookie and localStorage without changing scoped host or package files.'
 
-    $evidence.checks.crashDump = Invoke-PortableCrashDump -Root $relocated -Origin $origin
-    if ((Get-PackageOutsideData $relocated) -cne $packageBefore -or
-        (Get-QuiverHostFiles) -cne $hostFilesBefore -or (Get-HostState) -cne $before) {
-        throw 'The crash and recovery changed scoped host or package files.'
+    if ($evidence.checks.scopedHostAndPackageUnchanged) {
+        try {
+            $evidence.checks.crashDump = Invoke-PortableCrashDump -Root $relocated -Origin $origin
+        } catch {
+            Write-PortableFailure 'crashDump' $_
+        }
+        try {
+            if ((Get-PackageOutsideData $relocated) -cne $packageBefore -or
+                (Get-QuiverHostFiles) -cne $hostFilesBefore -or (Get-HostState) -cne $before) {
+                throw 'The crash and recovery changed scoped host or package files.'
+            }
+        } catch {
+            Write-PortableFailure 'crashFootprint' $_
+        }
+    } else {
+        $evidence.skipped = [ordered]@{ crashDump = 'The relocated package and its scoped footprint were not verified.' }
+        Write-Warning $evidence.skipped.crashDump
     }
-    Test-UpgradeAndDriveChange $origin $records
+    try {
+        Test-UpgradeAndDriveChange $origin $records
+    } catch {
+        Write-PortableFailure 'upgradeOrDriveChange' $_
+    }
+    if ($evidence.failures.Count) {
+        throw "PortableApps verification failed in $($evidence.failures.Keys -join ', '). See the runtime evidence."
+    }
 } catch {
     $evidence.failure = $_.Exception.Message
     throw
