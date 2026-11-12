@@ -107,7 +107,7 @@ $originPath = Join-Path $workspace 'origins.json'
 $requestPath = Join-Path $workspace 'requests.jsonl'
 $evidencePath = Join-Path $workspace 'command-evidence.json'
 $electron = (Resolve-Path -LiteralPath (Join-Path $repo 'node_modules/electron/dist/electron.exe')).Path
-$node = (Get-Command node.exe -CommandType Application).Source
+$node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
 $commandInputName = 'Command or address'
 $fixtureInputName = 'Fixture focus target'
 $steps = [Collections.Generic.List[object]]::new()
@@ -154,7 +154,10 @@ function Find-Edit([string]$Name) {
         [Windows.Automation.TreeScope]::Descendants,
         [Windows.Automation.AndCondition]::new(
             [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $Name),
-            [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Edit)
+            [Windows.Automation.OrCondition]::new(
+                [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Edit),
+                [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::ComboBox)
+            )
         )
     )
 }
@@ -341,6 +344,7 @@ try {
     Confirm-Preview 'Decode locally'
     Confirm-NoRequest $requestsBefore $initial 1
     Press-Key 0x1b
+    $null = Wait-For 'Escape to return keyboard focus after local decode' { (Find-Edit $fixtureInputName).Current.HasKeyboardFocus }
     Record-Pass 'Unix time is previewed locally without navigation or a fixture request'
 
     Open-Command
