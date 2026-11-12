@@ -19,6 +19,27 @@ public static class QuiverDisplayEvidence
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Point { public int X, Y; }
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
+    [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
+
+    public static bool Click(IntPtr window, uint pid, int x, int y)
+    {
+        if (!OnDisplay(window, pid)) return false;
+        if (GetForegroundWindow() != window) SetForegroundWindow(window);
+        var point = new Point { X = x, Y = y };
+        if (GetForegroundWindow() != window || GetAncestor(WindowFromPoint(point), 2) != window || !SetCursorPos(x, y))
+            return false;
+        mouse_event(2, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(4, 0, 0, 0, UIntPtr.Zero);
+        return true;
+    }
+
     public static bool OnDisplay(IntPtr window, uint pid) =>
         window != IntPtr.Zero && GetWindowThreadProcessId(window, out uint owner) != 0 &&
         owner == pid && MonitorFromWindow(window, 0) != IntPtr.Zero;
@@ -52,7 +73,7 @@ function Start-OwnedProcess([string]$File, [string[]]$Arguments, [switch]$Browse
     [Diagnostics.Process]::Start($start)
 }
 
-function Wait-For([string]$Description, [scriptblock]$Probe) {
+function Wait-For([string]$Description, [scriptblock]$Probe, [int]$Seconds = 20, [switch]$ReturnOnTimeout) {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     do {
         try {
@@ -62,7 +83,8 @@ function Wait-For([string]$Description, [scriptblock]$Probe) {
             # Chromium can rebuild its tree and Quiver replaces the state file.
         }
         Start-Sleep -Milliseconds 150
-    } while ($watch.Elapsed.TotalSeconds -lt 20)
+    } while ($watch.Elapsed.TotalSeconds -lt $Seconds)
+    if ($ReturnOnTimeout) { return }
     throw "Timed out waiting for $Description."
 }
 
@@ -116,6 +138,70 @@ function Invoke-Visible([string]$Name) {
         throw "Control $Name exposes no Invoke or SelectionItem pattern."
     }
 }
+
+function Get-ReopenSnapshot {
+    $state = Read-State
+    $active = $state.activeSpaceId
+    $activeIndex = $state.activeIndexBySpace.$active
+    $activeTabs = @($state.tabsBySpace.$active)
+    $window = Get-Window
+    $controls = @()
+    if ($window) {
+        $controls = @($window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition) |
+            Select-Object -First 100 | ForEach-Object {
+                $current = $_.Current
+                if ($current.Name -match 'Reopen|QA|Main') {
+                    $bounds = $current.BoundingRectangle
+                    [ordered]@{ name = $current.Name; role = $current.ControlType.ProgrammaticName; enabled = $current.IsEnabled;
+                        offscreen = $current.IsOffscreen; bounds = if (!$bounds.IsEmpty) {
+                            [ordered]@{ x = $bounds.X; y = $bounds.Y; width = $bounds.Width; height = $bounds.Height }
+                        } }
+                }
+            })
+    }
+    [ordered]@{
+        pid = $app.Id
+        window = if ($window) { $window.Current.Name }
+        activeSpace = $active
+        activeIndex = $activeIndex
+        activeUrl = if ($activeTabs.Count -gt $activeIndex) { $activeTabs[$activeIndex].url }
+        closedCount = $state.recentlyClosed.Count
+        closedHead = $state.recentlyClosed | Select-Object -First 1
+        targetRequests = @(Get-FixtureRequests '/target').Count
+        visibleAndOffscreenControls = $controls
+    }
+}
+
+function Save-ReopenSnapshot {
+    try { Get-ReopenSnapshot } catch { [ordered]@{ snapshotError = $_.Exception.Message } }
+}
+
+function Get-ReopenedTab([string]$Space, [string]$Url) {
+    $state = Get-Active $Space $Url
+    if ($state -and $null -ne $state.PSObject.Properties['recentlyClosed'] -and $state.recentlyClosed.Count -eq 0) { $state }
+}
+
+function Open-ClosedTab([string]$Name, [string]$Space, [string]$Url) {
+    $control = Wait-For "visible $Name button" {
+        $button = Find-Visible $Name
+        if ($button -and $button.Current.ControlType -eq [Windows.Automation.ControlType]::Button -and
+            $button.Current.IsEnabled -and !$button.Current.BoundingRectangle.IsEmpty) { $button }
+    }
+    $window = Get-Window
+    $bounds = $control.Current.BoundingRectangle
+    $x = [int]($bounds.X + $bounds.Width / 2)
+    $y = [int]($bounds.Y + $bounds.Height / 2)
+    $steps.reopenAction = [ordered]@{ before = Save-ReopenSnapshot; x = $x; y = $y }
+    $steps.reopenAction.clickSent = [QuiverDisplayEvidence]::Click([IntPtr]$window.Current.NativeWindowHandle, $app.Id, $x, $y)
+    $state = Wait-For 'reopen click to update saved state' { Get-ReopenedTab $Space $Url } -Seconds 3 -ReturnOnTimeout
+    if ($state) { return $state }
+
+    $steps.reopenAction.afterClick = Save-ReopenSnapshot
+    Invoke-Visible $Name
+    $steps.reopenAction.invoked = $true
+    Wait-For 'active reopened tab and consumed history in original Space' { Get-ReopenedTab $Space $Url }
+}
+
 
 @'
 const fs = require('node:fs');
@@ -200,11 +286,7 @@ try {
     $app = Start-OwnedProcess $electron $arguments -Browser
     $null = Wait-For 'shared Space active after clean restart' { Get-Active $shared "$origin/work" }
     $previousRequests = @(Get-FixtureRequests '/target').Count
-    Invoke-Visible 'Reopen QA target in QA'
-    $state = Wait-For 'active reopened tab and consumed history in original Space' {
-        $snapshot = Get-Active $qa "$origin/target"
-        if ($snapshot -and $snapshot.PSObject.Properties['recentlyClosed'] -and $snapshot.recentlyClosed.Count -eq 0) { $snapshot }
-    }
+    $state = Open-ClosedTab 'Reopen QA target in QA' $qa "$origin/target"
     $returned = Wait-For 'new reopened request with QA cookie' {
         @(Get-FixtureRequests '/target') | Select-Object -Skip $previousRequests | Where-Object cookie -CEQ 'qa' | Select-Object -Last 1
     }
@@ -234,6 +316,7 @@ try {
     Write-Host 'Verified same-Space undo after restart, cookie isolation, consumed history, saved session recovery, and offscreen placement.'
 } catch {
     $steps.failure = $_.Exception.Message
+    $steps.finalSnapshot = Save-ReopenSnapshot
     throw
 } finally {
     if ($app) {
