@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_SEARCH } from '../shared/constants';
 import type { Bookmark, Settings, Space } from '../shared/types';
+import { validBookmarkUndo, type BookmarkUndo } from './bookmark-import';
 import { normalizeBookmarks } from './bookmarks';
 
 export interface PersistedTab {
@@ -17,6 +18,7 @@ export interface PersistedState {
   activeIndexBySpace: Record<string, number>;
   settings: Settings;
   bookmarks: Bookmark[];
+  bookmarkUndo?: BookmarkUndo;
   sessionOpen?: boolean;
   bounds?: { x?: number; y?: number; width: number; height: number; maximized: boolean };
 }
@@ -82,6 +84,7 @@ export class Store {
           sidebarCollapsed: raw.settings?.sidebarCollapsed ?? base.settings.sidebarCollapsed,
         },
       } as PersistedState;
+      state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);
       if (!state.spaces.some((s) => s.id === state.activeSpaceId)) state.activeSpaceId = state.spaces[0].id;
       return state;
     } catch (err) {

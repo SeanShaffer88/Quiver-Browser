@@ -33,9 +33,21 @@ export interface BookmarkProfile {
   label: string;
 }
 
-export type BookmarkImportResult =
-  | { added: number; full: boolean }
-  | { error: string };
+export interface BookmarkPreview {
+  id: string;
+  source: string;
+  toAdd: number;
+  duplicates: number;
+  unsupported: number;
+  overCapacity: number;
+  scanLimited: boolean;
+  sample: Bookmark[];
+}
+
+export interface BookmarkLibraryView {
+  bookmarks: Bookmark[];
+  undo?: { id: string; count: number };
+}
 
 export interface TabInfo {
   id: number;

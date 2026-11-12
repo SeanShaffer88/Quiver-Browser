@@ -1,4 +1,4 @@
-import type { Bookmark, BookmarkImportResult, BookmarkProfile, EnvGroup, ShellState } from '../shared/types';
+import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, ShellState } from '../shared/types';
 import { readBookmarkExport } from './bookmark-file.js';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -9,16 +9,23 @@ const bookmarkProfile = $<HTMLSelectElement>('bookmark-profile');
 const importProfile = $<HTMLButtonElement>('bookmark-import-profile');
 const importFile = $<HTMLButtonElement>('bookmark-import-file');
 const filePicker = $<HTMLInputElement>('bookmark-file');
+const confirmImport = $<HTMLButtonElement>('bookmark-confirm');
+const cancelImport = $<HTMLButtonElement>('bookmark-cancel');
+const undoImport = $<HTMLButtonElement>('bookmark-undo');
+const reviewHeading = $('bookmark-review-heading');
+const statusEl = $('bookmark-status');
 const pageSize = 40;
 let bookmarkProfiles: BookmarkProfile[] = [];
 let bookmarks: Bookmark[] = [];
 let bookmarkPage = 0;
-let importing = false;
+let bookmarkBusy = false;
+let preview: BookmarkPreview | undefined;
+let reviewOrigin: HTMLButtonElement = importProfile;
+let undo: BookmarkLibraryView['undo'];
 
 function bookmarkStatus(message: string, failed = false): void {
-  const status = $('bookmark-status');
-  status.textContent = message;
-  status.className = failed ? 'status err' : 'status';
+  statusEl.textContent = message;
+  statusEl.className = failed ? 'status err' : 'status';
 }
 
 function renderBookmarks(): void {
@@ -43,50 +50,159 @@ function renderBookmarks(): void {
 }
 
 async function refreshBookmarks(): Promise<void> {
-  bookmarks = await quiver.invoke('bookmarks:list') as Bookmark[];
+  const library = await quiver.invoke('bookmarks:list') as BookmarkLibraryView;
+  bookmarks = library.bookmarks;
+  undo = library.undo;
+  bookmarkPage = Math.min(bookmarkPage, Math.max(0, Math.ceil(bookmarks.length / pageSize) - 1));
   renderBookmarks();
+  updateBookmarkButtons();
 }
 
 function updateBookmarkButtons(): void {
-  importProfile.disabled = importing || !bookmarkProfile.value;
-  importFile.disabled = importing;
+  bookmarkProfile.disabled = bookmarkBusy || !bookmarkProfiles.length;
+  importProfile.disabled = bookmarkBusy || !bookmarkProfile.value;
+  importFile.disabled = bookmarkBusy;
+  confirmImport.disabled = bookmarkBusy || !preview?.toAdd;
+  cancelImport.disabled = bookmarkBusy;
+  undoImport.hidden = !undo;
+  undoImport.disabled = bookmarkBusy;
 }
 
-async function runBookmarkImport(action: () => Promise<BookmarkImportResult>): Promise<void> {
-  if (importing) return;
-  importing = true;
+function bookmarkTotal(count: number): string {
+  return `${count} bookmark${count === 1 ? '' : 's'}`;
+}
+
+function renderReview(): void {
+  $('bookmark-review').hidden = !preview;
+  if (preview) {
+    $('bookmark-review-source').textContent = `From ${preview.source}`;
+    const totals = [
+      `${preview.toAdd} to add`,
+      `${preview.duplicates} duplicate${preview.duplicates === 1 ? '' : 's'}`,
+      `${preview.unsupported} unsupported link${preview.unsupported === 1 ? '' : 's'}`,
+      `${preview.overCapacity} over the library limit`,
+    ];
+    $('bookmark-review-counts').replaceChildren(...totals.map((value) => {
+      const item = document.createElement('li');
+      item.textContent = value;
+      return item;
+    }));
+    $('bookmark-review-limit').hidden = !preview.scanLimited;
+    $('bookmark-review-sample').replaceChildren(...preview.sample.map(({ title, url }) => {
+      const item = document.createElement('li');
+      const host = document.createElement('span');
+      host.className = 'note';
+      host.textContent = new URL(url).host;
+      item.append(title, host);
+      return item;
+    }));
+    $('bookmark-review-sample').hidden = !preview.sample.length;
+    confirmImport.textContent = preview.toAdd ? `Add ${bookmarkTotal(preview.toAdd)}` : 'Add bookmarks';
+  }
   updateBookmarkButtons();
-  bookmarkStatus('Importing bookmarks…');
+}
+
+async function bookmarkTask(action: () => Promise<HTMLElement | void>): Promise<void> {
+  if (bookmarkBusy) return;
+  bookmarkBusy = true;
+  updateBookmarkButtons();
+  let focus: HTMLElement | void = undefined;
   try {
-    const result = await action();
-    if ('error' in result) bookmarkStatus(result.error, true);
-    else {
-      await refreshBookmarks();
-      const summary = result.added ? `Imported ${result.added} bookmark${result.added === 1 ? '' : 's'}.` : 'No new bookmarks found.';
-      bookmarkStatus(result.full ? `${summary} The bookmark library is full.` : summary);
-    }
-  } catch (error) {
-    bookmarkStatus((error as Error).message, true);
+    focus = await action();
+  } catch {
+    bookmarkStatus('Quiver could not complete the bookmark action. Try again.', true);
+    focus = statusEl;
   } finally {
-    importing = false;
+    bookmarkBusy = false;
     updateBookmarkButtons();
   }
+  focus?.focus();
 }
 
-bookmarkProfile.addEventListener('change', updateBookmarkButtons);
+async function clearReview(): Promise<void> {
+  preview = undefined;
+  renderReview();
+  await quiver.invoke('bookmarks:cancel-review');
+}
+
+type ReviewResult = BookmarkPreview | { error: string };
+
+function showReview(result: ReviewResult, fromBrowser: boolean): HTMLElement {
+  if ('error' in result) {
+    bookmarkStatus(fromBrowser ? `${result.error} You can choose an HTML export instead.` : result.error, true);
+    return statusEl;
+  }
+  preview = result;
+  renderReview();
+  if (result.toAdd) bookmarkStatus('Review ready. Choose Add bookmarks to save the import.');
+  else if (result.overCapacity) bookmarkStatus('The bookmark library is full.');
+  else bookmarkStatus('No new bookmarks found.');
+  return reviewHeading;
+}
+
+bookmarkProfile.addEventListener('change', () => void bookmarkTask(async () => {
+  await clearReview();
+  bookmarkStatus('');
+}));
 importProfile.addEventListener('click', () => {
   const selected = bookmarkProfiles[Number(bookmarkProfile.value) - 1];
-  if (selected) void runBookmarkImport(async () => await quiver.invoke('bookmarks:import-profile', selected.browser, selected.profile) as BookmarkImportResult);
+  if (selected) void bookmarkTask(async () => {
+    reviewOrigin = importProfile;
+    await clearReview();
+    bookmarkStatus('Reading the browser profile…');
+    return showReview(await quiver.invoke('bookmarks:review-profile', selected.browser, selected.profile) as ReviewResult, true);
+  });
 });
-importFile.addEventListener('click', () => filePicker.click());
+importFile.addEventListener('click', () => {
+  // Open the native picker during the click's user activation. A cancelled picker clears the prior review.
+  preview = undefined;
+  renderReview();
+  bookmarkStatus('');
+  void quiver.invoke('bookmarks:cancel-review').catch(() => bookmarkStatus('Quiver could not clear the prior review.', true));
+  filePicker.click();
+});
 filePicker.addEventListener('change', () => {
   const file = filePicker.files?.[0];
   filePicker.value = '';
-  if (file) void runBookmarkImport(async () => {
-    const entries = await readBookmarkExport(file);
-    return await quiver.invoke('bookmarks:import-file', entries) as BookmarkImportResult;
+  if (file) void bookmarkTask(async () => {
+    reviewOrigin = importFile;
+    bookmarkStatus('Reading the HTML export…');
+    let scan: Awaited<ReturnType<typeof readBookmarkExport>>;
+    try {
+      scan = await readBookmarkExport(file);
+    } catch (error) {
+      bookmarkStatus(error instanceof Error ? error.message : 'Quiver could not read this HTML file.', true);
+      return statusEl;
+    }
+    return showReview(await quiver.invoke('bookmarks:review-file', file.name, scan.candidates, scan.scanLimited) as ReviewResult, false);
   });
 });
+cancelImport.addEventListener('click', () => void bookmarkTask(async () => {
+  await clearReview();
+  bookmarkStatus('Import canceled.');
+  return reviewOrigin;
+}));
+confirmImport.addEventListener('click', () => void bookmarkTask(async () => {
+  if (!preview?.toAdd) return;
+  const id = preview.id;
+  const result = await quiver.invoke('bookmarks:confirm', id) as { added: number } | { error: string };
+  preview = undefined;
+  renderReview();
+  await refreshBookmarks();
+  if ('error' in result) bookmarkStatus(result.error, true);
+  else bookmarkStatus(`Imported ${bookmarkTotal(result.added)}.`);
+  return statusEl;
+}));
+undoImport.addEventListener('click', () => void bookmarkTask(async () => {
+  if (!undo) return;
+  const result = await quiver.invoke('bookmarks:undo', undo.id) as { removed: number } | { error: string };
+  preview = undefined;
+  renderReview();
+  await refreshBookmarks();
+  if ('error' in result) bookmarkStatus(result.error, true);
+  else bookmarkStatus(`Undid the import of ${bookmarkTotal(result.removed)}.`);
+  return statusEl;
+}));
 $('bookmark-prev').addEventListener('click', () => { bookmarkPage--; renderBookmarks(); });
 $('bookmark-next').addEventListener('click', () => { bookmarkPage++; renderBookmarks(); });
 
@@ -95,12 +211,14 @@ void quiver.invoke('bookmarks:profiles').then((profiles) => {
   const defaultLabel = bookmarkProfiles.length ? 'Choose a browser profile' : 'No browser profiles found';
   bookmarkProfile.replaceChildren(new Option(defaultLabel, ''));
   bookmarkProfiles.forEach(({ label }, index) => bookmarkProfile.add(new Option(label, String(index + 1))));
-  bookmarkProfile.disabled = !bookmarkProfiles.length;
+  updateBookmarkButtons();
 }).catch(() => {
   bookmarkProfile.replaceChildren(new Option('Could not find browser profiles', ''));
-  bookmarkProfile.disabled = true;
+  updateBookmarkButtons();
 });
-void refreshBookmarks().catch(() => bookmarkStatus('Could not load bookmarks.', true));
+void refreshBookmarks().then(() => {
+  if (undo && !statusEl.textContent) bookmarkStatus(`Last import added ${bookmarkTotal(undo.count)}.`);
+}).catch(() => bookmarkStatus('Could not load bookmarks.', true));
 if (new URLSearchParams(location.search).get('import') === 'bookmarks') $('bookmarks-heading').focus();
 
 function flash(el: HTMLElement, msg: string, kind: 'ok' | 'err' = 'ok'): void {

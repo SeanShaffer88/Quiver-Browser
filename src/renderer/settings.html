@@ -16,15 +16,29 @@
   <div class="row">
     <label for="bookmark-profile">Browser profile</label>
     <select id="bookmark-profile" aria-describedby="bookmark-profiles-note"><option value="">Finding browser profiles…</option></select>
-    <button class="btn" id="bookmark-import-profile" disabled>Import from browser</button>
+    <button class="btn" id="bookmark-import-profile" disabled>Review import</button>
   </div>
   <p class="note" id="bookmark-profiles-note">Import bookmarks from Chrome, Edge, Brave, or Vivaldi.</p>
   <div class="row">
-    <button class="btn" id="bookmark-import-file">Import HTML file</button>
+    <button class="btn" id="bookmark-import-file">Choose HTML file</button>
     <input id="bookmark-file" type="file" accept=".html,.htm,text/html" hidden>
     <span class="note">Choose a bookmarks export from Firefox or another browser.</span>
   </div>
-  <p class="status" id="bookmark-status" role="status"></p>
+  <section class="bookmark-review" id="bookmark-review" aria-labelledby="bookmark-review-heading" hidden>
+    <h3 id="bookmark-review-heading" tabindex="-1">Review bookmarks</h3>
+    <p class="note" id="bookmark-review-source"></p>
+    <ul class="bookmark-counts" id="bookmark-review-counts" aria-label="Import totals"></ul>
+    <p class="note" id="bookmark-review-limit" hidden>Quiver reached the scan limit of 5,000 links or 100,000 source items. Totals cover the part it reviewed.</p>
+    <ul class="bookmark-sample" id="bookmark-review-sample" aria-label="Sample of bookmarks to add"></ul>
+    <div class="row">
+      <button class="btn primary" id="bookmark-confirm" disabled>Add bookmarks</button>
+      <button class="btn" id="bookmark-cancel">Cancel</button>
+    </div>
+  </section>
+  <div class="row bookmark-result">
+    <p class="status" id="bookmark-status" role="status" tabindex="-1"></p>
+    <button class="btn" id="bookmark-undo" hidden>Undo this import</button>
+  </div>
   <ul id="bookmark-list" aria-label="Imported bookmarks"></ul>
   <div id="bookmark-pages" hidden>
     <div class="row">

@@ -1,12 +1,12 @@
-import { clipboard, ipcMain, Menu, type IpcMainInvokeEvent, type WebContentsView } from 'electron';
+import { clipboard, ipcMain, Menu, type IpcMainInvokeEvent, type WebContentsView, type WebFrameMain } from 'electron';
 import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
 import { INTERNAL_ORIGIN } from '../shared/constants';
 import { detectEnv } from '../shared/env';
 import { parseCommand, resolveInput } from '../shared/parser';
-import type { BookmarkImportResult, CommandCommitResult, CommandMode, EnvGroup, Settings, Suggestion } from '../shared/types';
-import { mergeBookmarks } from './bookmarks';
+import type { BookmarkLibraryView, CommandCommitResult, CommandMode, EnvGroup, Settings, Suggestion } from '../shared/types';
+import { BookmarkImports } from './bookmark-import';
 import { isValidBoostName, type Boosts } from './boosts';
-import { discoverBookmarkProfiles, readChromiumBookmarks } from './chromium-bookmarks';
+import { BookmarkProfileReadError, bookmarkProfileLabel, discoverBookmarkProfiles, readChromiumBookmarkCandidates } from './chromium-bookmarks';
 import type { DevServerWatcher } from './devservers';
 import type { Store } from './store';
 import { displayUrl, type TabManager } from './tabs';
@@ -214,42 +214,78 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   });
 
   const fromSettings = (event: IpcMainInvokeEvent) => {
-    const url = event.senderFrame?.url;
-    if (!url || new URL(url).pathname !== '/settings.html') throw new Error('forbidden sender');
+    const frame = event.senderFrame;
+    if (!frame || new URL(frame.url).pathname !== '/settings.html') throw new Error('forbidden sender');
+    return frame;
   };
-  const persistBookmarks = (input: unknown): BookmarkImportResult => {
-    const previous = store.state.bookmarks;
-    const { bookmarks, added, full } = mergeBookmarks(previous, input);
-    if (added) {
-      store.state.bookmarks = bookmarks;
-      if (!store.flush()) {
-        store.state.bookmarks = previous;
-        store.save();
-        return { error: 'Quiver could not save the bookmarks.' };
-      }
+  const imports = new BookmarkImports<WebFrameMain>(store.state, () => {
+    const saved = store.flush();
+    if (!saved) store.save(); // Retain any unrelated pending settings or session writes after rollback.
+    return saved;
+  });
+  let trackedBookmarkReview: { frame: WebFrameMain; release: () => void } | undefined;
+  const clearBookmarkReview = (frame: WebFrameMain) => {
+    imports.cancel(frame);
+    if (trackedBookmarkReview?.frame === frame) {
+      trackedBookmarkReview.release();
+      trackedBookmarkReview = undefined;
     }
-    return { added, full };
+  };
+  const beginBookmarkReview = (event: IpcMainInvokeEvent, frame: WebFrameMain) => {
+    trackedBookmarkReview?.release();
+    const sender = event.sender;
+    const clear = () => clearBookmarkReview(frame);
+    const navigation = (details: { isMainFrame: boolean; isSameDocument: boolean }) => {
+      if (details.isMainFrame && !details.isSameDocument) clear();
+    };
+    sender.on('did-start-navigation', navigation);
+    sender.once('destroyed', clear);
+    trackedBookmarkReview = { frame, release: () => {
+      sender.off('did-start-navigation', navigation);
+      sender.off('destroyed', clear);
+    } };
+    return imports.begin(frame);
   };
   const browserData = process.platform === 'win32' ? process.env.LOCALAPPDATA ?? '' : '';
-  handle('bookmarks:list', (event) => {
+  handle('bookmarks:list', (event): BookmarkLibraryView => {
     fromSettings(event);
-    return store.state.bookmarks;
+    return { bookmarks: store.state.bookmarks, undo: imports.getUndo() };
   });
   handle('bookmarks:profiles', (event) => {
     fromSettings(event);
     return discoverBookmarkProfiles(browserData);
   });
-  handle('bookmarks:import-profile', async (event, browser: unknown, profile: unknown): Promise<BookmarkImportResult> => {
-    fromSettings(event);
+  handle('bookmarks:review-profile', async (event, browser: unknown, profile: unknown) => {
+    const frame = fromSettings(event);
+    const generation = beginBookmarkReview(event, frame);
     try {
-      return persistBookmarks(await readChromiumBookmarks(browserData, browser, profile));
+      const source = bookmarkProfileLabel(browser, profile);
+      if (!source) throw new BookmarkProfileReadError('The selected browser profile is no longer available.');
+      const scan = await readChromiumBookmarkCandidates(browserData, browser, profile);
+      return imports.finish(frame, generation, source, scan.candidates, scan.scanLimited);
     } catch (error) {
-      return { error: (error as Error).message };
+      if (imports.isCurrent(frame, generation)) clearBookmarkReview(frame);
+      return { error: error instanceof BookmarkProfileReadError ? error.message : 'Quiver could not read this browser profile.' };
     }
   });
-  handle('bookmarks:import-file', (event, input: unknown) => {
+  handle('bookmarks:review-file', (event, name: unknown, input: unknown, scanLimited: unknown) => {
+    const frame = fromSettings(event);
+    const generation = beginBookmarkReview(event, frame);
+    const file = typeof name === 'string' ? name.slice(0, 260).split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 120) : '';
+    return imports.finish(frame, generation, file || 'HTML bookmark export', input, scanLimited === true);
+  });
+  handle('bookmarks:cancel-review', (event) => clearBookmarkReview(fromSettings(event)));
+  handle('bookmarks:confirm', (event, id: unknown) => {
+    const frame = fromSettings(event);
+    const result = imports.commit(frame, id);
+    if ('added' in result) clearBookmarkReview(frame);
+    return result;
+  });
+  handle('bookmarks:undo', (event, id: unknown) => {
     fromSettings(event);
-    return persistBookmarks(input);
+    const result = imports.undo(id);
+    if ('removed' in result && trackedBookmarkReview) clearBookmarkReview(trackedBookmarkReview.frame);
+    return result;
   });
   handle('bookmarks:open', (event, url: unknown) => {
     fromSettings(event);
