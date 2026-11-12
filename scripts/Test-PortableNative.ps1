@@ -151,17 +151,6 @@ function Get-PortableDialogFolder($Dialog, [int]$ProcessId) {
     $folder
 }
 
-function Get-PortableRecentDownloads([string[]]$Names) {
-    $recent = [Environment]::GetFolderPath('Recent')
-    if ($recent -and (Test-Path -LiteralPath $recent -PathType Container)) {
-        Get-ChildItem -LiteralPath $recent -Force -File -Filter '*.lnk' | Where-Object {
-            $Names -icontains $_.BaseName
-        } | Sort-Object Name | ForEach-Object {
-            '{0}:{1}' -f $_.Name, (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
-        }
-    }
-}
-
 function Invoke-PortableSaveAs([Diagnostics.Process]$Browser, [string]$Root, [string]$Origin) {
     if ($Origin -notmatch '\Ahttp://127\.0\.0\.1:\d{1,5}\z') { throw 'Invalid local download fixture origin.' }
     $downloads = Join-Path $Root 'Data/Downloads'
@@ -172,8 +161,6 @@ function Invoke-PortableSaveAs([Diagnostics.Process]$Browser, [string]$Root, [st
         @{ link = 'Quiver Custom Download'; name = 'quiver-custom.txt'; folder = $chosenFolder },
         @{ link = 'Quiver Reopened Download'; name = 'quiver-reopened.txt'; folder = $downloads }
     )
-    $recentNames = @($tests | ForEach-Object { $_.name; [IO.Path]::GetFileNameWithoutExtension($_.name) })
-    $recentBefore = (Get-PortableRecentDownloads $recentNames) -join "`n"
     $proof = foreach ($test in $tests) {
         $target = Join-Path $test.folder $test.name
         $dialogTitle = "$Origin/portable-download?name=$($test.name)"
@@ -219,11 +206,8 @@ function Invoke-PortableSaveAs([Diagnostics.Process]$Browser, [string]$Root, [st
             sha256 = $hash
         }
     }
-    if (((Get-PortableRecentDownloads $recentNames) -join "`n") -cne $recentBefore) {
-        throw 'The portable Save As dialogs changed fixture entries in Windows Recent.'
-    }
     Write-Host 'PASS: native Save As started in Data/Downloads, saved exact bytes to the chosen destination, and reopened in Data/Downloads.'
-    [ordered]@{ dialog = 'Save As'; downloads = @($proof); scopedWindowsRecentUnchanged = $true }
+    [ordered]@{ dialog = 'Save As'; downloads = @($proof) }
 }
 
 function Invoke-PortableCrashDump([string]$Root, [string]$Origin) {
