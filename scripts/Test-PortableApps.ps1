@@ -37,7 +37,9 @@ function Get-HostState {
         }
     }
     $browserValues = foreach ($path in 'HKCU:\Software\RegisteredApplications','HKLM:\Software\RegisteredApplications','HKLM:\Software\WOW6432Node\RegisteredApplications') {
-        [ordered]@{ path = $path; value = Get-ItemPropertyValue -LiteralPath $path -Name 'Quiver' -ErrorAction SilentlyContinue }
+        $key = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+        $value = if ($null -ne $key) { $key.GetValue('Quiver') }
+        [ordered]@{ path = $path; value = $value }
     }
     $choices = foreach ($protocol in 'http','https') {
         $key = Get-ItemProperty -LiteralPath "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\$protocol\UserChoice" -ErrorAction SilentlyContinue

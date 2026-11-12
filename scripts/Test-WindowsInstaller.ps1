@@ -46,7 +46,8 @@ function Get-UserChoices {
 }
 
 function Get-QuiverBrowserRegistration {
-    Get-ItemPropertyValue -LiteralPath $registeredApplications -Name 'Quiver' -ErrorAction SilentlyContinue
+    $key = Get-Item -LiteralPath $registeredApplications -ErrorAction SilentlyContinue
+    if ($null -ne $key) { $key.GetValue('Quiver') }
 }
 
 function Assert-BrowserIntegration([bool]$AtLogin) {

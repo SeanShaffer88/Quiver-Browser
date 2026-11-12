@@ -153,11 +153,11 @@ Quiver currently covers these Flecha workflows. Pinned tabs, tab folders, archiv
 | 8 | Coding-agent browser automation | Omitted from the Windows build | Unavailable |
 | 9 | Local-first / no telemetry | No analytics, no accounts, atomic local JSON | Included |
 | 10 | Windows installer / build script | Branded Windows setup, offline PortableApps.com installer, optional MSI | Build targets configured |
-| – | Other browser features | Chrome Web Store extensions, sync, bookmarks, history UI, downloads UI, permission prompts, password manager, tab drag-reorder, auto-update | Unavailable |
+| – | Other browser features | Chrome Web Store extensions, sync, bookmark editing, history UI, downloads UI, permission prompts, password manager, tab drag-reorder, auto-update | Unavailable |
 
 ## Verification
 
-On Windows 11 x64, all 10 unit tests passed. The unpacked and portable builds verified tab restoration, Space cookie isolation, IPv4 and IPv6 dev-server discovery, CSS and TypeScript Boosts, and a 393 px phone preview with touch emulation.
+The unit tests cover bookmark import, command parsing, environment switching, and other core behavior. On Windows 11 x64, the unpacked and portable builds verified tab restoration, Space cookie isolation, IPv4 and IPv6 dev-server discovery, CSS and TypeScript Boosts, and a 393 px phone preview with touch emulation.
 
 The Windows beta workflow checks NSIS installation, upgrade and removal, default browser registration, sign-in startup, and PortableApps installation and profile preservation on an isolated GitHub-hosted runner. Windows 10, MSI packaging, and screen-reader behavior remain unverified.
 
