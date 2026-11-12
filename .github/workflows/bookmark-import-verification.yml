@@ -1,0 +1,44 @@
+name: Windows bookmark import verification
+
+on:
+  push:
+    branches: [verify/bookmark-import-beta2]
+
+permissions:
+  contents: read
+
+jobs:
+  bookmarks:
+    name: Bookmark import on Windows x64
+    runs-on: windows-2025
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Verify the released installer and create synthetic data
+        run: |
+          $workspace = Join-Path $env:RUNNER_TEMP 'Quiver bookmark verification'
+          "BOOKMARK_TEST_ROOT=$workspace" >> $env:GITHUB_ENV
+          ./scripts/verification/New-BookmarkFixtures.ps1 -Workspace $workspace
+
+      - name: Select bookmark import in the released installer
+        run: |
+          ./scripts/verification/Test-BookmarkInstaller.ps1 -Setup (Join-Path $env:BOOKMARK_TEST_ROOT 'Quiver-v0.1.0-beta.2-x64-Setup.exe') -Workspace $env:BOOKMARK_TEST_ROOT
+
+      - name: Import through the browser UI and verify persistence
+        run: |
+          powershell.exe -NoProfile -STA -File scripts/verification/Test-BookmarkSettings.ps1 -Workspace $env:BOOKMARK_TEST_ROOT
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: bookmark-import-evidence
+          path: |
+            ${{ runner.temp }}/Quiver bookmark verification/*.json
+            ${{ runner.temp }}/Quiver bookmark verification/*.png
+          if-no-files-found: warn
+          retention-days: 7
