@@ -127,6 +127,7 @@ export class TabManager {
     private readonly onState: (s: ShellState) => void,
     private readonly onShortcut: (a: ShortcutAction) => void,
     private readonly prepareInternalSession: (partition: string) => void,
+    private readonly portableDownloadPath?: string,
   ) {
     boosts.onChange((name, kind, removed) => void this.onBoostChanged(name, kind, removed));
   }
@@ -234,6 +235,16 @@ export class TabManager {
     if (this.preparedPartitions.has(partition)) return;
     this.preparedPartitions.add(partition);
     const ses = session.fromPartition(partition);
+    const downloadPath = this.portableDownloadPath;
+    if (downloadPath) {
+      ses.setDownloadPath(downloadPath);
+      ses.on('will-download', (_event, item) => {
+        // Chromium otherwise prefers the last folder selected in Save As.
+        const name = path.basename(item.getFilename());
+        const safeName = name && name !== '.' && name !== '..' && !/[<>:"/\\|?*\u0000-\u001f]/u.test(name);
+        item.setSaveDialogOptions({ ...item.getSaveDialogOptions(), defaultPath: safeName ? path.join(downloadPath, name) : downloadPath });
+      });
+    }
     const allowed = new Set(['fullscreen', 'clipboard-sanitized-write']);
     ses.setPermissionRequestHandler((_wc, permission, cb) => cb(allowed.has(permission)));
     ses.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
