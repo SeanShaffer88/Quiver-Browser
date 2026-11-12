@@ -1,7 +1,11 @@
 type SessionEntry = { url: string };
 type LiveEntry = SessionEntry & { id: number };
 export type ClosedTab = LiveEntry & { title: string; spaceId: string; index: number; placeholderId?: number };
+export type PersistedClosedTab = Omit<ClosedTab, 'id' | 'placeholderId'> & { replacePlaceholder?: true };
 export const CLOSED_TAB_LIMIT = 20;
+export const CANONICAL_NEW_TAB_URL = 'quiver://app/newtab.html';
+const CLOSED_URL_LIMIT = 8192;
+const CLOSED_TITLE_LIMIT = 200;
 
 const INTERNAL_PAGES = new Set(['/newtab.html', '/settings.html', '/boosts.html']);
 const INTERNAL_HOSTS = new Set(['newtab', 'settings', 'boosts']);
@@ -40,7 +44,67 @@ export function snapshotSpace(entries: readonly LiveEntry[], activeId: number | 
   return { tabs: available.map(({ url }) => ({ url })), activeIndex };
 }
 
+function isNewTab(url: string): boolean {
+  return /^quiver:\/\/(?:app\/newtab\.html|newtab)(?:[?#]|$)/.test(url);
+}
+
+export function hasSavedNewTabPlaceholder(tabs: unknown): boolean {
+  return Array.isArray(tabs) && tabs.length === 1 &&
+    tabs[0]?.url === CANONICAL_NEW_TAB_URL && tabs[0]?.automaticPlaceholder === true;
+}
+
+export function normalizeRecentlyClosed(
+  input: unknown,
+  spaceIds: ReadonlySet<string>,
+  soleNewTabSpaces?: ReadonlySet<string>,
+): PersistedClosedTab[] {
+  if (!Array.isArray(input)) return [];
+  const result: PersistedClosedTab[] = [];
+  const marked = new Set<string>();
+  for (const value of input.slice(0, CLOSED_TAB_LIMIT)) {
+    if (!value || typeof value !== 'object') continue;
+    const { url, title, spaceId, index, replacePlaceholder } = value as Partial<PersistedClosedTab>;
+    if (typeof spaceId !== 'string' || !spaceIds.has(spaceId) || typeof title !== 'string' ||
+        typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0 ||
+        typeof url !== 'string' || url.length > CLOSED_URL_LIMIT || !restorableUrl(url) || isNewTab(url)) continue;
+    const { username, password } = new URL(url);
+    if (username || password) continue;
+    const label = title.slice(0, CLOSED_TITLE_LIMIT).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim() || 'tab';
+    const entry: PersistedClosedTab = { url, title: label, spaceId, index };
+    if (replacePlaceholder === true && soleNewTabSpaces?.has(spaceId) && !marked.has(spaceId)) {
+      entry.replacePlaceholder = true;
+      marked.add(spaceId);
+    }
+    result.push(entry);
+  }
+  return result;
+}
+
+export function snapshotRecentlyClosed(
+  entries: readonly ClosedTab[],
+  spaceIds: ReadonlySet<string>,
+  soleNewTabs: ReadonlyMap<string, number>,
+): PersistedClosedTab[] {
+  const candidate = entries.map(({ url, title, spaceId, index, placeholderId }) => ({
+    url, title, spaceId, index,
+    replacePlaceholder: placeholderId !== undefined && soleNewTabs.get(spaceId) === placeholderId,
+  }));
+  return normalizeRecentlyClosed(candidate, spaceIds, new Set(soleNewTabs.keys()));
+}
+
+export function restoreRecentlyClosed(
+  entries: readonly PersistedClosedTab[],
+  allocateId: () => number,
+  soleNewTabs: ReadonlyMap<string, number>,
+): ClosedTab[] {
+  return entries.map(({ replacePlaceholder, ...entry }) => ({
+    ...entry,
+    id: allocateId(),
+    placeholderId: replacePlaceholder ? soleNewTabs.get(entry.spaceId) : undefined,
+  }));
+}
+
 export function rememberClosed(closed: readonly ClosedTab[], entry: ClosedTab): ClosedTab[] {
-  if (!restorableUrl(entry.url) || /^quiver:\/\/(?:app\/newtab\.html|newtab)(?:[?#]|$)/.test(entry.url)) return [...closed];
+  if (!restorableUrl(entry.url) || isNewTab(entry.url)) return [...closed];
   return [entry, ...closed].slice(0, CLOSED_TAB_LIMIT);
 }

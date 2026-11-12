@@ -177,20 +177,48 @@ try {
     $null = Wait-For 'active shared Space' { Get-Active $shared "$origin/work" }
     $work = Wait-For 'shared request' { Get-FixtureRequests '/work' | Select-Object -First 1 }
     if ($work.cookie) { throw 'The shared Space sent the QA cookie before setting its own.' }
+
+    $state = Wait-For 'closed QA tab recorded in the shared Space session' {
+        $snapshot = Get-Active $shared "$origin/work"
+        if ($snapshot -and $snapshot.recentlyClosed.Count -eq 1 -and
+            $snapshot.recentlyClosed[0].url -ceq "$origin/target" -and $snapshot.recentlyClosed[0].spaceId -ceq $qa -and
+            $snapshot.recentlyClosed[0].index -eq 1) { $snapshot }
+    }
+    $closed = $state.recentlyClosed[0]
+    if ($closed.PSObject.Properties['id'] -or $closed.PSObject.Properties['placeholderId'] -or $closed.replacePlaceholder) {
+        throw 'Closed history persisted a runtime identifier or marked a non-placeholder tab.'
+    }
+    if (!$state.sessionOpen) { throw 'Running session was not marked open.' }
+    $originalPid = $app.Id
+    if (!$app.CloseMainWindow() -or !$app.WaitForExit(15000) -or $app.ExitCode -ne 0) { throw 'Owned Quiver did not close normally before reopening.' }
+    $app.Dispose()
+    $app = $null
+    $state = Read-State
+    if ($state.sessionOpen -ne $false -or $state.recentlyClosed.Count -ne 1) { throw 'Clean exit did not preserve closed history and clear its session marker.' }
+    $steps.closedBeforeRestart = @{ space = $closed.spaceId; index = $closed.index; cleanExit = $true; processId = $originalPid }
+
+    $app = Start-OwnedProcess $electron $arguments -Browser
+    $null = Wait-For 'shared Space active after clean restart' { Get-Active $shared "$origin/work" }
+    $previousRequests = @(Get-FixtureRequests '/target').Count
     Invoke-Visible 'Reopen QA target in QA'
-    $state = Wait-For 'active reopened tab in original Space' { Get-Active $qa "$origin/target" }
-    $returned = Wait-For 'reopened request with QA cookie' { Get-FixtureRequests '/target' | Where-Object cookie -CEQ 'qa' | Select-Object -Last 1 }
+    $state = Wait-For 'active reopened tab and consumed history in original Space' {
+        $snapshot = Get-Active $qa "$origin/target"
+        if ($snapshot -and $snapshot.PSObject.Properties['recentlyClosed'] -and $snapshot.recentlyClosed.Count -eq 0) { $snapshot }
+    }
+    $returned = Wait-For 'new reopened request with QA cookie' {
+        @(Get-FixtureRequests '/target') | Select-Object -Skip $previousRequests | Where-Object cookie -CEQ 'qa' | Select-Object -Last 1
+    }
     $order = @($state.tabsBySpace.$qa | ForEach-Object url)
     if (($order -join '|') -cne ($urls -join '|')) { throw 'The reopened tab did not return to its original position.' }
-    $steps.reopen = @{ space = $qa; originalIndex = $state.activeIndexBySpace.$qa; order = $order; isolatedCookie = $returned.cookie }
+    $steps.reopen = @{ space = $qa; originalIndex = $state.activeIndexBySpace.$qa; order = $order; isolatedCookie = $returned.cookie; processId = $app.Id; consumed = $true }
 
-    if (!(Read-State).sessionOpen) { throw 'Running session was not marked open.' }
     if (!$app.CloseMainWindow() -or !$app.WaitForExit(15000) -or $app.ExitCode -ne 0) { throw 'Owned Quiver did not close normally.' }
     $app.Dispose()
     $app = $null
     $state = Read-State
-    if ($state.sessionOpen -ne $false) { throw 'Normal exit left the previous session marked open.' }
+    if ($state.sessionOpen -ne $false -or $state.recentlyClosed.Count -ne 0) { throw 'Clean exit did not persist consumption of the reopened entry.' }
     $steps.cleanExit = $true
+
 
     # Simulate the saved marker of an interrupted session without forcibly terminating processes.
     $state.sessionOpen = $true
@@ -198,9 +226,12 @@ try {
     $app = Start-OwnedProcess $electron $arguments -Browser
     $null = Wait-For 'restored saved session notice' { Find-Visible 'Restored 4 tabs across 2 Spaces from the last saved session.' }
     $state = Wait-For 'restored active QA target' { Get-Active $qa "$origin/target" }
-    $steps.restart = @{ space = $qa; activeIndex = $state.activeIndexBySpace.$qa; restoredTabs = 4; seededPriorSessionMarker = $true }
+    if ($state.recentlyClosed.Count -ne 0 -or (Find-Visible 'Reopen QA target in QA')) {
+        throw 'The consumed closed tab returned after another launch.'
+    }
+    $steps.restart = @{ space = $qa; activeIndex = $state.activeIndexBySpace.$qa; restoredTabs = 4; seededPriorSessionMarker = $true; consumedEntryStillAbsent = $true }
     if (!$app.CloseMainWindow() -or !$app.WaitForExit(15000) -or $app.ExitCode -ne 0) { throw 'Restarted Quiver did not close normally.' }
-    Write-Host 'Verified same-Space undo and cookie isolation, saved session recovery, and offscreen placement.'
+    Write-Host 'Verified same-Space undo after restart, cookie isolation, consumed history, saved session recovery, and offscreen placement.'
 } catch {
     $steps.failure = $_.Exception.Message
     throw

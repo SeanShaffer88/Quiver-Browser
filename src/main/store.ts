@@ -6,9 +6,11 @@ import { DEFAULT_SEARCH } from '../shared/constants';
 import type { Bookmark, Settings, Space } from '../shared/types';
 import { validBookmarkUndo, type BookmarkUndo } from './bookmark-import';
 import { normalizeBookmarks } from './bookmarks';
+import { hasSavedNewTabPlaceholder, normalizeRecentlyClosed, type PersistedClosedTab } from './session-recovery';
 
 export interface PersistedTab {
   url: string;
+  automaticPlaceholder?: true;
 }
 
 export interface PersistedState {
@@ -17,6 +19,7 @@ export interface PersistedState {
   activeSpaceId: string;
   tabsBySpace: Record<string, PersistedTab[]>;
   activeIndexBySpace: Record<string, number>;
+  recentlyClosed: PersistedClosedTab[];
   settings: Settings;
   bookmarks: Bookmark[];
   bookmarkUndo?: BookmarkUndo;
@@ -41,6 +44,7 @@ export function defaultState(): PersistedState {
     activeSpaceId: id,
     tabsBySpace: {},
     activeIndexBySpace: {},
+    recentlyClosed: [],
     settings: defaultSettings(),
     bookmarks: [],
   };
@@ -100,6 +104,9 @@ export class Store {
         },
       } as PersistedState;
       state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);
+      const spaceIds = new Set(state.spaces.map(({ id }) => id));
+      const soleNewTabSpaces = new Set([...spaceIds].filter((id) => hasSavedNewTabPlaceholder(state.tabsBySpace?.[id])));
+      state.recentlyClosed = normalizeRecentlyClosed(raw.recentlyClosed, spaceIds, soleNewTabSpaces);
       if (!state.spaces.some((s) => s.id === state.activeSpaceId)) state.activeSpaceId = state.spaces[0].id;
       return state;
     } catch (err) {

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { Input } from 'electron';
 import { shortcutFor } from '../main/shortcuts';
 import { placeWindow } from '../main/window-placement';
-import { CLOSED_TAB_LIMIT, rememberClosed, restoreSelection, snapshotSpace, type ClosedTab } from '../main/session-recovery';
+import { CLOSED_TAB_LIMIT, hasSavedNewTabPlaceholder, normalizeRecentlyClosed, rememberClosed, restoreRecentlyClosed, restoreSelection, snapshotRecentlyClosed, snapshotSpace, type ClosedTab } from '../main/session-recovery';
 
 const primary = { x: 0, y: 0, width: 1920, height: 1040 };
 const left = { x: -1280, y: 80, width: 1280, height: 720 };
@@ -89,4 +89,52 @@ test('Ctrl+Shift+T reopens a tab and Ctrl+T still opens the command bar', () => 
   const key = { type: 'keyDown', code: 'KeyT', control: true, shift: false, alt: false } as Input;
   assert.equal(shortcutFor({ ...key, shift: true }), 'reopen-tab');
   assert.equal(shortcutFor(key), 'command-new');
+});
+
+test('closed history handles legacy and malformed state without storing credentials', () => {
+  const known = new Set(['qa', 'work']);
+  const base = { spaceId: 'qa', index: 2, title: 'fixture', url: 'https://example.test/path' };
+  assert.deepEqual(normalizeRecentlyClosed(undefined, known), []);
+  assert.deepEqual(normalizeRecentlyClosed({ url: base.url }, known), []);
+  const clean = normalizeRecentlyClosed([
+    null,
+    { ...base, spaceId: 'deleted' },
+    { ...base, index: -1 },
+    { ...base, index: Number.MAX_SAFE_INTEGER + 1 },
+    { ...base, url: 'https://login:secret@example.test/path' },
+    { ...base, url: 'quiver://app/newtab.html?blank=1' },
+    { ...base, url: 'https://example.test/' + 'a'.repeat(9000) },
+    { ...base, id: 999, placeholderId: 111, title: 'x'.repeat(9000), replacePlaceholder: 'true' },
+  ], known);
+  assert.deepEqual(clean, [{ ...base, title: 'x'.repeat(200) }]);
+  assert.equal(rememberClosed([], { ...base, id: 1, url: 'https://login:secret@example.test/path' }).length, 1);
+});
+
+test('closed history keeps at most twenty newest entries and only one proven placeholder per Space', () => {
+  const entries = Array.from({ length: 25 }, (_, index) => ({
+    id: index + 10, spaceId: 'qa', index, title: 'fixture', url: 'https://example.test/' + index, placeholderId: 99,
+  }));
+  const known = new Set(['qa']);
+  const snapshot = snapshotRecentlyClosed(entries, known, new Map([['qa', 99]]));
+  assert.equal(snapshot.length, CLOSED_TAB_LIMIT);
+  assert.deepEqual(snapshot.map(({ index }) => index), Array.from({ length: 20 }, (_, index) => index));
+  assert.deepEqual(snapshot[0], { spaceId: 'qa', index: 0, title: 'fixture', url: 'https://example.test/0', replacePlaceholder: true });
+  assert.equal(snapshot.slice(1).some((entry) => entry.replacePlaceholder), false);
+  assert.equal(snapshotRecentlyClosed(entries, known, new Map([['qa', 100]]))[0].replacePlaceholder, undefined);
+  assert.equal(normalizeRecentlyClosed(snapshot, known)[0].replacePlaceholder, undefined);
+  let id = 101;
+  const restored = restoreRecentlyClosed(snapshot, () => id++, new Map([['qa', 100]]));
+  assert.equal(restored[0].id, 101);
+  assert.equal(restored[0].placeholderId, 100);
+  assert.equal(restored[1].placeholderId, undefined);
+  assert.equal(restoreRecentlyClosed(snapshot, () => id++, new Map())[0].placeholderId, undefined);
+});
+
+test('placeholder provenance requires the sole saved New Tab to carry its own marker', () => {
+  const url = 'quiver://app/newtab.html';
+  assert.equal(hasSavedNewTabPlaceholder([{ url, automaticPlaceholder: true }]), true);
+  assert.equal(hasSavedNewTabPlaceholder([{ url }]), false);
+  assert.equal(hasSavedNewTabPlaceholder([{ url, automaticPlaceholder: 'true' }]), false);
+  assert.equal(hasSavedNewTabPlaceholder([{ url, automaticPlaceholder: true }, { url }]), false);
+  assert.equal(hasSavedNewTabPlaceholder([{ url: 'quiver://newtab', automaticPlaceholder: true }]), false);
 });
