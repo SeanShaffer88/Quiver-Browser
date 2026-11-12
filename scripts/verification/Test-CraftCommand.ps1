@@ -162,6 +162,16 @@ function Find-Edit([string]$Name) {
     )
 }
 
+function Get-CommandField {
+    $window = Get-AppWindow
+    if (!$window) { return }
+    $field = $window.FindFirst(
+        [Windows.Automation.TreeScope]::Descendants,
+        [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $commandInputName)
+    )
+    if ($field -and !$field.Current.IsOffscreen) { $field }
+}
+
 function Get-VisibleNames {
     $window = Get-AppWindow
     if (!$window) { return }
@@ -187,10 +197,7 @@ function Press-Key([int]$Key, [int]$Modifier = 0) {
 }
 
 function Type-Command([string]$Value) {
-    $null = Wait-For 'command input keyboard focus' {
-        $field = Find-Edit $commandInputName
-        $field -and $field.Current.HasKeyboardFocus
-    }
+    $null = Wait-For 'visible command field' { Get-CommandField }
     Press-Key 0x41 0x11
     if (![QuiverCommandKeyboard]::Type($app.MainWindowHandle, $app.Id, $Value)) {
         throw 'Could not type into the foreground Quiver window.'
@@ -199,10 +206,7 @@ function Type-Command([string]$Value) {
 
 function Open-Command([int]$Key = 0x4c) {
     Press-Key $Key 0x11
-    $null = Wait-For 'command input keyboard focus' {
-        $field = Find-Edit $commandInputName
-        $field -and $field.Current.HasKeyboardFocus
-    }
+    $null = Wait-For 'visible command field' { Get-CommandField }
 }
 
 function Read-Session {
@@ -246,6 +250,16 @@ function Record-Pass([string]$Description) {
 
 function Write-Evidence([string]$Result, [string]$Failure = '') {
     $names = try { @(Get-VisibleNames | Select-Object -First 80) } catch { @() }
+    $focus = try {
+        $element = [Windows.Automation.AutomationElement]::FocusedElement
+        if ($element -and $app -and $element.Current.ProcessId -eq $app.Id) {
+            [ordered]@{
+                name = $element.Current.Name
+                controlType = $element.Current.ControlType.ProgrammaticName
+                hasKeyboardFocus = $element.Current.HasKeyboardFocus
+            }
+        }
+    } catch { $null }
     $data = [ordered]@{
         result = $Result
         error = $Failure
@@ -255,6 +269,7 @@ function Write-Evidence([string]$Result, [string]$Failure = '') {
         checks = @($steps.ToArray())
         fixtureRequests = @(Read-Requests)
         visibleAccessibilityNames = $names
+        focusedAccessibilityElement = $focus
         limits = @('UI Automation names and focus only', 'No screen-reader speech, OS high contrast, or physical mixed-DPI coverage')
     }
     [IO.File]::WriteAllText($evidencePath, ($data | ConvertTo-Json -Depth 10))
