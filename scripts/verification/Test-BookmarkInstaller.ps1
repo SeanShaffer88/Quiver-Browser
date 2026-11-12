@@ -158,6 +158,7 @@ $handoff = [ordered]@{
     importChecked = $false
     defaultBrowserChecked = $false
     startupChecked = $false
+    stageElapsedSeconds = [ordered]@{}
     installerExit = $null
     executablePath = $executablePath
     appPid = $null
@@ -171,21 +172,28 @@ $start.WorkingDirectory = $workspacePath
 $start.Arguments = "/currentuser /D=$installDirectory"
 $installer = [Diagnostics.Process]::Start($start)
 try {
-    foreach ($stage in 'directory','import','finish') {
+    $stageTimeouts = [ordered]@{ directory = 60; import = 60; finish = 180 }
+    foreach ($stage in $stageTimeouts.Keys) {
+        $timeoutSeconds = $stageTimeouts[$stage]
         $timer = [Diagnostics.Stopwatch]::StartNew()
-        do {
-            if ($installer.HasExited) { throw "Quiver setup exited $($installer.ExitCode) before $stage." }
-            $advanced = switch ($stage) {
-                'directory' { [QuiverBookmarkWizard]::TryDirectory($installer.Id, $installDirectory) }
-                'import' { [QuiverBookmarkWizard]::TryImport($installer.Id) }
-                'finish' { [QuiverBookmarkWizard]::TryFinish($installer.Id) }
-            }
-            if (!$advanced) { Start-Sleep -Milliseconds 200 }
-        } until ($advanced -or $timer.Elapsed.TotalSeconds -ge 60)
-        if (!$advanced) { throw "Timed out at Quiver setup $stage. $([QuiverBookmarkWizard]::VisibleLabels($installer.Id))" }
+        try {
+            do {
+                if ($installer.HasExited) { throw "Quiver setup exited $($installer.ExitCode) before $stage." }
+                $advanced = switch ($stage) {
+                    'directory' { [QuiverBookmarkWizard]::TryDirectory($installer.Id, $installDirectory) }
+                    'import' { [QuiverBookmarkWizard]::TryImport($installer.Id) }
+                    'finish' { [QuiverBookmarkWizard]::TryFinish($installer.Id) }
+                }
+                if (!$advanced) { Start-Sleep -Milliseconds 200 }
+            } until ($advanced -or $timer.Elapsed.TotalSeconds -ge $timeoutSeconds)
+        } finally {
+            $elapsedSeconds = [Math]::Round($timer.Elapsed.TotalSeconds, 2)
+            $handoff.stageElapsedSeconds[$stage] = $elapsedSeconds
+            Write-Host "Quiver setup $stage took $elapsedSeconds seconds (limit $timeoutSeconds)."
+        }
+        if (!$advanced) { throw "Timed out at Quiver setup $stage after $elapsedSeconds seconds. $([QuiverBookmarkWizard]::VisibleLabels($installer.Id))" }
         if ($stage -eq 'directory') { $handoff.directoryConfirmed = $true }
         if ($stage -eq 'import') { $handoff.importChecked = $true }
-        Write-Host "Quiver setup advanced past $stage."
     }
     if (!$installer.WaitForExit(15000)) { throw 'Quiver setup did not exit after Finish.' }
     $handoff.installerExit = $installer.ExitCode

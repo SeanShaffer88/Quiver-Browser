@@ -237,9 +237,14 @@ function Open-ChromeProfile {
 
 function Get-OpenDialog {
     foreach ($window in Get-OwnedWindows) {
-        if ($window.Current.Name -eq 'Open' -and $window.Current.ClassName -eq '#32770') { return $window }
-        $dialog = Find-Control $window 'Open' ([Windows.Automation.ControlType]::Window)
-        if ($dialog -and $dialog.Current.ProcessId -eq $script:appProcess.Id -and $dialog.Current.ClassName -eq '#32770') {
+        # The file picker can appear as a proxy descendant of the owned app window.
+        $dialog = if ($window.Current.Name -eq 'Open' -and $window.Current.ControlType -eq [Windows.Automation.ControlType]::Window) {
+            $window
+        } else {
+            Find-Control $window 'Open' ([Windows.Automation.ControlType]::Window)
+        }
+        if ((Find-Control -Root $dialog -Type ([Windows.Automation.ControlType]::Edit) -AutomationId '1148') -and
+            (Find-Control $dialog 'Open' ([Windows.Automation.ControlType]::Button) '1')) {
             return $dialog
         }
     }
@@ -248,17 +253,9 @@ function Get-OpenDialog {
 function Import-HtmlFile {
     Invoke-Button 'Import HTML file'
     $dialog = Wait-For 'owned Windows Open file dialog' { Get-OpenDialog }
-    $fileEdit = [Windows.Automation.ControlType]::Edit
-    $fileNameField = Wait-For 'File name field in Open dialog' {
-        $edit = Find-Control $dialog 'File name:' $fileEdit
-        if ($edit) { return $edit }
-        $hostField = Find-Control -Root $dialog -AutomationId 'FileNameControlHost'
-        if (!$hostField) { $hostField = Find-Control -Root $dialog -AutomationId '1148' }
-        if ($hostField -and $hostField.Current.ControlType -eq $fileEdit) { return $hostField }
-        if ($hostField) { Find-Control -Root $hostField -Type $fileEdit }
-    }
+    $fileNameField = Find-Control -Root $dialog -Type ([Windows.Automation.ControlType]::Edit) -AutomationId '1148'
     $fileNameField.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).SetValue($htmlFile)
-    $open = Find-Control $dialog 'Open' ([Windows.Automation.ControlType]::Button)
+    $open = Find-Control $dialog 'Open' ([Windows.Automation.ControlType]::Button) '1'
     if (!$open -or !$open.Current.IsEnabled) { throw 'The owned file dialog has no enabled Open button.' }
     $open.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
     $null = Wait-For 'owned Open file dialog to close' { !(Get-OpenDialog) }
@@ -290,8 +287,15 @@ function Get-UiDiagnostics {
         $rows.Add([ordered]@{
             window = $window.Current.Name
             class = $window.Current.ClassName
+            processId = $window.Current.ProcessId
             controls = @($elements | Select-Object -First 100 | ForEach-Object {
-                [ordered]@{ name = $_.Current.Name; type = $_.Current.ControlType.ProgrammaticName; id = $_.Current.AutomationId }
+                [ordered]@{
+                    name = $_.Current.Name
+                    type = $_.Current.ControlType.ProgrammaticName
+                    id = $_.Current.AutomationId
+                    class = $_.Current.ClassName
+                    processId = $_.Current.ProcessId
+                }
             })
         })
     }
