@@ -12,12 +12,18 @@
   <div id="panel" role="dialog" aria-modal="true" aria-label="Command bar">
     <div id="bar">
       <span class="mode" id="mode">Current tab</span>
-      <input id="input" type="text" spellcheck="false" autocomplete="off" aria-label="Command or address" placeholder="URL, search, gh, npm, mdn, caniuse, so, env, boost, JWT, Unix time">
+      <input id="input" type="text" role="combobox" spellcheck="false" autocomplete="off" aria-label="Command or address" aria-autocomplete="list" aria-controls="list" aria-expanded="false" placeholder="URL, search, gh, npm, mdn, env, boost, JWT, Unix time">
     </div>
-    <div id="list" role="listbox" aria-label="Suggestions"></div>
+    <div id="message" class="empty"></div>
+    <div id="list" role="listbox" aria-label="Suggestions" hidden></div>
+    <div id="preview" hidden>
+      <strong id="action"></strong>
+      <span id="destination" dir="auto"></span>
+      <span id="context"></span>
+    </div>
+    <div id="announcement" class="sr-only" role="status" aria-atomic="true"></div>
     <div id="foot">
-      <span><code>↑↓</code> select</span><span><code>Enter</code> run</span><span><code>Alt+Enter</code> new tab</span><span><code>Esc</code> close</span>
-      <span>Everything here is parsed on this device — no network until you navigate.</span>
+      <span><code>↑↓</code> select</span><span id="enter" hidden><code>Enter</code> confirm</span><span id="alternate" hidden><code>Alt+Enter</code> new tab</span><span><code>Esc</code> return to where you were</span>
     </div>
   </div>
 </div>

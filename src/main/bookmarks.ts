@@ -4,26 +4,30 @@ export const BOOKMARK_LIMIT = 5000;
 const BOOKMARK_URL_LIMIT = 4096;
 const BOOKMARK_TITLE_LIMIT = 200;
 
+export function normalizeBookmark(entry: unknown): Bookmark | undefined {
+  if (!entry || typeof entry !== 'object') return undefined;
+  const { url, title } = entry as Partial<Bookmark>;
+  if (typeof url !== 'string' || url.length > BOOKMARK_URL_LIMIT) return undefined;
+  const raw = url.trim();
+  if (!/^https?:\/\//i.test(raw) || /[\u0000-\u001f\u007f]/.test(raw)) return undefined;
+  try {
+    const target = new URL(raw);
+    if (target.username || target.password || target.href.length > BOOKMARK_URL_LIMIT) return undefined;
+    const name = typeof title === 'string'
+      ? title.slice(0, BOOKMARK_TITLE_LIMIT).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim()
+      : '';
+    return { url: target.href, title: name || target.hostname };
+  } catch {
+    return undefined;
+  }
+}
+
 export function normalizeBookmarks(input: unknown): Bookmark[] {
   if (!Array.isArray(input)) return [];
   const byUrl = new Map<string, Bookmark>();
   for (const entry of input.slice(0, BOOKMARK_LIMIT)) {
-    if (!entry || typeof entry !== 'object') continue;
-    const { url, title } = entry as Partial<Bookmark>;
-    if (typeof url !== 'string' || url.length > BOOKMARK_URL_LIMIT) continue;
-    const raw = url.trim();
-    if (!/^https?:\/\//i.test(raw) || /[\u0000-\u001f\u007f]/.test(raw)) continue;
-
-    try {
-      const target = new URL(raw);
-      if (target.username || target.password || target.href.length > BOOKMARK_URL_LIMIT || byUrl.has(target.href)) continue;
-      const name = typeof title === 'string'
-        ? title.slice(0, BOOKMARK_TITLE_LIMIT).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim()
-        : '';
-      byUrl.set(target.href, { url: target.href, title: name || target.hostname });
-    } catch {
-      // Ignore malformed links in the export.
-    }
+    const bookmark = normalizeBookmark(entry);
+    if (bookmark && !byUrl.has(bookmark.url)) byUrl.set(bookmark.url, bookmark);
   }
   return [...byUrl.values()];
 }

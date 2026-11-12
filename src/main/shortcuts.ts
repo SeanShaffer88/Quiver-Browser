@@ -4,6 +4,7 @@ export type ShortcutAction =
   | 'command'
   | 'command-new'
   | 'close-tab'
+  | 'reopen-tab'
   | 'reload'
   | 'toggle-sidebar'
   | 'preview'
@@ -32,6 +33,7 @@ export function shortcutFor(input: Input): ShortcutAction | null {
 
   if (code === 'KeyE' && (alt || shift)) return 'env';
   if (code === 'KeyP' && shift && !alt) return 'preview';
+  if (code === 'KeyT' && shift && !alt) return 'reopen-tab';
   if (code === 'KeyI' && shift && !alt) return 'devtools';
   if (code === 'KeyB' && shift && !alt) return 'boosts';
   if (code === 'Tab' && !alt) return shift ? 'prev-tab' : 'next-tab';

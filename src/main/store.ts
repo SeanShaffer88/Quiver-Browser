@@ -1,8 +1,10 @@
 import { app } from 'electron';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_SEARCH } from '../shared/constants';
 import type { Bookmark, Settings, Space } from '../shared/types';
+import { validBookmarkUndo, type BookmarkUndo } from './bookmark-import';
 import { normalizeBookmarks } from './bookmarks';
 
 export interface PersistedTab {
@@ -17,6 +19,8 @@ export interface PersistedState {
   activeIndexBySpace: Record<string, number>;
   settings: Settings;
   bookmarks: Bookmark[];
+  bookmarkUndo?: BookmarkUndo;
+  sessionOpen?: boolean;
   bounds?: { x?: number; y?: number; width: number; height: number; maximized: boolean };
 }
 
@@ -44,24 +48,38 @@ export function defaultState(): PersistedState {
 
 /** Atomic write: temp file in the same directory, then rename over the target. */
 export function writeFileAtomic(file: string, data: string | Buffer): void {
-  const tmp = `${file}.${process.pid}.tmp`;
-  const fd = fs.openSync(tmp, 'w');
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  let fd: number | undefined;
+  let created = false;
   try {
+    fd = fs.openSync(tmp, 'wx');
+    created = true;
     fs.writeFileSync(fd, data);
     fs.fsyncSync(fd);
-  } finally {
     fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmp, file);
+  } catch (error) {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* retain the original error */ }
+    }
+    if (created) {
+      try { fs.unlinkSync(tmp); } catch { /* retain the original error */ }
+    }
+    throw error;
   }
-  fs.renameSync(tmp, file);
 }
+
+const SAVE_DEBOUNCE_MS = 250;
+const WINDOWS_RENAME_BACKOFFS_MS = [75, 150, 300] as const;
 
 export class Store {
   readonly file: string;
   state: PersistedState;
   private timer: NodeJS.Timeout | null = null;
 
-  constructor() {
-    this.file = path.join(app.getPath('userData'), 'quiver-state.json');
+  constructor(file = path.join(app.getPath('userData'), 'quiver-state.json')) {
+    this.file = file;
     this.state = this.load();
   }
 
@@ -81,6 +99,7 @@ export class Store {
           sidebarCollapsed: raw.settings?.sidebarCollapsed ?? base.settings.sidebarCollapsed,
         },
       } as PersistedState;
+      state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);
       if (!state.spaces.some((s) => s.id === state.activeSpaceId)) state.activeSpaceId = state.spaces[0].id;
       return state;
     } catch (err) {
@@ -99,22 +118,50 @@ export class Store {
   }
 
   save(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.flush(), 250);
+    this.cancelPendingSave();
+    this.scheduleSave(SAVE_DEBOUNCE_MS, 0);
   }
 
   flush(): boolean {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
+    this.cancelPendingSave();
     try {
-      fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      writeFileAtomic(this.file, JSON.stringify(this.state, null, 2));
+      this.writeState();
       return true;
-    } catch (err) {
-      console.error('[quiver] could not save state:', (err as Error).message);
+    } catch (error) {
+      this.reportSaveError(error);
       return false;
     }
+  }
+
+  private cancelPendingSave(): void {
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  private scheduleSave(delay: number, attempt: number): void {
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      try {
+        this.writeState();
+      } catch (error) {
+        const backoff = WINDOWS_RENAME_BACKOFFS_MS[attempt];
+        const failure = error as NodeJS.ErrnoException;
+        if (backoff !== undefined && process.platform === 'win32' && failure.syscall === 'rename' &&
+            (failure.code === 'EPERM' || failure.code === 'EBUSY')) {
+          this.scheduleSave(backoff, attempt + 1);
+        } else {
+          this.reportSaveError(error);
+        }
+      }
+    }, delay);
+  }
+
+  private writeState(): void {
+    fs.mkdirSync(path.dirname(this.file), { recursive: true });
+    writeFileAtomic(this.file, JSON.stringify(this.state, null, 2));
+  }
+
+  private reportSaveError(error: unknown): void {
+    console.error('[quiver] could not save state:', error instanceof Error ? error.message : String(error));
   }
 }

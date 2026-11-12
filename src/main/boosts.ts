@@ -42,7 +42,8 @@ export function transpileBoost(source: string): string {
 }
 
 export function wrapScript(js: string, name: string): string {
-  return `(function(){try{\n${js}\n}catch(e){console.error('[Quiver boost ${name}]',e)}})();`;
+  const label = JSON.stringify(`[Quiver boost ${name}]`);
+  return `(function(){try{(function(){\n${js}\n})();return true;}catch(e){console.error(${label},e);return false;}})()`;
 }
 
 const CSS_TEMPLATE = (name: string) => `/* Quiver boost: ${name}\n   Applied live to ${name.startsWith('all.') ? 'every site' : 'matching sites'} on save. */\n`;

@@ -20,6 +20,18 @@ kbd, code { font: 12px var(--mono); background: var(--panel-2); border: 1px soli
 .status { min-height: 1.4em; color: var(--muted); }
 .status.err { color: var(--prod); }
 .status.ok { color: var(--local); }
+.bookmark-review { padding: 12px 14px; margin: 12px 0; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
+.bookmark-review h3 { font-size: 14px; margin: 0 0 4px; }
+.bookmark-review p { margin: 4px 0 8px; overflow-wrap: anywhere; }
+.bookmark-counts { display: flex; flex-wrap: wrap; gap: 6px 12px; list-style: none; padding: 0; margin: 8px 0; }
+.bookmark-counts li:first-child { color: var(--local); font-weight: 600; }
+.bookmark-sample { padding-inline-start: 20px; margin: 8px 0 12px; overflow-wrap: anywhere; }
+.bookmark-sample .note { margin-inline-start: 8px; }
+.bookmark-result .status { margin: 4px 0; }
+@media (forced-colors: active) {
+  .bookmark-review { border-color: CanvasText; }
+  .bookmark-counts li:first-child, .bookmark-result .status { color: CanvasText; }
+}
 /* boosts */
 .boosts { display: grid; grid-template-columns: 280px 1fr; height: 100vh; }
 .boosts aside { border-right: 1px solid var(--border); background: var(--panel); padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }

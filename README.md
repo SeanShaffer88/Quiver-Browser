@@ -52,7 +52,7 @@ Windows setup adds Quiver to Windows Default Apps. Select **Open Windows Default
 
 The portable installer keeps Quiver’s profile in `QuiverPortable\Data` and leaves default browser and startup choices alone. To build it locally, first build the Windows setup to populate `release\win-unpacked`. Then run `pwsh -File scripts/Build-PortableApps.ps1 -InstallerRoot <PortableApps.comInstaller-folder>`. This requires an official PortableApps.com Installer toolchain. The GitHub workflow pins and verifies the tool archive.
 
-In **Settings → Bookmarks**, choose a local profile from Chrome, Edge, Brave, or Vivaldi, or select an HTML bookmarks export from Firefox or another browser. Quiver imports HTTP and HTTPS bookmarks into its local library and opens pages only when you select a bookmark.
+In **Settings → Bookmarks**, choose a local profile from Chrome, Edge, Brave, or Vivaldi and select **Review import**. **Choose HTML file** accepts a bookmark export from Firefox or another browser. Setup opens the same importer when you select its bookmark option. The review shows a sample and totals for new, duplicate, unsupported, and excess entries before you confirm. **Undo this import** removes the latest batch, even after restart. Quiver stores HTTP and HTTPS bookmarks locally and opens pages only when you select a bookmark.
 
 Local packages are unsigned unless you configure code signing. Windows SmartScreen may show a warning.
 
@@ -60,18 +60,22 @@ The first build can download the pinned Electron runtime and packaging tools. Us
 
 ## Using Quiver
 
+This section describes the current source. See the release notes for the features in a published build.
+
 ### Shortcuts
 
 | Keys | Action |
 |---|---|
 | `Ctrl+K` / `Ctrl+L` | Command bar, current tab |
 | `Ctrl+T` | Command bar, new tab |
-| `Alt+Enter` (in command bar) | Open result in a new tab |
+| `Alt+Enter` (in command bar) | Open a navigation result in a new tab when offered |
+| `Esc` (in command bar) | Close the bar and return focus to the control or page where you started |
 | `Ctrl+Alt+E` / `Ctrl+Shift+E` | Jump to next environment (local → staging → prod) |
 | `Ctrl+Shift+P` | Toggle phone preview |
 | `Ctrl+B` | Collapse / expand sidebar |
 | `Ctrl+Shift+B` | Boosts page |
 | `Ctrl+W` | Close tab |
+| `Ctrl+Shift+T` | Reopen the latest closed tab in its original Space |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
 | `Ctrl+1…9` | Jump to tab |
 | `Ctrl+R` / `F5` | Reload |
@@ -92,22 +96,26 @@ The first build can download the pinned Electron runtime and packaging tools. Us
 | `localhost:3000`, `:8080`, `example.com/x` | Navigate |
 | anything else | Web search (engine configurable) |
 
-Decoding and prefix parsing happen entirely in-process; the only network traffic is the navigation you confirm with Enter.
+The selected result shows the action before you confirm, including the destination, tab, and Space when relevant. Use the arrow keys to change the selection. If the page or destination changes before confirmation, Quiver refreshes the preview for you to review again. Parsing and decoding run locally. Network navigation starts when you confirm an action that opens a page.
 
 ### Spaces
-`+` next to the Space chips creates a Space. Tick "Separate cookies & logins" for an isolated cookie jar and storage (a separate Chromium partition). Right-click or double-click a chip to rename; right-click to delete (deleting an isolated Space also clears its storage). Isolation is chosen at creation.
+`+` next to the Space chips creates a Space. Tick "Separate cookies & logins" for an isolated cookie jar and storage (a separate Chromium partition). Right-click or double-click a chip to rename; right-click to delete (deleting an isolated Space also clears its storage). Isolation is chosen at creation. The sidebar labels the active Space **Separate sign-in** or **Shared sign-in**.
+
+### Tab and window recovery
+
+The sidebar's **Reopen in …** action and `Ctrl+Shift+T` restore the latest closed tab at its original position in the same Space. Quiver reloads saved tab URLs after restart and shows a notice when it recovers a prior session that was left open. Use **Retry page** if a tab's renderer stops. Quiver fits a saved window to an available display if its old position is offscreen.
 
 ### Environments
 Settings → Environments: add a group with LOCAL / STAGING / PROD origins (e.g. `localhost:3000`, `https://staging.example.com`, `https://example.com`). Then `Ctrl+Alt+E` cycles them keeping path, query and hash. The address bar and tab list show `LOCAL` / `STG` / `PROD`. Any `localhost` URL shows `LOCAL` even without a group.
 
 ### Phone preview
-`Ctrl+Shift+P` opens a 393 px wide phone view beside the desktop view: mobile user agent, device-scale 3, touch emulation (mouse acts as touch), same cookie jar as the tab, follows navigation. Pages without a viewport meta tag lay out at 980 px, like a real phone.
+`Ctrl+Shift+P` opens a 393 px wide phone view beside the desktop view: mobile user agent, device-scale 3, touch emulation (mouse acts as touch), same cookie jar as the tab, follows navigation. Pages without a viewport meta tag lay out at 980 px, like a real phone. The phone label shows when it shares the active tab's sign-in. Preview pauses on internal, failed, or stopped pages and when the window is too narrow. It resumes when the current page and window can support it.
 
 ### Local servers
-The sidebar lists IPv4 and IPv6 HTTP servers reachable over loopback. Quiver uses Windows `netstat -ano` to find listeners and makes a bounded local request for each title. Scans run every five seconds while the window is focused and can be disabled in Settings. Results use numeric loopback addresses, so an environment group or site login configured for `localhost` uses a separate origin. Local tabs show a badge counting console errors since the last navigation.
+The sidebar lists IPv4 and IPv6 HTTP servers reachable over loopback. Quiver uses Windows `netstat -ano` to find listeners and makes a bounded local request for each title. Scans run every five seconds while the window is focused and can be disabled in Settings. Results use numeric loopback addresses, so an environment group or site login configured for `localhost` uses a separate origin. Local tabs show a badge counting console errors since the last navigation. For an HTTP page on a previously detected numeric loopback address, Quiver reports **Local server unavailable** or **Local server is back** based on completed scans. **Retry page** opens the original failed URL. Use `Ctrl+R` to retry HTTPS pages and hostname aliases such as `localhost` manually.
 
 ### Boosts
-`Ctrl+Shift+B` or `boost` in the command bar. Files are named after a hostname (`github.com.css`, `github.com.ts`, `localhost.css`) or `all.css` / `all.ts`; `www.` is ignored; subdomains need their own file. CSS is injected on load and updated live on save. TypeScript is transpiled on this device and run in the page; saving reloads matching tabs. Files are stored in the profile folder under `boosts\`. External edits to those files are picked up too.
+`Ctrl+Shift+B` or `boost` in the command bar. Files are named after a hostname (`github.com.css`, `github.com.ts`, `localhost.css`) or `all.css` / `all.ts`; `www.` is ignored; subdomains need their own file. CSS is injected on load and updated live on save. TypeScript is transpiled on this device and run in the page; saving reloads matching tabs. Files are stored in the profile folder under `boosts\`. External edits to those files are picked up too. The toolbar counts Boosts applied to the current page and names them in the button tooltip.
 
 ### Where data lives
 - Installed: `%APPDATA%\Quiver\`

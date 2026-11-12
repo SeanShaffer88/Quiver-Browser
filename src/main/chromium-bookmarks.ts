@@ -12,6 +12,15 @@ const BROWSERS = {
 
 const PROFILE_NAME = /^(Default|Profile [0-9]{1,5})$/;
 const FILE_LIMIT = 16 * 1024 * 1024;
+const NODE_LIMIT = 100_000;
+
+export class BookmarkProfileReadError extends Error {}
+
+export function bookmarkProfileLabel(browser: unknown, profile: unknown): string | undefined {
+  if (typeof browser !== 'string' || !Object.hasOwn(BROWSERS, browser) ||
+      typeof profile !== 'string' || !PROFILE_NAME.test(profile)) return undefined;
+  return `${BROWSERS[browser as keyof typeof BROWSERS][0]} · ${profile}`;
+}
 
 function browserDirectory(localAppData: string, browser: unknown): string | undefined {
   if (!path.isAbsolute(localAppData) || typeof browser !== 'string' || !Object.hasOwn(BROWSERS, browser)) return undefined;
@@ -52,35 +61,46 @@ export async function discoverBookmarkProfiles(localAppData: string): Promise<Bo
   return matches.flat();
 }
 
-export function parseChromiumBookmarks(input: unknown): Bookmark[] {
+export function chromiumBookmarkCandidates(input: unknown): { candidates: { title: unknown; url: unknown }[]; scanLimited: boolean } {
   if (!input || typeof input !== 'object') throw new Error('Invalid bookmark file.');
   const { roots } = input as { roots?: unknown };
   if (!roots || typeof roots !== 'object' || Array.isArray(roots)) throw new Error('Invalid bookmark file.');
-  const found = new Map<string, Bookmark>();
-  const pending: unknown[] = Object.values(roots).reverse();
-  while (pending.length && found.size < BOOKMARK_LIMIT) {
-    const node = pending.pop();
+  const candidates: { title: unknown; url: unknown }[] = [];
+  const pending: Iterator<unknown>[] = [Object.values(roots)[Symbol.iterator]()];
+  let scanned = 0;
+  while (pending.length) {
+    const next = pending[pending.length - 1].next();
+    if (next.done) {
+      pending.pop();
+      continue;
+    }
+    if (++scanned > NODE_LIMIT) return { candidates, scanLimited: true };
+    const node = next.value;
     if (!node || typeof node !== 'object') continue;
     const { type, name, url, children } = node as Record<string, unknown>;
     if (type === 'folder' && Array.isArray(children)) {
-      for (let i = children.length - 1; i >= 0; i--) pending.push(children[i]);
+      pending.push(children[Symbol.iterator]());
     } else if (type === 'url') {
-      const [bookmark] = normalizeBookmarks([{ title: name, url }]);
-      if (bookmark && !found.has(bookmark.url)) found.set(bookmark.url, bookmark);
+      if (candidates.length === BOOKMARK_LIMIT) return { candidates, scanLimited: true };
+      candidates.push({ title: name, url });
     }
   }
-  return [...found.values()];
+  return { candidates, scanLimited: false };
 }
 
-export async function readChromiumBookmarks(localAppData: string, browser: unknown, profile: unknown): Promise<Bookmark[]> {
+export function parseChromiumBookmarks(input: unknown): Bookmark[] {
+  return normalizeBookmarks(chromiumBookmarkCandidates(input).candidates);
+}
+
+export async function readChromiumBookmarkCandidates(localAppData: string, browser: unknown, profile: unknown): Promise<ReturnType<typeof chromiumBookmarkCandidates>> {
   const file = await bookmarkFile(localAppData, browser, profile);
-  if (!file) throw new Error('The selected browser profile is no longer available.');
+  if (!file) throw new BookmarkProfileReadError('The selected browser profile is no longer available.');
   const handle = await fs.open(file, 'r').catch(() => {
-    throw new Error('The selected bookmark file could not be opened. Close the other browser and try again.');
+    throw new BookmarkProfileReadError('The selected bookmark file could not be opened. Close the other browser and try again.');
   });
   try {
     const stats = await handle.stat();
-    if (!stats.isFile() || stats.size > FILE_LIMIT) throw new Error('The selected bookmark file exceeds the 16 MB import limit.');
+    if (!stats.isFile() || stats.size > FILE_LIMIT) throw new BookmarkProfileReadError('The selected bookmark file exceeds the 16 MB import limit.');
     const buffer = Buffer.alloc(stats.size + 1);
     let size = 0;
     while (size < buffer.length) {
@@ -88,13 +108,17 @@ export async function readChromiumBookmarks(localAppData: string, browser: unkno
       if (!bytesRead) break;
       size += bytesRead;
     }
-    if (size !== stats.size) throw new Error('The selected bookmark file changed during import. Try again.');
+    if (size !== stats.size) throw new BookmarkProfileReadError('The selected bookmark file changed during import. Try again.');
     try {
-      return parseChromiumBookmarks(JSON.parse(buffer.toString('utf8', 0, size).replace(/^\uFEFF/, '')));
+      return chromiumBookmarkCandidates(JSON.parse(buffer.toString('utf8', 0, size).replace(/^\uFEFF/, '')));
     } catch {
-      throw new Error('The selected browser bookmark file is invalid.');
+      throw new BookmarkProfileReadError('The selected browser bookmark file is invalid.');
     }
   } finally {
     await handle.close();
   }
+}
+
+export async function readChromiumBookmarks(localAppData: string, browser: unknown, profile: unknown): Promise<Bookmark[]> {
+  return normalizeBookmarks((await readChromiumBookmarkCandidates(localAppData, browser, profile)).candidates);
 }

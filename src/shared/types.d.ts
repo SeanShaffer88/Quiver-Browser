@@ -33,9 +33,21 @@ export interface BookmarkProfile {
   label: string;
 }
 
-export type BookmarkImportResult =
-  | { added: number; full: boolean }
-  | { error: string };
+export interface BookmarkPreview {
+  id: string;
+  source: string;
+  toAdd: number;
+  duplicates: number;
+  unsupported: number;
+  overCapacity: number;
+  scanLimited: boolean;
+  sample: Bookmark[];
+}
+
+export interface BookmarkLibraryView {
+  bookmarks: Bookmark[];
+  undo?: { id: string; count: number };
+}
 
 export interface TabInfo {
   id: number;
@@ -45,11 +57,13 @@ export interface TabInfo {
   favicon: string;
   loading: boolean;
   canGoBack: boolean;
+  canRetryCrash: boolean;
   canGoForward: boolean;
   errors: number;
   local: boolean;
   internal: boolean;
   env: EnvBadge | null;
+  activeBoosts: string[];
 }
 
 export interface DevServer {
@@ -58,13 +72,30 @@ export interface DevServer {
   title: string;
 }
 
+export type PhoneStatus = 'off' | 'paused' | 'narrow' | 'starting' | 'active' | 'unavailable';
+
+export interface LocalServerStatus {
+  state: 'missing' | 'recovered';
+  tabId: number;
+  url: string;
+}
+
+export interface RecoveryNotice {
+  session?: { tabs: number; spaces: number };
+  movedToVisibleDisplay?: boolean;
+}
+
 export interface ShellState {
+  recentlyClosed?: { id: number; spaceId: string; title: string };
+  recoveryNotice?: RecoveryNotice;
   spaces: Space[];
   activeSpaceId: string;
   tabs: TabInfo[];
   activeTabId: number | null;
   devServers: DevServer[];
   preview: boolean;
+  phoneStatus: PhoneStatus;
+  localServerStatus: LocalServerStatus | null;
   settings: Settings;
 }
 
@@ -72,7 +103,7 @@ export type SuggestionAction =
   | { type: 'navigate'; url: string }
   | { type: 'copy'; text: string }
   | { type: 'boost'; name: string }
-  | { type: 'env'; target?: EnvBadge }
+  | { type: 'env'; target: EnvBadge; url: string }
   | { type: 'internal'; page: 'boosts' | 'settings' }
   | { type: 'noop' };
 
@@ -82,6 +113,38 @@ export interface Suggestion {
   detail?: string;
   action: SuggestionAction;
 }
+
+export type CommandMode = 'new' | 'current';
+
+export interface CommandOpen {
+  id: number;
+  text: string;
+  mode: CommandMode;
+  maxInputLength: number;
+  message?: string;
+}
+
+export interface CommandPreview {
+  title: string;
+  destination?: string;
+  space?: string;
+  tab?: CommandMode;
+  environment?: EnvBadge;
+  source?: EnvBadge;
+  canRun: boolean;
+}
+
+export interface CommandChoice {
+  kind: string;
+  label: string;
+  detail?: string;
+  accessibleLabel: string;
+  preview: CommandPreview;
+  alternative?: CommandPreview;
+  acceptsAltEnter: boolean;
+}
+
+export type CommandCommitResult = 'done' | 'stale' | 'unavailable';
 
 export interface BoostFileInfo {
   name: string;

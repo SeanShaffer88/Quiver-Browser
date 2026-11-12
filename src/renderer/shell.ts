@@ -1,4 +1,4 @@
-import type { ShellState, TabInfo, Space } from '../shared/types';
+import type { LocalServerStatus, PhoneStatus, ShellState, TabInfo, Space } from '../shared/types';
 
 type Child = Node | string | null | undefined | false;
 
@@ -18,9 +18,29 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, 
 
 const sidebar = document.getElementById('sidebar')!;
 const toolbar = document.getElementById('toolbar')!;
+const recoveryStatus = document.getElementById('recovery-status')!;
+const phoneLabel = document.getElementById('phone-label')!;
+const developerStatus = h('div', { class: 'sr-only', role: 'status', 'aria-atomic': 'true' });
+document.body.append(developerStatus);
 let state: ShellState | null = null;
 let addingSpace = false;
 let renamingSpace: string | null = null;
+let lastShellFocus: string | undefined;
+
+function focusShellControl(key?: string): boolean {
+  if (!key) return false;
+  const control = document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`);
+  if (!control || !control.getClientRects().length || control.matches(':disabled')) return false;
+  control.focus({ preventScroll: true });
+  return document.activeElement === control;
+}
+
+document.addEventListener('focusin', (event) => {
+  if (event.target instanceof HTMLElement && event.target.dataset.focusKey) lastShellFocus = event.target.dataset.focusKey;
+});
+quiver.on('cmd:restore-focus', (key: unknown) => {
+  if (!focusShellControl(typeof key === 'string' ? key : lastShellFocus)) focusShellControl('address');
+});
 
 const ICON = {
   back: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg>',
@@ -34,7 +54,7 @@ const ICON = {
 };
 
 function icon(svg: string, label: string, onClick: () => void, extra: Record<string, any> = {}): HTMLButtonElement {
-  const b = h('button', { class: 'icon-btn' + (extra.on ? ' on' : ''), title: label, 'aria-label': label, disabled: extra.disabled, onClick });
+  const b = h('button', { class: 'icon-btn' + (extra.on ? ' on' : ''), title: label, 'aria-label': label, disabled: extra.disabled, dataset: { focusKey: extra.focusKey ?? label }, onClick });
   b.innerHTML = svg;
   return b;
 }
@@ -45,7 +65,7 @@ function renderSpaces(s: ShellState): HTMLElement {
   const wrap = h('div', { class: 'spaces', role: 'tablist', 'aria-label': 'Spaces' });
   for (const sp of s.spaces) {
     if (renamingSpace === sp.id) {
-      const input = h('input', { class: 'space-edit', value: sp.name, 'aria-label': 'Rename space', maxLength: 40 });
+      const input = h('input', { class: 'space-edit', value: sp.name, 'aria-label': 'Rename space', maxLength: 40, dataset: { focusKey: `rename-${sp.id}` } });
       const finish = (save: boolean) => {
         renamingSpace = null;
         if (save && input.value.trim()) void call('space:rename', sp.id, input.value);
@@ -71,6 +91,8 @@ function renderSpaces(s: ShellState): HTMLElement {
         class: 'space' + (sp.id === s.activeSpaceId ? ' active' : ''),
         role: 'tab',
         'aria-selected': String(sp.id === s.activeSpaceId),
+        dataset: { focusKey: sp.id },
+        'aria-label': sp.isolated ? sp.name + ', separate sign-in' : sp.name + ', shared sign-in',
         title: `${sp.name}${sp.isolated ? ' — separate cookies & storage' : ' — shared cookies'}\nRight-click: rename or delete · Double-click: rename`,
         onClick: () => call('space:activate', sp.id),
         onDblclick: () => {
@@ -91,14 +113,15 @@ function renderSpaces(s: ShellState): HTMLElement {
     icon('+', 'New Space', () => {
       addingSpace = !addingSpace;
       render();
+      if (addingSpace) focusShellControl('space-name');
     }),
   );
   return wrap;
 }
 
 function renderAddForm(): HTMLElement {
-  const name = h('input', { placeholder: 'Space name', 'aria-label': 'Space name', maxLength: 40 });
-  const iso = h('input', { type: 'checkbox', checked: true, id: 'iso' });
+  const name = h('input', { placeholder: 'Space name', 'aria-label': 'Space name', maxLength: 40, dataset: { focusKey: 'space-name' } });
+  const iso = h('input', { type: 'checkbox', checked: true, id: 'iso', dataset: { focusKey: 'space-isolated' } });
   const submit = () => {
     void call('space:create', name.value || 'Space', iso.checked);
     addingSpace = false;
@@ -111,13 +134,12 @@ function renderAddForm(): HTMLElement {
       render();
     }
   });
-  queueMicrotask(() => name.focus());
   return h(
     'div',
     { class: 'add-space-form' },
     name,
     h('label', { title: 'Own cookie jar, logins and storage, separate from other Spaces' }, iso, 'Separate cookies & logins'),
-    h('div', { class: 'row' }, h('button', { class: 'btn primary', onClick: submit }, 'Create'), h('button', { class: 'btn', onClick: () => { addingSpace = false; render(); } }, 'Cancel')),
+    h('div', { class: 'row' }, h('button', { class: 'btn primary', dataset: { focusKey: 'space-create' }, onClick: submit }, 'Create'), h('button', { class: 'btn', dataset: { focusKey: 'space-cancel' }, onClick: () => { addingSpace = false; render(); } }, 'Cancel')),
   );
 }
 
@@ -126,25 +148,95 @@ function renderTab(t: TabInfo, active: boolean): HTMLElement {
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
   if (t.local && t.errors > 0) kids.push(h('span', { class: 'err', title: `${t.errors} console error(s) since last navigation` }, String(t.errors > 99 ? '99+' : t.errors)));
-  kids.push(h('button', { class: 'close', title: 'Close tab (Ctrl+W)', 'aria-label': 'Close tab', onClick: (e: Event) => { e.stopPropagation(); void call('tab:close', t.id); } }, '×'));
-  return h(
-    'div',
-    {
-      class: 'tab' + (active ? ' active' : '') + (t.loading ? ' loading' : ''),
-      role: 'tab',
-      tabIndex: 0,
-      'aria-selected': String(active),
-      title: `${t.title}\n${t.url}`,
-      onClick: () => call('tab:activate', t.id),
-      onKeydown: (e: KeyboardEvent) => {
-        if (e.key === 'Enter' || e.key === ' ') void call('tab:activate', t.id);
-      },
-      onAuxclick: (e: MouseEvent) => {
-        if (e.button === 1) void call('tab:close', t.id);
-      },
+  const select = h('button', {
+    class: 'tab-select',
+    role: 'tab',
+    'aria-label': t.title,
+    'aria-selected': String(active),
+    dataset: { focusKey: 'tab-' + t.id },
+    title: t.title + '\n' + t.url,
+    onClick: () => call('tab:activate', t.id),
+  }, ...kids);
+  const close = h('button', {
+    class: 'close',
+    title: 'Close tab (Ctrl+W)',
+    'aria-label': 'Close ' + t.title,
+    dataset: { focusKey: 'close-tab-' + t.id },
+    onClick: () => call('tab:close', t.id),
+  }, '×');
+  return h('div', {
+    class: 'tab' + (active ? ' active' : '') + (t.loading ? ' loading' : ''),
+    onAuxclick: (e: MouseEvent) => {
+      if (e.button === 1) void call('tab:close', t.id);
     },
-    ...kids,
-  );
+  }, select, close);
+}
+
+function recoveryMessage(s: ShellState): string {
+  const restored = s.recoveryNotice?.session;
+  const parts: string[] = [];
+  if (restored) {
+    const tabs = restored.tabs === 1 ? '1 tab' : restored.tabs + ' tabs';
+    const spaces = restored.spaces === 1 ? '1 Space' : restored.spaces + ' Spaces';
+    parts.push('Restored ' + tabs + ' across ' + spaces + ' from the last saved session.');
+  }
+  if (s.recoveryNotice?.movedToVisibleDisplay) parts.push('Quiver moved to an available display.');
+  return parts.join(' ');
+}
+
+function renderRecovery(s: ShellState): HTMLElement[] {
+  const cards: HTMLElement[] = [];
+  const message = recoveryMessage(s);
+  if (message) {
+    cards.push(h('div', { class: 'recovery-card recovery-notice' },
+      h('p', { class: 'recovery-copy' }, message),
+      h('button', {
+        class: 'icon-btn recovery-expanded',
+        'aria-label': 'Dismiss recovery notice',
+        title: message + ' Dismiss notice',
+        dataset: { focusKey: 'recovery-dismiss' },
+        onClick: () => call('recovery:dismiss'),
+      }, '×'),
+      h('button', {
+        class: 'icon-btn recovery-compact',
+        'aria-label': 'Show recovery notice',
+        title: message,
+        dataset: { focusKey: 'recovery-dismiss' },
+        onClick: () => call('sidebar:toggle'),
+      }, 'ⓘ'),
+    ));
+  }
+  const closed = s.recentlyClosed;
+  const original = closed && s.spaces.find(({ id }) => id === closed.spaceId);
+  if (closed && original) {
+    const signIn = original.isolated ? 'Separate sign-in' : 'Shared sign-in';
+    const description = 'Reopen ' + closed.title + ' in ' + original.name;
+    cards.push(h('div', { class: 'recovery-card recovery-closed' },
+      h('p', { class: 'recovery-copy', title: closed.title }, 'Closed ' + closed.title),
+      h('button', {
+        class: 'btn',
+        'aria-label': description,
+        title: description + ' (Ctrl+Shift+T) · ' + signIn,
+        dataset: { focusKey: 'reopen-tab' },
+        onClick: () => call('tab:reopen', closed.id),
+      }, h('span', { class: 'recovery-expanded' }, 'Reopen in ' + original.name), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, '↶')),
+      h('kbd', { class: 'recovery-expanded' }, 'Ctrl+Shift+T'),
+    ));
+  }
+  const crashed = s.tabs.find((t) => t.id === s.activeTabId && t.canRetryCrash);
+  if (crashed) {
+    cards.push(h('div', { class: 'recovery-card recovery-crash' },
+      h('p', { class: 'recovery-copy' }, 'This page stopped.'),
+      h('button', {
+        class: 'btn',
+        'aria-label': 'Retry stopped page',
+        title: 'Retry stopped page (Ctrl+R)',
+        dataset: { focusKey: 'retry-crashed-tab' },
+        onClick: () => call('tab:retry-crash', crashed.id),
+      }, h('span', { class: 'recovery-expanded' }, 'Retry page'), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, '↻')),
+    ));
+  }
+  return cards;
 }
 
 function renderSidebar(s: ShellState): void {
@@ -153,52 +245,129 @@ function renderSidebar(s: ShellState): void {
   const logo = h('img', { src: 'quiver-icon.png', width: 22, height: 22, alt: '' });
   brand.append(logo, h('span', { class: 'name' }, 'Quiver'), icon(ICON.sidebar, 'Collapse / expand sidebar (Ctrl+B)', () => call('sidebar:toggle')));
 
-  const newtab = h('button', { class: 'newtab', title: 'Open the command bar in a new tab (Ctrl+T)', onClick: () => call('cmd:open', '', 'new') }, h('span', {}, '＋ New tab'), h('kbd', {}, 'Ctrl+T'));
+  const newtab = h('button', { class: 'newtab', title: 'Open the command bar in a new tab (Ctrl+T)', dataset: { focusKey: 'new-tab' }, onClick: () => call('cmd:open', '', 'new', 'new-tab') }, h('span', {}, '＋ New tab'), h('kbd', {}, 'Ctrl+T'));
 
-  const tabsEl = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Tabs' }, ...spaceTabs.map((t) => renderTab(t, t.id === s.activeTabId)));
+  const previousTabs = sidebar.querySelector<HTMLElement>('.tabs');
+  const previousScroll = previousTabs?.dataset.spaceId === s.activeSpaceId ? previousTabs.scrollTop : 0;
+  const tabsEl = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Tabs', dataset: { spaceId: s.activeSpaceId } },
+    ...spaceTabs.map((t) => renderTab(t, t.id === s.activeTabId)));
 
-  const servers = h('section', { class: 'servers', 'aria-label': 'Local servers' }, h('h3', {}, h('span', {}, 'Local servers'), h('button', { class: 'icon-btn', style: undefined, title: 'Rescan now', 'aria-label': 'Rescan local servers', onClick: () => call('devserver:refresh') }, '↻')));
+  const servers = h('section', { class: 'servers', 'aria-label': 'Local servers' }, h('h3', {}, h('span', {}, 'Local servers'), h('button', { class: 'icon-btn', disabled: !s.settings.devServerScan, title: 'Rescan now', 'aria-label': 'Rescan local servers', dataset: { focusKey: 'rescan' }, onClick: () => call('devserver:refresh') }, '↻')));
   if (!s.settings.devServerScan) servers.append(h('div', { class: 'empty' }, 'Scanning is off (Settings).'));
   else if (s.devServers.length === 0) servers.append(h('div', { class: 'empty' }, 'No HTTP servers found on localhost.'));
   for (const d of s.devServers) {
     servers.append(
-      h('button', { class: 'server', title: `${d.title}\n${d.url}`, onClick: () => call('devserver:open', d.url) }, h('span', { class: 'port' }, `:${d.port}`), h('span', { class: 'stitle' }, d.title)),
+      h('button', { class: 'server', title: `${d.title}\n${d.url}`, dataset: { focusKey: d.url }, onClick: () => call('devserver:open', d.url) }, h('span', { class: 'port' }, `:${d.port}`), h('span', { class: 'stitle' }, d.title)),
     );
   }
 
-  sidebar.replaceChildren(brand, renderSpaces(s), ...(addingSpace ? [renderAddForm()] : []), newtab, tabsEl, servers);
+  const active = s.spaces.find(({ id }) => id === s.activeSpaceId);
+  const isolation = active && h('p', {
+    class: 'space-isolation',
+    title: active.name + (active.isolated ? ' has separate cookies and sign-ins' : ' shares cookies and sign-ins with other shared Spaces'),
+  },
+    h('span', { class: 'recovery-expanded' }, active.isolated ? 'Separate sign-in' : 'Shared sign-in'),
+    h('span', { class: 'recovery-compact' }, active.isolated ? 'Separate' : 'Shared'),
+  );
+  sidebar.replaceChildren(brand, renderSpaces(s), ...(isolation ? [isolation] : []),
+    ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderRecovery(s),
+    ...(s.localServerStatus ? [renderLocalServerStatus(s.localServerStatus)] : []), tabsEl, servers);
+  tabsEl.scrollTop = previousScroll;
 }
 
 function activeTab(s: ShellState): TabInfo | undefined {
   return s.tabs.find((t) => t.id === s.activeTabId);
 }
 
+const PHONE_LABELS: Record<PhoneStatus, { label: string; compact: string }> = {
+  off: { label: 'Phone preview off', compact: '' },
+  paused: { label: 'Phone preview paused. Open an HTTP or HTTPS page to resume.', compact: 'Paused' },
+  narrow: { label: 'Phone preview paused. Widen the window to resume.', compact: 'Widen' },
+  starting: { label: 'Starting phone preview', compact: 'Starting' },
+  active: { label: 'Phone preview shares this tab’s sign-in', compact: '' },
+  unavailable: { label: 'Phone preview unavailable. Turn it off and on to retry.', compact: 'Unavailable' },
+};
+
+function renderLocalServerStatus(status: LocalServerStatus): HTMLElement {
+  const recovered = status.state === 'recovered';
+  const label = recovered ? 'Local server is back' : 'Local server unavailable';
+  const card = h('div', { class: 'local-status', title: label, dataset: { state: status.state } },
+    h('span', { class: 'recovery-expanded' }, label));
+  if (recovered) {
+    card.append(h('button', {
+      class: 'btn', title: 'Retry the failed local page', 'aria-label': 'Retry local page',
+      dataset: { focusKey: 'retry-local-page' },
+      onClick: async () => {
+        try {
+          if (!await quiver.invoke('devserver:retry', status.tabId, status.url)) {
+            developerStatus.textContent = 'The local page changed. Review the active tab before retrying.';
+          }
+        } catch {
+          developerStatus.textContent = 'Could not retry the local page. Press Ctrl+R to try again.';
+        }
+      },
+    }, h('span', { class: 'recovery-expanded' }, 'Retry page'), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, '↻')));
+  } else {
+    card.append(h('span', { class: 'recovery-compact', 'aria-label': label }, '!'));
+  }
+  return card;
+}
+
 function renderToolbar(s: ShellState): void {
   const t = activeTab(s);
-  const addr = h('button', { id: 'address', title: 'Search or enter a command (Ctrl+K / Ctrl+L)', 'aria-label': 'Address and command bar', onClick: () => call('cmd:open', undefined, 'current') });
+  const addr = h('button', { id: 'address', title: 'Search or enter a command (Ctrl+K / Ctrl+L)', 'aria-label': 'Address and command bar', dataset: { focusKey: 'address' }, onClick: () => call('cmd:open', undefined, 'current', 'address') });
   if (t?.env) addr.append(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env));
   addr.append(h('span', { class: 'url' + (t?.url ? '' : ' placeholder') }, t?.url || 'Search, paste a URL, JWT, or type gh / npm / mdn / env / boost…'), h('span', { class: 'hint' }, 'Ctrl+K'));
+  const phoneStatus = PHONE_LABELS[s.phoneStatus];
+  const phone = icon(ICON.phone, 'Phone preview (Ctrl+Shift+P)', () => call('preview:toggle'), { on: s.preview, focusKey: 'phone-preview' });
+  phone.title = `${phoneStatus.label} (Ctrl+Shift+P)`;
+  phone.setAttribute('aria-describedby', 'phone-label');
+  phone.setAttribute('aria-pressed', String(s.preview));
+  if (phoneStatus.compact) {
+    phone.classList.add('tool-status');
+    phone.append(h('span', { class: 'tool-label', 'aria-hidden': 'true' }, phoneStatus.compact));
+  }
+  const activeBoosts = t?.activeBoosts ?? [];
+  const count = activeBoosts.length;
+  const boostLabel = count ? `Boosts: ${count} active on this page` : 'Boosts: none active on this page';
+  const boost = icon(ICON.boost, `${boostLabel} (Ctrl+Shift+B)`, () => call('cmd:run', { type: 'internal', page: 'boosts' }), { on: count > 0, focusKey: 'boosts' });
+  if (count) {
+    boost.title = `${boostLabel}: ${activeBoosts.join(', ')} (Ctrl+Shift+B)`;
+    boost.classList.add('tool-status');
+    boost.append(h('span', { class: 'tool-count', 'aria-hidden': 'true' }, String(count)));
+  }
   toolbar.replaceChildren(
     icon(ICON.back, 'Back (Alt+←)', () => call('tab:back'), { disabled: !t?.canGoBack }),
     icon(ICON.forward, 'Forward (Alt+→)', () => call('tab:forward'), { disabled: !t?.canGoForward }),
     icon(ICON.reload, 'Reload (Ctrl+R)', () => call('tab:reload')),
     addr,
     icon(ICON.env, 'Switch environment: local → staging → prod (Ctrl+Alt+E)', () => call('env:switch'), { disabled: !t?.env }),
-    icon(ICON.phone, 'Toggle phone preview, 393 px with touch and mobile UA (Ctrl+Shift+P)', () => call('preview:toggle'), { on: s.preview }),
-    icon(ICON.boost, 'Boosts: site CSS / TypeScript (Ctrl+Shift+B)', () => call('cmd:run', { type: 'internal', page: 'boosts' }, 'current')),
-    icon(ICON.gear, 'Settings', () => call('cmd:run', { type: 'internal', page: 'settings' }, 'current')),
+    phone,
+    boost,
+    icon(ICON.gear, 'Settings', () => call('cmd:run', { type: 'internal', page: 'settings' })),
   );
 }
 
 function render(): void {
   if (!state) return;
+  const focused = document.hasFocus() && document.activeElement instanceof HTMLElement ? document.activeElement : null;
   document.body.classList.toggle('collapsed', state.settings.sidebarCollapsed);
-  document.body.classList.toggle('preview', state.preview);
+  document.body.classList.toggle('preview', ['starting', 'active', 'unavailable'].includes(state.phoneStatus));
+  const phoneMessage = PHONE_LABELS[state.phoneStatus].label;
+  if (phoneLabel.textContent !== phoneMessage) phoneLabel.textContent = phoneMessage;
   document.body.style.setProperty('--sb', state.settings.sidebarCollapsed ? '56px' : '264px');
   const sp: Space | undefined = state.spaces.find((x) => x.id === state!.activeSpaceId);
   document.title = `Quiver — ${sp?.name ?? ''}`;
   renderSidebar(state);
   renderToolbar(state);
+  const message = recoveryMessage(state);
+  if (recoveryStatus.textContent !== message) recoveryStatus.textContent = message;
+  const devMessage = state.localServerStatus?.state === 'recovered' ? 'Local server is back. Retry the failed page.' :
+    state.localServerStatus?.state === 'missing' ? 'Local server unavailable.' : '';
+  if (developerStatus.textContent !== devMessage) developerStatus.textContent = devMessage;
+  if (focused?.dataset.focusKey && !focused.isConnected && !focusShellControl(focused.dataset.focusKey)) {
+    if (!focusShellControl('tab-' + state.activeTabId)) focusShellControl('address');
+  }
 }
 
 quiver.on('state', (s: ShellState) => {

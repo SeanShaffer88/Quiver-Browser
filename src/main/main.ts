@@ -1,4 +1,4 @@
-import { app, BaseWindow, Menu, protocol, screen, session, WebContentsView, type Rectangle } from 'electron';
+import { app, BaseWindow, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME } from '../shared/constants';
@@ -9,6 +9,7 @@ import { parseLaunchArgs } from './launch-args';
 import type { ShortcutAction } from './shortcuts';
 import { Store } from './store';
 import { restrictInternalNavigation, TabManager } from './tabs';
+import { placeWindow } from './window-placement';
 
 // Portable build: keep every byte next to the executable (data\), never in %APPDATA%.
 if (process.env.PORTABLE_EXECUTABLE_DIR) {
@@ -45,14 +46,8 @@ function registerInternalProtocol(): void {
   });
 }
 
-function savedBounds(store: Store): Partial<Rectangle> & { width: number; height: number; maximized: boolean } {
-  const b = store.state.bounds ?? { width: 1360, height: 860, maximized: false };
-  if (b.x === undefined || b.y === undefined) return b;
-  const visible = screen.getAllDisplays().some((d) => {
-    const w = d.workArea;
-    return b.x! < w.x + w.width - 80 && b.x! + b.width > w.x + 80 && b.y! >= w.y - 10 && b.y! < w.y + w.height - 80;
-  });
-  return visible ? b : { width: b.width, height: b.height, maximized: b.maximized };
+function screenPlacement(saved: Parameters<typeof placeWindow>[0]) {
+  return placeWindow(saved, screen.getAllDisplays().map(({ workArea }) => workArea), screen.getPrimaryDisplay().workArea);
 }
 
 async function main(): Promise<void> {
@@ -81,20 +76,17 @@ async function main(): Promise<void> {
   const boosts = new Boosts();
   boosts.startWatching();
 
-  const b = savedBounds(store);
+  const launchPlacement = screenPlacement(store.state.bounds);
   const win = new BaseWindow({
-    x: b.x,
-    y: b.y,
-    width: b.width,
-    height: b.height,
-    minWidth: 760,
-    minHeight: 480,
+    ...launchPlacement.bounds,
+    minWidth: launchPlacement.minWidth,
+    minHeight: launchPlacement.minHeight,
     backgroundColor: '#14161a',
     title: 'Quiver',
     icon: process.platform === 'win32' ? path.join(RENDERER_DIR, 'quiver-icon.ico') : undefined,
     show: false,
   });
-  if (b.maximized) win.maximize();
+  if (launchPlacement.maximized) win.maximize();
 
   const prefs = (extra: Record<string, unknown> = {}) => ({
     partition: INTERNAL_PARTITION,
@@ -128,6 +120,9 @@ async function main(): Promise<void> {
         break;
       case 'close-tab':
         if (tabs.activeTabId !== null) tabs.closeTab(tabs.activeTabId);
+        break;
+      case 'reopen-tab':
+        tabs.reopenClosedTab();
         break;
       case 'reload':
         tabs.reload();
@@ -183,7 +178,13 @@ async function main(): Promise<void> {
   actions = registerIpc({ tabs, store, boosts, devWatcher, overlay, shell });
 
   await Promise.all([shell.webContents.loadURL('quiver://app/shell.html'), overlay.webContents.loadURL('quiver://app/commandbar.html')]);
-  tabs.restore();
+  const interrupted = store.state.sessionOpen === true;
+  const restored = tabs.restore();
+  if (interrupted && restored.tabs > 0) tabs.showSessionRecovery(restored);
+  if (launchPlacement.relocated) tabs.showWindowRecovery();
+  store.state.bounds = { ...launchPlacement.bounds, maximized: launchPlacement.maximized };
+  store.state.sessionOpen = true;
+  store.flush();
   const openLaunchTargets = ({ urls, importBookmarks }: LaunchTargets) => {
     for (const url of urls) tabs.openTab(url);
     if (importBookmarks) tabs.navigate('quiver://settings?import=bookmarks');
@@ -202,7 +203,7 @@ async function main(): Promise<void> {
 
   if (store.state.settings.devServerScan) devWatcher.start();
 
-  win.on('resize', () => tabs.layout());
+  win.on('resize', () => tabs.syncPhone());
   win.on('maximize', () => tabs.layout());
   win.on('unmaximize', () => tabs.layout());
   win.on('enter-full-screen', () => tabs.layout());
@@ -215,9 +216,9 @@ async function main(): Promise<void> {
   win.on('minimize', () => devWatcher.stop());
 
   const saveBounds = () => {
-    const maximized = win.isMaximized();
-    const r = maximized ? (store.state.bounds ?? win.getNormalBounds()) : win.getBounds();
-    store.state.bounds = { x: r.x, y: r.y, width: r.width, height: r.height, maximized };
+    const r = win.getNormalBounds();
+    const maximized = win.isMinimized() ? store.state.bounds?.maximized === true : win.isMaximized();
+    store.state.bounds = { ...r, maximized };
     store.save();
   };
   win.on('resized', saveBounds);
@@ -225,14 +226,50 @@ async function main(): Promise<void> {
   win.on('maximize', saveBounds);
   win.on('unmaximize', saveBounds);
 
+  let repairingPlacement = false;
+  const repairPlacement = () => {
+    if (repairingPlacement || win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return;
+    const normal = win.getNormalBounds();
+    const fitted = screenPlacement(normal);
+    const maximized = win.isMaximized();
+    // Let Windows keep a visible maximized window in place. Repair its normal bounds on unmaximize.
+    if (maximized && !screenPlacement(win.getBounds()).relocated) return;
+    repairingPlacement = true;
+    try {
+      if (maximized) win.unmaximize();
+      const [minWidth, minHeight] = win.getMinimumSize();
+      if (minWidth !== fitted.minWidth || minHeight !== fitted.minHeight) win.setMinimumSize(fitted.minWidth, fitted.minHeight);
+      const { x, y, width, height } = fitted.bounds;
+      if (x !== normal.x || y !== normal.y || width !== normal.width || height !== normal.height) win.setBounds(fitted.bounds);
+      if (maximized) win.maximize();
+      if (fitted.relocated) tabs.showWindowRecovery();
+      saveBounds();
+    } finally {
+      repairingPlacement = false;
+    }
+  };
+  const onDisplayMetrics = (_event: Event, display: Display, changedMetrics: string[]) => {
+    if (win.isDestroyed() || !changedMetrics.some((metric) => ['bounds', 'workArea', 'scaleFactor', 'rotation'].includes(metric))) return;
+    const normal = win.getNormalBounds();
+    if (screen.getDisplayMatching(normal).id === display.id || screenPlacement(normal).relocated) repairPlacement();
+  };
+  screen.on('display-removed', repairPlacement);
+  screen.on('display-metrics-changed', onDisplayMetrics);
+  win.on('restore', repairPlacement);
+  win.on('unmaximize', repairPlacement);
+  win.on('leave-full-screen', repairPlacement);
+
   win.on('close', () => {
     saveBounds();
     tabs.persist();
+    store.state.sessionOpen = false;
     store.flush();
     devWatcher.stop();
     boosts.stopWatching();
   });
   win.on('closed', () => {
+    screen.removeListener('display-removed', repairPlacement);
+    screen.removeListener('display-metrics-changed', onDisplayMetrics);
     tabs.dispose();
     for (const view of [shell, overlay]) {
       if (!view.webContents.isDestroyed()) view.webContents.close();
