@@ -18,6 +18,7 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, 
 
 const sidebar = document.getElementById('sidebar')!;
 const toolbar = document.getElementById('toolbar')!;
+const recoveryStatus = document.getElementById('recovery-status')!;
 let state: ShellState | null = null;
 let addingSpace = false;
 let renamingSpace: string | null = null;
@@ -88,6 +89,7 @@ function renderSpaces(s: ShellState): HTMLElement {
         role: 'tab',
         'aria-selected': String(sp.id === s.activeSpaceId),
         dataset: { focusKey: sp.id },
+        'aria-label': sp.isolated ? sp.name + ', separate sign-in' : sp.name + ', shared sign-in',
         title: `${sp.name}${sp.isolated ? ' — separate cookies & storage' : ' — shared cookies'}\nRight-click: rename or delete · Double-click: rename`,
         onClick: () => call('space:activate', sp.id),
         onDblclick: () => {
@@ -108,6 +110,7 @@ function renderSpaces(s: ShellState): HTMLElement {
     icon('+', 'New Space', () => {
       addingSpace = !addingSpace;
       render();
+      if (addingSpace) focusShellControl('space-name');
     }),
   );
   return wrap;
@@ -128,7 +131,6 @@ function renderAddForm(): HTMLElement {
       render();
     }
   });
-  queueMicrotask(() => name.focus());
   return h(
     'div',
     { class: 'add-space-form' },
@@ -143,26 +145,95 @@ function renderTab(t: TabInfo, active: boolean): HTMLElement {
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
   if (t.local && t.errors > 0) kids.push(h('span', { class: 'err', title: `${t.errors} console error(s) since last navigation` }, String(t.errors > 99 ? '99+' : t.errors)));
-  kids.push(h('button', { class: 'close', title: 'Close tab (Ctrl+W)', 'aria-label': 'Close tab', dataset: { focusKey: `close-tab-${t.id}` }, onClick: (e: Event) => { e.stopPropagation(); void call('tab:close', t.id); } }, '×'));
-  return h(
-    'div',
-    {
-      class: 'tab' + (active ? ' active' : '') + (t.loading ? ' loading' : ''),
-      role: 'tab',
-      tabIndex: 0,
-      'aria-selected': String(active),
-      dataset: { focusKey: `tab-${t.id}` },
-      title: `${t.title}\n${t.url}`,
-      onClick: () => call('tab:activate', t.id),
-      onKeydown: (e: KeyboardEvent) => {
-        if (e.key === 'Enter' || e.key === ' ') void call('tab:activate', t.id);
-      },
-      onAuxclick: (e: MouseEvent) => {
-        if (e.button === 1) void call('tab:close', t.id);
-      },
+  const select = h('button', {
+    class: 'tab-select',
+    role: 'tab',
+    'aria-label': t.title,
+    'aria-selected': String(active),
+    dataset: { focusKey: 'tab-' + t.id },
+    title: t.title + '\n' + t.url,
+    onClick: () => call('tab:activate', t.id),
+  }, ...kids);
+  const close = h('button', {
+    class: 'close',
+    title: 'Close tab (Ctrl+W)',
+    'aria-label': 'Close ' + t.title,
+    dataset: { focusKey: 'close-tab-' + t.id },
+    onClick: () => call('tab:close', t.id),
+  }, '×');
+  return h('div', {
+    class: 'tab' + (active ? ' active' : '') + (t.loading ? ' loading' : ''),
+    onAuxclick: (e: MouseEvent) => {
+      if (e.button === 1) void call('tab:close', t.id);
     },
-    ...kids,
-  );
+  }, select, close);
+}
+
+function recoveryMessage(s: ShellState): string {
+  const restored = s.recoveryNotice?.session;
+  const parts: string[] = [];
+  if (restored) {
+    const tabs = restored.tabs === 1 ? '1 tab' : restored.tabs + ' tabs';
+    const spaces = restored.spaces === 1 ? '1 Space' : restored.spaces + ' Spaces';
+    parts.push('Restored ' + tabs + ' across ' + spaces + ' from the last saved session.');
+  }
+  if (s.recoveryNotice?.movedToVisibleDisplay) parts.push('Quiver moved to an available display.');
+  return parts.join(' ');
+}
+
+function renderRecovery(s: ShellState): HTMLElement[] {
+  const cards: HTMLElement[] = [];
+  const message = recoveryMessage(s);
+  if (message) {
+    cards.push(h('div', { class: 'recovery-card recovery-notice' },
+      h('p', { class: 'recovery-copy' }, message),
+      h('button', {
+        class: 'icon-btn recovery-expanded',
+        'aria-label': 'Dismiss recovery notice',
+        title: message + ' Dismiss notice',
+        dataset: { focusKey: 'recovery-dismiss' },
+        onClick: () => call('recovery:dismiss'),
+      }, '×'),
+      h('button', {
+        class: 'icon-btn recovery-compact',
+        'aria-label': 'Show recovery notice',
+        title: message,
+        dataset: { focusKey: 'recovery-dismiss' },
+        onClick: () => call('sidebar:toggle'),
+      }, 'ⓘ'),
+    ));
+  }
+  const closed = s.recentlyClosed;
+  const original = closed && s.spaces.find(({ id }) => id === closed.spaceId);
+  if (closed && original) {
+    const signIn = original.isolated ? 'Separate sign-in' : 'Shared sign-in';
+    const description = 'Reopen ' + closed.title + ' in ' + original.name;
+    cards.push(h('div', { class: 'recovery-card recovery-closed' },
+      h('p', { class: 'recovery-copy', title: closed.title }, 'Closed ' + closed.title),
+      h('button', {
+        class: 'btn',
+        'aria-label': description,
+        title: description + ' (Ctrl+Shift+T) · ' + signIn,
+        dataset: { focusKey: 'reopen-tab' },
+        onClick: () => call('tab:reopen', closed.id),
+      }, h('span', { class: 'recovery-expanded' }, 'Reopen in ' + original.name), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, '↶')),
+      h('kbd', { class: 'recovery-expanded' }, 'Ctrl+Shift+T'),
+    ));
+  }
+  const crashed = s.tabs.find((t) => t.id === s.activeTabId && t.canRetryCrash);
+  if (crashed) {
+    cards.push(h('div', { class: 'recovery-card recovery-crash' },
+      h('p', { class: 'recovery-copy' }, 'This page stopped.'),
+      h('button', {
+        class: 'btn',
+        'aria-label': 'Retry stopped page',
+        title: 'Retry stopped page (Ctrl+R)',
+        dataset: { focusKey: 'retry-crashed-tab' },
+        onClick: () => call('tab:retry-crash', crashed.id),
+      }, h('span', { class: 'recovery-expanded' }, 'Retry page'), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, '↻')),
+    ));
+  }
+  return cards;
 }
 
 function renderSidebar(s: ShellState): void {
@@ -173,7 +244,10 @@ function renderSidebar(s: ShellState): void {
 
   const newtab = h('button', { class: 'newtab', title: 'Open the command bar in a new tab (Ctrl+T)', dataset: { focusKey: 'new-tab' }, onClick: () => call('cmd:open', '', 'new', 'new-tab') }, h('span', {}, '＋ New tab'), h('kbd', {}, 'Ctrl+T'));
 
-  const tabsEl = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Tabs' }, ...spaceTabs.map((t) => renderTab(t, t.id === s.activeTabId)));
+  const previousTabs = sidebar.querySelector<HTMLElement>('.tabs');
+  const previousScroll = previousTabs?.dataset.spaceId === s.activeSpaceId ? previousTabs.scrollTop : 0;
+  const tabsEl = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Tabs', dataset: { spaceId: s.activeSpaceId } },
+    ...spaceTabs.map((t) => renderTab(t, t.id === s.activeTabId)));
 
   const servers = h('section', { class: 'servers', 'aria-label': 'Local servers' }, h('h3', {}, h('span', {}, 'Local servers'), h('button', { class: 'icon-btn', style: undefined, title: 'Rescan now', 'aria-label': 'Rescan local servers', dataset: { focusKey: 'rescan' }, onClick: () => call('devserver:refresh') }, '↻')));
   if (!s.settings.devServerScan) servers.append(h('div', { class: 'empty' }, 'Scanning is off (Settings).'));
@@ -184,7 +258,17 @@ function renderSidebar(s: ShellState): void {
     );
   }
 
-  sidebar.replaceChildren(brand, renderSpaces(s), ...(addingSpace ? [renderAddForm()] : []), newtab, tabsEl, servers);
+  const active = s.spaces.find(({ id }) => id === s.activeSpaceId);
+  const isolation = active && h('p', {
+    class: 'space-isolation',
+    title: active.name + (active.isolated ? ' has separate cookies and sign-ins' : ' shares cookies and sign-ins with other shared Spaces'),
+  },
+    h('span', { class: 'recovery-expanded' }, active.isolated ? 'Separate sign-in' : 'Shared sign-in'),
+    h('span', { class: 'recovery-compact' }, active.isolated ? 'Separate' : 'Shared'),
+  );
+  sidebar.replaceChildren(brand, renderSpaces(s), ...(isolation ? [isolation] : []),
+    ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderRecovery(s), tabsEl, servers);
+  tabsEl.scrollTop = previousScroll;
 }
 
 function activeTab(s: ShellState): TabInfo | undefined {
@@ -218,7 +302,11 @@ function render(): void {
   document.title = `Quiver — ${sp?.name ?? ''}`;
   renderSidebar(state);
   renderToolbar(state);
-  if (focused && !focused.isConnected) focusShellControl(focused.dataset.focusKey);
+  const message = recoveryMessage(state);
+  if (recoveryStatus.textContent !== message) recoveryStatus.textContent = message;
+  if (focused?.dataset.focusKey && !focused.isConnected && !focusShellControl(focused.dataset.focusKey)) {
+    if (!focusShellControl('tab-' + state.activeTabId)) focusShellControl('address');
+  }
 }
 
 quiver.on('state', (s: ShellState) => {

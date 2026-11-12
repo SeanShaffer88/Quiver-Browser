@@ -13,10 +13,11 @@ import {
   TOOLBAR_H,
 } from '../shared/constants';
 import { badgeFor, isLocalHost, switchEnv } from '../shared/env';
-import type { DevServer, EnvBadge, ShellState, Space, TabInfo } from '../shared/types';
+import type { DevServer, EnvBadge, RecoveryNotice, ShellState, Space, TabInfo } from '../shared/types';
 import { boostKind, boostMatchesHost, transpileBoost, wrapScript, type Boosts } from './boosts';
 import { shortcutFor, type ShortcutAction } from './shortcuts';
 import type { Store } from './store';
+import { rememberClosed, restorableUrl, restoreSelection, snapshotSpace, type ClosedTab } from './session-recovery';
 
 interface Tab {
   id: number;
@@ -25,12 +26,15 @@ interface Tab {
   view: WebContentsView;
   internal: boolean;
   pendingUrl: string | null;
+  requestedUrl: string | null;
+  crashUrl: string | null;
   errorFor: string | null;
   title: string;
   favicon: string;
   loading: boolean;
   errors: number;
   navigation: number;
+  commandRevision: number;
   cssKeys: Map<string, string>;
 }
 
@@ -76,6 +80,9 @@ export class TabManager {
   private nextId = 1;
   activeTabId: number | null = null;
   private lastActive: Record<string, number> = {};
+  private recentlyClosed: ClosedTab[] = [];
+  private recoveryNotice?: RecoveryNotice;
+  private restoring = false;
   preview = false;
   devServers: DevServer[] = [];
 
@@ -118,10 +125,11 @@ export class TabManager {
   }
 
   tabUrl(t: Tab): string {
+    if (t.crashUrl) return t.crashUrl;
     if (t.errorFor) return t.errorFor;
     if (t.pendingUrl) return t.pendingUrl;
     const u = t.view.webContents.isDestroyed() ? '' : t.view.webContents.getURL();
-    return u;
+    return u || t.requestedUrl || '';
   }
 
   private info(t: Tab): TabInfo {
@@ -143,6 +151,7 @@ export class TabManager {
       favicon: t.favicon,
       loading: t.loading,
       canGoBack: nav ? nav.canGoBack() : false,
+      canRetryCrash: t.crashUrl !== null,
       canGoForward: nav ? nav.canGoForward() : false,
       errors: t.errors,
       local,
@@ -152,7 +161,10 @@ export class TabManager {
   }
 
   snapshot(): ShellState {
+    const recent = this.recentlyClosed[0];
     return {
+      recentlyClosed: recent ? { id: recent.id, spaceId: recent.spaceId, title: recent.title } : undefined,
+      recoveryNotice: this.recoveryNotice,
       spaces: this.spaces,
       activeSpaceId: this.activeSpaceId,
       tabs: [...this.tabs.values()].map((t) => this.info(t)),
@@ -161,6 +173,21 @@ export class TabManager {
       preview: this.preview,
       settings: this.settings,
     };
+  }
+
+  showSessionRecovery(session: NonNullable<RecoveryNotice['session']>): void {
+    this.recoveryNotice = { ...this.recoveryNotice, session };
+    this.emit();
+  }
+
+  showWindowRecovery(): void {
+    this.recoveryNotice = { ...this.recoveryNotice, movedToVisibleDisplay: true };
+    this.emit();
+  }
+
+  dismissRecovery(): void {
+    this.recoveryNotice = undefined;
+    this.emit();
   }
 
   emit(): void {
@@ -220,7 +247,7 @@ export class TabManager {
   }
 
   // ───────── tabs ─────────
-  openTab(rawUrl: string, opts: { spaceId?: string; activate?: boolean; lazy?: boolean } = {}): Tab {
+  openTab(rawUrl: string, opts: { spaceId?: string; activate?: boolean; lazy?: boolean; index?: number } = {}): Tab {
     const spaceId = opts.spaceId ?? this.activeSpaceId;
     const internal = rawUrl.startsWith('quiver://') || rawUrl === '';
     const url = internal ? toInternalUrl(rawUrl || 'quiver://newtab') : rawUrl;
@@ -233,15 +260,18 @@ export class TabManager {
       view,
       internal,
       pendingUrl: null,
+      requestedUrl: null,
+      crashUrl: null,
       errorFor: null,
       title: '',
       favicon: '',
       loading: false,
       errors: 0,
       navigation: 0,
+      commandRevision: 0,
       cssKeys: new Map(),
     };
-    this.tabs.set(tab.id, tab);
+    this.insertTab(tab, opts.index);
     this.win.contentView.addChildView(view);
     this.bringOverlayToTop();
     view.setVisible(false);
@@ -255,8 +285,24 @@ export class TabManager {
     return tab;
   }
 
+  private insertTab(tab: Tab, index?: number): void {
+    const before = index === undefined ? undefined : [...this.tabs.values()].filter((other) => other.spaceId === tab.spaceId)[index];
+    if (!before) {
+      this.tabs.set(tab.id, tab);
+      return;
+    }
+    const entries = [...this.tabs.entries()];
+    this.tabs.clear();
+    for (const [id, existing] of entries) {
+      if (id === before.id) this.tabs.set(tab.id, tab);
+      this.tabs.set(id, existing);
+    }
+  }
+
   private load(tab: Tab, url: string): void {
     tab.pendingUrl = null;
+    tab.requestedUrl = url;
+    tab.crashUrl = null;
     tab.errorFor = null;
     tab.view.webContents.loadURL(url).catch(() => {
       /* navigation errors surface via did-fail-load */
@@ -285,17 +331,22 @@ export class TabManager {
       touch();
     });
     wc.on('did-navigate', () => {
+      tab.requestedUrl = null;
       this.persist();
       touch();
       this.followPhone(tab);
     });
-    wc.on('did-navigate-in-page', () => {
+    wc.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
+      if (!isMainFrame) return;
+      tab.requestedUrl = null;
       this.persist();
       touch();
       this.followPhone(tab);
     });
     wc.on('did-start-navigation', ({ isMainFrame, isSameDocument, url }) => {
-      if (!isMainFrame || isSameDocument) return;
+      if (!isMainFrame) return;
+      tab.commandRevision++;
+      if (isSameDocument) return;
       tab.navigation++;
       tab.cssKeys.clear();
       if (url.startsWith(ERR_PREFIX)) return;
@@ -332,7 +383,10 @@ export class TabManager {
       wc.on('will-redirect', guard);
     }
     wc.on('render-process-gone', (_e, details) => {
-      tab.title = 'Page crashed';
+      if (this.tabs.get(tab.id) !== tab) return;
+      const url = this.tabUrl(tab);
+      tab.crashUrl = restorableUrl(url) ? url : null;
+      tab.title = 'Page stopped responding';
       tab.loading = false;
       console.warn(`[quiver] tab ${tab.id} renderer gone: ${details.reason}`);
       touch();
@@ -359,20 +413,53 @@ export class TabManager {
   closeTab(id: number): void {
     const tab = this.tabs.get(id);
     if (!tab) return;
-    const sameSpace = [...this.tabs.values()].filter((t) => t.spaceId === tab.spaceId);
-    const idx = sameSpace.findIndex((t) => t.id === id);
-    this.tabs.delete(id);
-    this.win.contentView.removeChildView(tab.view);
-    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
-    if (this.activeTabId === id) {
-      const rest = sameSpace.filter((t) => t.id !== id);
-      this.activeTabId = null;
-      if (rest.length) this.activateTab(rest[Math.min(idx, rest.length - 1)].id);
-      else this.openTab('quiver://newtab', { spaceId: tab.spaceId });
+    const sameSpace = [...this.tabs.values()].filter((other) => other.spaceId === tab.spaceId);
+    const index = sameSpace.findIndex((other) => other.id === id);
+    const url = this.tabUrl(tab);
+    const title = tab.title || 'tab';
+    this.discardTab(tab);
+
+    const remaining = sameSpace.filter((other) => other.id !== id);
+    const neighbor = remaining[Math.min(index, remaining.length - 1)];
+    if (this.lastActive[tab.spaceId] === id) {
+      if (neighbor) this.lastActive[tab.spaceId] = neighbor.id;
+      else delete this.lastActive[tab.spaceId];
     }
+    let placeholderId: number | undefined;
+    if (this.activeTabId === id) {
+      this.activeTabId = null;
+      if (neighbor) this.activateTab(neighbor.id);
+      else placeholderId = this.openTab('quiver://newtab', { spaceId: tab.spaceId }).id;
+    }
+    this.recentlyClosed = rememberClosed(this.recentlyClosed, { id, url, title, spaceId: tab.spaceId, index, placeholderId });
     this.layout();
     this.syncPhone();
     this.persist();
+    this.emit();
+  }
+
+  private discardTab(tab: Tab): void {
+    this.tabs.delete(tab.id);
+    this.win.contentView.removeChildView(tab.view);
+    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+  }
+
+  reopenClosedTab(expectedId?: number): void {
+    const entry = this.recentlyClosed[0];
+    if (!entry || (expectedId !== undefined && expectedId !== entry.id) || !this.spaces.some((space) => space.id === entry.spaceId)) return;
+    const inSpace = [...this.tabs.values()].filter((tab) => tab.spaceId === entry.spaceId);
+    const placeholder = inSpace.length === 1 && inSpace[0].id === entry.placeholderId ? inSpace[0] : undefined;
+    const reopened = this.openTab(entry.url, { spaceId: entry.spaceId, index: entry.index, activate: false, lazy: true });
+    if (placeholder && this.tabUrl(placeholder) === 'quiver://app/newtab.html') this.discardTab(placeholder);
+    this.recentlyClosed.shift();
+    this.activateTab(reopened.id);
+  }
+
+  retryCrashedTab(id: number): void {
+    const tab = this.activeTab;
+    if (!tab || tab.id !== id || !tab.crashUrl) return;
+    this.load(tab, tab.crashUrl);
+    tab.title = '';
     this.emit();
   }
 
@@ -421,7 +508,8 @@ export class TabManager {
   reload(): void {
     const t = this.activeTab;
     if (!t) return;
-    if (t.errorFor) this.load(t, t.errorFor);
+    if (t.crashUrl) this.retryCrashedTab(t.id);
+    else if (t.errorFor) this.load(t, t.errorFor);
     else t.view.webContents.reload();
   }
 
@@ -466,13 +554,15 @@ export class TabManager {
     if (this.spaces.length < 2) return;
     const space = this.spaces.find((s) => s.id === id);
     if (!space) return;
-    for (const t of [...this.tabs.values()].filter((t) => t.spaceId === id)) {
-      this.tabs.delete(t.id);
-      this.win.contentView.removeChildView(t.view);
-      if (!t.view.webContents.isDestroyed()) t.view.webContents.close();
-    }
+    for (const t of [...this.tabs.values()].filter((t) => t.spaceId === id)) this.discardTab(t);
+    this.recentlyClosed = this.recentlyClosed.filter((tab) => tab.spaceId !== id);
+    delete this.lastActive[id];
     this.store.state.spaces = this.spaces.filter((s) => s.id !== id);
     delete this.store.state.tabsBySpace[id];
+    delete this.store.state.activeIndexBySpace[id];
+    if (this.activeSpaceId === id) this.activateSpace(this.spaces[0].id);
+    this.persist();
+    this.emit();
     if (space.isolated) {
       try {
         await session.fromPartition(`persist:quiver-space-${id}`).clearStorageData();
@@ -480,9 +570,6 @@ export class TabManager {
         /* best effort */
       }
     }
-    if (this.activeSpaceId === id) this.activateSpace(this.spaces[0].id);
-    else this.emit();
-    this.persist();
   }
 
   activateSpace(id: string): void {
@@ -732,37 +819,43 @@ export class TabManager {
 
   // ───────── persistence ─────────
   persist(): void {
+    if (this.restoring) return;
     const st = this.store.state;
     st.tabsBySpace = {};
     st.activeIndexBySpace = {};
-    for (const s of this.spaces) {
-      const list = [...this.tabs.values()].filter((t) => t.spaceId === s.id);
-      st.tabsBySpace[s.id] = list.map((t) => ({ url: this.rawUrl(t) })).filter((t) => t.url && !t.url.startsWith('data:'));
-      const idx = list.findIndex((t) => t.id === this.lastActive[s.id]);
-      st.activeIndexBySpace[s.id] = Math.max(0, idx);
+    for (const space of this.spaces) {
+      const list = [...this.tabs.values()]
+        .filter((tab) => tab.spaceId === space.id)
+        .map((tab) => ({ id: tab.id, url: this.tabUrl(tab) }));
+      const { tabs, activeIndex } = snapshotSpace(list, this.lastActive[space.id]);
+      st.tabsBySpace[space.id] = tabs;
+      st.activeIndexBySpace[space.id] = activeIndex;
     }
     this.store.save();
   }
 
-  private rawUrl(t: Tab): string {
-    return this.tabUrl(t);
-  }
-
-  restore(): void {
-    // openTab persists the partially restored session, replacing both state maps.
+  restore(): { tabs: number; spaces: number } {
     const { tabsBySpace, activeIndexBySpace, activeSpaceId } = this.store.state;
-    for (const s of this.spaces) {
-      const saved = tabsBySpace[s.id] ?? [];
-      const isActive = s.id === activeSpaceId;
-      const idx = activeIndexBySpace[s.id] ?? 0;
-      saved.forEach((p, i) => {
-        const t = this.openTab(p.url, { spaceId: s.id, activate: false, lazy: !isActive || i !== idx });
-        if (i === idx) this.lastActive[s.id] = t.id;
-      });
+    const restored = { tabs: 0, spaces: 0 };
+    this.restoring = true;
+    try {
+      for (const space of this.spaces) {
+        const saved = tabsBySpace?.[space.id];
+        if (!Array.isArray(saved)) continue;
+        const { entries, activeIndex } = restoreSelection(saved, activeIndexBySpace?.[space.id] ?? 0);
+        if (entries.length) restored.spaces++;
+        restored.tabs += entries.length;
+        entries.forEach(({ url }, index) => {
+          const tab = this.openTab(url, { spaceId: space.id, activate: false, lazy: true });
+          if (index === activeIndex) this.lastActive[space.id] = tab.id;
+        });
+      }
+      this.activateSpace(activeSpaceId);
+    } finally {
+      this.restoring = false;
     }
-    const inActive = [...this.tabs.values()].filter((t) => t.spaceId === activeSpaceId);
-    if (inActive.length === 0) this.openTab('quiver://newtab', { spaceId: activeSpaceId });
-    else this.activateTab(inActive.some((t) => t.id === this.lastActive[activeSpaceId]) ? this.lastActive[activeSpaceId] : inActive[0].id);
+    this.persist();
+    return restored;
   }
 
   async waitForLoad(tab: Tab, timeoutMs: number): Promise<void> {

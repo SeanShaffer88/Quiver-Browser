@@ -49,3 +49,24 @@ body { display: grid; grid-template-columns: var(--sb, 264px) 1fr; grid-template
 .collapsed .newtab { margin: 0 6px 6px; }
 .phone-label { position: absolute; right: 12px; top: 0; width: 393px; height: 28px; display: none; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; }
 .preview .phone-label { display: flex; }
+.space-isolation { margin: 0 10px 8px; font-size: 11px; color: var(--muted); }
+.tab-select { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; text-align: left; }
+.tab:focus-within .close { opacity: 1; }
+.recovery-card { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 10px 6px; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-2); }
+.recovery-card .btn { min-width: 0; max-width: 100%; padding: 2px 7px; background: var(--bg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recovery-copy { flex-basis: 100%; min-width: 0; margin: 0; font-size: 11px; color: var(--text); }
+.recovery-closed .recovery-copy { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.recovery-card kbd { font: 10px var(--mono); color: var(--muted); }
+.recovery-notice { flex-wrap: nowrap; }
+.recovery-notice .recovery-copy { flex: 1; }
+.recovery-notice .icon-btn { width: 24px; height: 24px; flex: none; }
+.recovery-compact { display: none; }
+.collapsed .recovery-card { justify-content: center; margin-inline: 5px; padding: 3px; }
+.collapsed .recovery-compact { display: inline; }
+.collapsed .recovery-expanded, .collapsed .recovery-copy { display: none; }
+.collapsed .space-isolation { margin-inline: 1px; text-align: center; }
+.collapsed .tab-select { justify-content: center; }
+@media (forced-colors: active) {
+  .recovery-card, .recovery-card button { border-color: ButtonText; }
+  .tab.active .tab-select, .space.active { outline: 1px solid Highlight; }
+}

@@ -94,6 +94,18 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('tab:back', () => tabs.goBack());
   handle('tab:forward', () => tabs.goForward());
   handle('tab:reload', () => tabs.reload());
+  handle('tab:reopen', (e, id: number) => {
+    if (e.sender !== shell.webContents || !Number.isSafeInteger(id)) throw new Error('invalid reopen request');
+    tabs.reopenClosedTab(id);
+  });
+  handle('tab:retry-crash', (e, id: number) => {
+    if (e.sender !== shell.webContents || !Number.isSafeInteger(id)) throw new Error('invalid retry request');
+    tabs.retryCrashedTab(id);
+  });
+  handle('recovery:dismiss', (e) => {
+    if (e.sender !== shell.webContents) throw new Error('forbidden sender');
+    tabs.dismissRecovery();
+  });
 
   // spaces
   handle('space:create', (_e, name: string, isolated: boolean) => {

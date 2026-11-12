@@ -17,6 +17,7 @@ export interface PersistedState {
   activeIndexBySpace: Record<string, number>;
   settings: Settings;
   bookmarks: Bookmark[];
+  sessionOpen?: boolean;
   bounds?: { x?: number; y?: number; width: number; height: number; maximized: boolean };
 }
 

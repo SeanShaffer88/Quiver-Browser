@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 const INVOKE = new Set([
   'state:get',
   'tab:new', 'tab:close', 'tab:activate', 'tab:back', 'tab:forward', 'tab:reload',
+  'tab:reopen', 'tab:retry-crash', 'recovery:dismiss',
   'space:create', 'space:menu', 'space:rename', 'space:activate',
   'sidebar:toggle', 'preview:toggle', 'env:switch',
   'cmd:open', 'cmd:close', 'cmd:suggest', 'cmd:commit', 'cmd:run',

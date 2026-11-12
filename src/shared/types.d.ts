@@ -45,6 +45,7 @@ export interface TabInfo {
   favicon: string;
   loading: boolean;
   canGoBack: boolean;
+  canRetryCrash: boolean;
   canGoForward: boolean;
   errors: number;
   local: boolean;
@@ -58,7 +59,14 @@ export interface DevServer {
   title: string;
 }
 
+export interface RecoveryNotice {
+  session?: { tabs: number; spaces: number };
+  movedToVisibleDisplay?: boolean;
+}
+
 export interface ShellState {
+  recentlyClosed?: { id: number; spaceId: string; title: string };
+  recoveryNotice?: RecoveryNotice;
   spaces: Space[];
   activeSpaceId: string;
   tabs: TabInfo[];
