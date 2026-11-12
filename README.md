@@ -169,6 +169,12 @@ The unit tests cover bookmark import, command parsing, environment switching, an
 
 The Windows beta workflow checks NSIS installation, upgrade and removal, default browser registration, sign-in startup, and PortableApps installation and profile preservation on an isolated GitHub-hosted runner. Windows 10, MSI packaging, and screen-reader behavior remain unverified.
 
+## Stable release preparation
+
+Follow [Electron releases](https://releases.electronjs.org/) for Chromium and Electron security updates. Before publishing, confirm Quiver is pinned to a patched, supported Electron line. For a security update, rebuild both Windows packages and run the installer, portable, and browser checks against the same candidate. Publish the tested packages and their SHA-256 hashes together.
+
+For the first stable release, verify trusted signatures on both distributables and test on a clean Windows 11 x64 desktop. Cover default browser selection, upgrading from the latest beta with an existing profile, keyboard and Narrator operation, and portable use from removable storage. Check site permissions, navigation, and IPC whenever a change affects what web pages can reach.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
