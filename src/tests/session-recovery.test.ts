@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { Input } from 'electron';
+import { shortcutFor } from '../main/shortcuts';
 import { placeWindow } from '../main/window-placement';
 import { CLOSED_TAB_LIMIT, rememberClosed, restoreSelection, snapshotSpace, type ClosedTab } from '../main/session-recovery';
 
@@ -66,4 +68,25 @@ test('recently closed tabs retain original Space and order without recording pla
   assert.equal(stack[0].spaceId, 'qa');
   assert.equal(stack[0].index, 24);
   assert.equal(stack.at(-1)?.index, 5);
+});
+
+test('session and undo preserve local files and an intentional blank tab', () => {
+  const entries = [
+    { id: 1, url: 'file:///C:/Quiver%20Fixture/guide.html' },
+    { id: 2, url: 'about:blank' },
+    { id: 3, url: 'about:config' },
+    { id: 4, url: 'javascript:void(0)' },
+    { id: 5, url: '' },
+  ];
+  const state = snapshotSpace(entries, 2);
+  assert.deepEqual(state.tabs, entries.slice(0, 2).map(({ url }) => ({ url })));
+  assert.equal(state.activeIndex, 1);
+  assert.equal(rememberClosed([], { ...entries[0], title: 'Guide', spaceId: 'work', index: 1 })[0].url, entries[0].url);
+  assert.equal(rememberClosed([], { ...entries[1], title: 'Blank', spaceId: 'work', index: 2 })[0].url, entries[1].url);
+});
+
+test('Ctrl+Shift+T reopens a tab and Ctrl+T still opens the command bar', () => {
+  const key = { type: 'keyDown', code: 'KeyT', control: true, shift: false, alt: false } as Input;
+  assert.equal(shortcutFor({ ...key, shift: true }), 'reopen-tab');
+  assert.equal(shortcutFor(key), 'command-new');
 });

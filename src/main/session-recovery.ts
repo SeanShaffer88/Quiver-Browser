@@ -11,6 +11,8 @@ export function restorableUrl(value: unknown): value is string {
   try {
     const url = new URL(value);
     if (/^https?:\/\//i.test(value)) return url.protocol === 'https:' || url.protocol === 'http:';
+    if (value === 'about:blank') return true;
+    if (/^file:\/\//i.test(value)) return url.protocol === 'file:' && !url.host && url.pathname.startsWith('/');
     if (!value.startsWith('quiver://') || url.username || url.password || url.port) return false;
     return url.host === 'app' ? INTERNAL_PAGES.has(url.pathname) : INTERNAL_HOSTS.has(url.host) && !url.pathname;
   } catch {
