@@ -106,8 +106,19 @@ function Find-Named([string]$Name, [switch]$Button) {
 }
 
 function Invoke-Button([string]$Name) {
-    $button = Wait-For "enabled '$Name' button in the owned Quiver window" { Find-Named $Name -Button }
-    $button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $action = Wait-For "enabled '$Name' button with an action in the owned Quiver window" {
+        $button = Find-Named $Name -Button
+        if (!$button) { return }
+        [object]$pattern = $null
+        if ($button.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+            return [pscustomobject]@{ pattern = $pattern; toggle = $false }
+        }
+        if ($button.TryGetCurrentPattern([Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) {
+            return [pscustomobject]@{ pattern = $pattern; toggle = $true }
+        }
+    }
+    if ($action.toggle) { $action.pattern.Toggle() }
+    else { $action.pattern.Invoke() }
 }
 
 function Read-Requests {
@@ -117,7 +128,13 @@ function Read-Requests {
 }
 
 function Get-ActiveRoute {
-    $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+    $share = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+    $stream = [IO.File]::Open($statePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, $share)
+    try {
+        $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8)
+        try { $state = $reader.ReadToEnd() | ConvertFrom-Json }
+        finally { $reader.Dispose() }
+    } finally { $stream.Dispose() }
     $space = $state.activeSpaceId
     $tabs = @($state.tabsBySpace.$space)
     $tabs[[int]$state.activeIndexBySpace.$space].url

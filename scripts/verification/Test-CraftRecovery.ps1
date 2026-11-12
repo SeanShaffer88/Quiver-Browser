@@ -84,7 +84,11 @@ function Find-Visible([string]$Name) {
 }
 
 function Read-State {
-    Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+    # Allow Quiver to atomically replace this file while the test reads a snapshot.
+    $share = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+    $reader = [IO.StreamReader]::new([IO.File]::Open($statePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, $share))
+    try { $json = $reader.ReadToEnd() } finally { $reader.Dispose() }
+    $json | ConvertFrom-Json
 }
 
 function Get-Active([string]$Space, [string]$Url) {

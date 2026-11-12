@@ -226,7 +226,11 @@ function Open-Command([int]$Key = 0x4c) {
 }
 
 function Read-Session {
-    $state = Get-Content -LiteralPath $statePath -Raw -Encoding utf8 | ConvertFrom-Json
+    # Allow Quiver to atomically replace this file while the test reads a snapshot.
+    $share = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+    $reader = [IO.StreamReader]::new([IO.File]::Open($statePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, $share))
+    try { $json = $reader.ReadToEnd() } finally { $reader.Dispose() }
+    $state = $json | ConvertFrom-Json
     $space = $state.activeSpaceId
     $tabs = @($state.tabsBySpace.$space)
     $index = [int]$state.activeIndexBySpace.$space

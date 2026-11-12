@@ -135,7 +135,11 @@ function Invoke-Button {
 
 function Read-State {
     if (Test-Path -LiteralPath $statePath -PathType Leaf) {
-        Get-Content -LiteralPath $statePath -Encoding UTF8 -Raw | ConvertFrom-Json
+        # Allow Quiver to atomically replace this file while the test reads a snapshot.
+        $share = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+        $reader = [IO.StreamReader]::new([IO.File]::Open($statePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, $share))
+        try { $json = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        $json | ConvertFrom-Json
     }
 }
 
