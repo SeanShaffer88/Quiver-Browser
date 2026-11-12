@@ -31,6 +31,38 @@ jobs:
       - name: Audit dependencies
         run: npm audit --audit-level=high
 
+      - name: Extract the pinned PortableApps.com compiler
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'PortableApps.comInstaller_3.9.24.paf.exe'
+          $tools = Join-Path $env:RUNNER_TEMP 'quiver-paf-tools'
+          $path = 'project/portableapps/PortableApps.com%20Installer/PortableApps.comInstaller_3.9.24.paf.exe'
+          $urls = @(
+            "https://downloads.sourceforge.net/$path",
+            "https://pilotfiber.dl.sourceforge.net/${path}?viasf=1",
+            "https://psychz.dl.sourceforge.net/${path}?viasf=1"
+          )
+          $expected = '7EF6E2758CB578843D767FB5FAFDBDE8BF872B84F0ACD6E64F18AFBB05C04F00'
+          $verified = $false
+          foreach ($url in $urls) {
+            & curl.exe --fail --location --silent --show-error --proto '=https' --proto-redir '=https' --max-time 60 --output $archive $url
+            if ($LASTEXITCODE -eq 0) {
+              $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash
+              if ($hash -ceq $expected) {
+                $verified = $true
+                break
+              }
+              Write-Warning "PortableApps.com mirror returned a different SHA-256: $hash"
+            }
+          }
+          if (!$verified) { throw 'No PortableApps.com mirror returned the pinned archive.' }
+          $signature = Get-AuthenticodeSignature -LiteralPath $archive
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -cne 'DF99B68F457C981B0FDF83731DE299A26B64CCF7') {
+            throw 'Unexpected PortableApps.com compiler publisher.'
+          }
+          $sevenZip = Join-Path $env:ProgramFiles '7-Zip/7z.exe'
+          & $sevenZip x -tNsis -y "-o$tools" $archive 'PortableApps.comInstaller.exe' 'App\*' 'Other\Source\License.txt'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
       - name: Build unsigned Windows setup
         run: npm run build:win -- --config.win.signExecutable=false --config.nsis.differentialPackage=false --publish never
 
@@ -45,24 +77,6 @@ jobs:
           $fixture = 'release/upgrade-fixture/Quiver-v0.0.9-x64-Setup.exe'
           $asarHash = (Get-FileHash -Algorithm SHA256 -LiteralPath 'release/win-unpacked/resources/app.asar').Hash
           ./scripts/Test-WindowsInstaller.ps1 -Candidate $setup -Fixture $fixture -CandidateVersion $version -CandidateAsarSha256 $asarHash
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
-      - name: Extract the pinned PortableApps.com compiler
-        run: |
-          $archive = Join-Path $env:RUNNER_TEMP 'PortableApps.comInstaller_3.9.24.paf.exe'
-          $tools = Join-Path $env:RUNNER_TEMP 'quiver-paf-tools'
-          $url = 'https://downloads.sourceforge.net/portableapps/PortableApps.com%20Installer/PortableApps.comInstaller_3.9.24.paf.exe'
-          Invoke-WebRequest -Uri $url -OutFile $archive
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash
-          if ($hash -cne '7EF6E2758CB578843D767FB5FAFDBDE8BF872B84F0ACD6E64F18AFBB05C04F00') {
-            throw 'PortableApps.com compiler archive checksum mismatch.'
-          }
-          $signature = Get-AuthenticodeSignature -LiteralPath $archive
-          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -cne 'DF99B68F457C981B0FDF83731DE299A26B64CCF7') {
-            throw 'Unexpected PortableApps.com compiler publisher.'
-          }
-          $sevenZip = Join-Path $env:ProgramFiles '7-Zip/7z.exe'
-          & $sevenZip x -tNsis -y "-o$tools" $archive 'PortableApps.comInstaller.exe' 'App\*' 'Other\Source\License.txt'
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - name: Build the offline PortableApps installer
