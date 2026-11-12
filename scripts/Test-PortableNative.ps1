@@ -174,9 +174,19 @@ function Invoke-PortableSaveAs([Diagnostics.Process]$Browser, [string]$Root, [st
 
         $fileEdit = Wait-For 'the Save As file name field' {
             try {
-                $element = Get-PortableControl $dialog ([Windows.Automation.AutomationElement]::AutomationIdProperty) '1001'
-                if ($element -and $element.Current.ControlType -eq [Windows.Automation.ControlType]::Edit) {
-                    $element.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
+                $editType = [Windows.Automation.PropertyCondition]::new(
+                    [Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Edit)
+                foreach ($id in '1148','1001') {
+                    $editId = [Windows.Automation.PropertyCondition]::new(
+                        [Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
+                    $edit = $dialog.FindFirst([Windows.Automation.TreeScope]::Descendants,
+                        [Windows.Automation.AndCondition]::new($editType, $editId))
+                    $pattern = $null
+                    if ($edit -and $edit.Current.IsEnabled -and !$edit.Current.IsOffscreen -and
+                        $edit.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern) -and
+                        !$pattern.Current.IsReadOnly) {
+                        return $pattern
+                    }
                 }
             } catch [Windows.Automation.ElementNotAvailableException] { }
         }
