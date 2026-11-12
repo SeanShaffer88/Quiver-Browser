@@ -8,6 +8,7 @@ const INVOKE = new Set([
   'sidebar:toggle', 'preview:toggle', 'env:switch',
   'cmd:open', 'cmd:close', 'cmd:suggest', 'cmd:run',
   'settings:set',
+  'bookmarks:list', 'bookmarks:profiles', 'bookmarks:import-profile', 'bookmarks:import-file', 'bookmarks:open',
   'boost:list', 'boost:read', 'boost:save', 'boost:create', 'boost:delete', 'boost:dir',
   'devserver:open', 'devserver:refresh',
   'clipboard:write',

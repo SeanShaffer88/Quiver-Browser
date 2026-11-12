@@ -4,7 +4,7 @@ body { display: grid; grid-template-columns: var(--sb, 264px) 1fr; grid-template
 #content { grid-column: 2; grid-row: 2; position: relative; }
 .brand { display: flex; align-items: center; gap: 8px; padding: 10px 10px 6px; font-weight: 700; letter-spacing: .02em; }
 .brand .name { flex: 1; }
-.brand svg { flex: none; }
+.brand img, .brand svg { flex: none; }
 .spaces { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 10px 8px; align-items: center; }
 .space { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); max-width: 120px; }
 .space .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }

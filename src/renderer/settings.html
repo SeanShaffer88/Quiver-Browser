@@ -12,6 +12,28 @@
   <h1>Settings</h1>
   <p class="sub">Everything is stored on this device. Quiver has no telemetry and no account.</p>
 
+  <h2 id="bookmarks-heading" tabindex="-1">Bookmarks</h2>
+  <div class="row">
+    <label for="bookmark-profile">Browser profile</label>
+    <select id="bookmark-profile" aria-describedby="bookmark-profiles-note"><option value="">Finding browser profiles…</option></select>
+    <button class="btn" id="bookmark-import-profile" disabled>Import from browser</button>
+  </div>
+  <p class="note" id="bookmark-profiles-note">Import bookmarks from Chrome, Edge, Brave, or Vivaldi.</p>
+  <div class="row">
+    <button class="btn" id="bookmark-import-file">Import HTML file</button>
+    <input id="bookmark-file" type="file" accept=".html,.htm,text/html" hidden>
+    <span class="note">Choose a bookmarks export from Firefox or another browser.</span>
+  </div>
+  <p class="status" id="bookmark-status" role="status"></p>
+  <ul id="bookmark-list" aria-label="Imported bookmarks"></ul>
+  <div id="bookmark-pages" hidden>
+    <div class="row">
+      <button class="btn" id="bookmark-prev">Previous bookmarks</button>
+      <span class="note" id="bookmark-page"></span>
+      <button class="btn" id="bookmark-next">Next bookmarks</button>
+    </div>
+  </div>
+
   <h2>Environments</h2>
   <p class="note">Group the origins of one app once. Then <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>) cycles local → staging → production, keeping path, query and hash. Leave an origin empty to skip it.</p>
   <div id="groups"></div>

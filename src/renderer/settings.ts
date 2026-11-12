@@ -1,8 +1,107 @@
-import type { EnvGroup, ShellState } from '../shared/types';
+import type { Bookmark, BookmarkImportResult, BookmarkProfile, EnvGroup, ShellState } from '../shared/types';
+import { readBookmarkExport } from './bookmark-file.js';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let groups: EnvGroup[] = [];
 let saveTimer: number | null = null;
+
+const bookmarkProfile = $<HTMLSelectElement>('bookmark-profile');
+const importProfile = $<HTMLButtonElement>('bookmark-import-profile');
+const importFile = $<HTMLButtonElement>('bookmark-import-file');
+const filePicker = $<HTMLInputElement>('bookmark-file');
+const pageSize = 40;
+let bookmarkProfiles: BookmarkProfile[] = [];
+let bookmarks: Bookmark[] = [];
+let bookmarkPage = 0;
+let importing = false;
+
+function bookmarkStatus(message: string, failed = false): void {
+  const status = $('bookmark-status');
+  status.textContent = message;
+  status.className = failed ? 'status err' : 'status';
+}
+
+function renderBookmarks(): void {
+  const start = bookmarkPage * pageSize;
+  const rows = bookmarks.slice(start, start + pageSize).map(({ title, url }) => {
+    const button = document.createElement('button');
+    button.className = 'bfile';
+    button.textContent = title;
+    button.title = url;
+    button.addEventListener('click', () => {
+      void quiver.invoke('bookmarks:open', url).catch(() => bookmarkStatus('Could not open the bookmark.', true));
+    });
+    const row = document.createElement('li');
+    row.append(button);
+    return row;
+  });
+  $('bookmark-list').replaceChildren(...rows);
+  $('bookmark-pages').hidden = bookmarks.length <= pageSize;
+  $('bookmark-page').textContent = bookmarks.length ? `${start + 1}–${start + rows.length} of ${bookmarks.length}` : '';
+  $<HTMLButtonElement>('bookmark-prev').disabled = bookmarkPage === 0;
+  $<HTMLButtonElement>('bookmark-next').disabled = start + pageSize >= bookmarks.length;
+}
+
+async function refreshBookmarks(): Promise<void> {
+  bookmarks = await quiver.invoke('bookmarks:list') as Bookmark[];
+  renderBookmarks();
+}
+
+function updateBookmarkButtons(): void {
+  importProfile.disabled = importing || !bookmarkProfile.value;
+  importFile.disabled = importing;
+}
+
+async function runBookmarkImport(action: () => Promise<BookmarkImportResult>): Promise<void> {
+  if (importing) return;
+  importing = true;
+  updateBookmarkButtons();
+  bookmarkStatus('Importing bookmarks…');
+  try {
+    const result = await action();
+    if ('error' in result) bookmarkStatus(result.error, true);
+    else {
+      await refreshBookmarks();
+      const summary = result.added ? `Imported ${result.added} bookmark${result.added === 1 ? '' : 's'}.` : 'No new bookmarks found.';
+      bookmarkStatus(result.full ? `${summary} The bookmark library is full.` : summary);
+    }
+  } catch (error) {
+    bookmarkStatus((error as Error).message, true);
+  } finally {
+    importing = false;
+    updateBookmarkButtons();
+  }
+}
+
+bookmarkProfile.addEventListener('change', updateBookmarkButtons);
+importProfile.addEventListener('click', () => {
+  const selected = bookmarkProfiles[Number(bookmarkProfile.value) - 1];
+  if (selected) void runBookmarkImport(async () => await quiver.invoke('bookmarks:import-profile', selected.browser, selected.profile) as BookmarkImportResult);
+});
+importFile.addEventListener('click', () => filePicker.click());
+filePicker.addEventListener('change', () => {
+  const file = filePicker.files?.[0];
+  filePicker.value = '';
+  if (file) void runBookmarkImport(async () => {
+    const entries = await readBookmarkExport(file);
+    return await quiver.invoke('bookmarks:import-file', entries) as BookmarkImportResult;
+  });
+});
+$('bookmark-prev').addEventListener('click', () => { bookmarkPage--; renderBookmarks(); });
+$('bookmark-next').addEventListener('click', () => { bookmarkPage++; renderBookmarks(); });
+
+void quiver.invoke('bookmarks:profiles').then((profiles) => {
+  bookmarkProfiles = profiles as BookmarkProfile[];
+  const defaultLabel = bookmarkProfiles.length ? 'Choose a browser profile' : 'No browser profiles found';
+  bookmarkProfile.replaceChildren(new Option(defaultLabel, ''));
+  bookmarkProfiles.forEach(({ label }, index) => bookmarkProfile.add(new Option(label, String(index + 1))));
+  bookmarkProfile.disabled = !bookmarkProfiles.length;
+}).catch(() => {
+  bookmarkProfile.replaceChildren(new Option('Could not find browser profiles', ''));
+  bookmarkProfile.disabled = true;
+});
+void refreshBookmarks().catch(() => bookmarkStatus('Could not load bookmarks.', true));
+if (new URLSearchParams(location.search).get('import') === 'bookmarks') $('bookmarks-heading').focus();
 
 function flash(el: HTMLElement, msg: string, kind: 'ok' | 'err' = 'ok'): void {
   el.textContent = msg;

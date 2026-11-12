@@ -22,6 +22,21 @@ export interface Settings {
   sidebarCollapsed: boolean;
 }
 
+export interface Bookmark {
+  title: string;
+  url: string;
+}
+
+export interface BookmarkProfile {
+  browser: string;
+  profile: string;
+  label: string;
+}
+
+export type BookmarkImportResult =
+  | { added: number; full: boolean }
+  | { error: string };
+
 export interface TabInfo {
   id: number;
   spaceId: string;
