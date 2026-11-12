@@ -12,7 +12,7 @@ const INVOKE = new Set([
   'bookmarks:list', 'bookmarks:profiles', 'bookmarks:review-profile', 'bookmarks:review-file',
   'bookmarks:cancel-review', 'bookmarks:confirm', 'bookmarks:undo', 'bookmarks:open',
   'boost:list', 'boost:read', 'boost:save', 'boost:create', 'boost:delete', 'boost:dir',
-  'devserver:open', 'devserver:refresh',
+  'devserver:open', 'devserver:refresh', 'devserver:retry',
   'clipboard:write',
 ]);
 const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start']);

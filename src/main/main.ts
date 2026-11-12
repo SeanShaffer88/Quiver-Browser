@@ -203,7 +203,7 @@ async function main(): Promise<void> {
 
   if (store.state.settings.devServerScan) devWatcher.start();
 
-  win.on('resize', () => tabs.layout());
+  win.on('resize', () => tabs.syncPhone());
   win.on('maximize', () => tabs.layout());
   win.on('unmaximize', () => tabs.layout());
   win.on('enter-full-screen', () => tabs.layout());

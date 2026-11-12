@@ -63,12 +63,21 @@ export interface TabInfo {
   local: boolean;
   internal: boolean;
   env: EnvBadge | null;
+  activeBoosts: string[];
 }
 
 export interface DevServer {
   port: number;
   url: string;
   title: string;
+}
+
+export type PhoneStatus = 'off' | 'paused' | 'narrow' | 'starting' | 'active' | 'unavailable';
+
+export interface LocalServerStatus {
+  state: 'missing' | 'recovered';
+  tabId: number;
+  url: string;
 }
 
 export interface RecoveryNotice {
@@ -85,6 +94,8 @@ export interface ShellState {
   activeTabId: number | null;
   devServers: DevServer[];
   preview: boolean;
+  phoneStatus: PhoneStatus;
+  localServerStatus: LocalServerStatus | null;
   settings: Settings;
 }
 

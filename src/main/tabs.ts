@@ -13,8 +13,9 @@ import {
   TOOLBAR_H,
 } from '../shared/constants';
 import { badgeFor, isLocalHost, switchEnv } from '../shared/env';
-import type { DevServer, EnvBadge, RecoveryNotice, ShellState, Space, TabInfo } from '../shared/types';
+import type { DevServer, EnvBadge, LocalServerStatus, PhoneStatus, RecoveryNotice, ShellState, Space, TabInfo } from '../shared/types';
 import { boostKind, boostMatchesHost, transpileBoost, wrapScript, type Boosts } from './boosts';
+import { EndpointStatus, type EndpointFailure } from './endpoint-status';
 import { shortcutFor, type ShortcutAction } from './shortcuts';
 import type { Store } from './store';
 import { rememberClosed, restorableUrl, restoreSelection, snapshotSpace, type ClosedTab } from './session-recovery';
@@ -26,7 +27,7 @@ interface Tab {
   view: WebContentsView;
   internal: boolean;
   pendingUrl: string | null;
-  requestedUrl: string | null;
+  requestedLoad: { url: string } | null;
   crashUrl: string | null;
   errorFor: string | null;
   title: string;
@@ -36,6 +37,10 @@ interface Tab {
   navigation: number;
   commandRevision: number;
   cssKeys: Map<string, string>;
+  tsBoosts: Set<string>;
+  cssJobs: Map<string, Promise<void>>;
+  boostReadyNavigation: number;
+  localFailure: EndpointFailure | null;
 }
 
 const PRELOAD = path.join(__dirname, '..', 'preload', 'internal.js');
@@ -85,12 +90,18 @@ export class TabManager {
   private restoring = false;
   preview = false;
   devServers: DevServer[] = [];
+  private readonly endpointStatus = new EndpointStatus();
 
   private phone: WebContentsView | null = null;
   private phonePartition = '';
+  private phoneSpaceId = '';
   private phoneUrl = '';
   private phoneReady = false;
   private phoneEmulated = false;
+  private phoneReloadedForTouch = false;
+  private phoneUnavailable = false;
+  private phoneEmulationHeight = 0;
+  private phoneEmulationBusy: WebContents | null = null;
   private readonly preparedPartitions = new Set<string>();
   private emitTimer: NodeJS.Timeout | null = null;
   private overlayOpen = false;
@@ -129,7 +140,7 @@ export class TabManager {
     if (t.errorFor) return t.errorFor;
     if (t.pendingUrl) return t.pendingUrl;
     const u = t.view.webContents.isDestroyed() ? '' : t.view.webContents.getURL();
-    return u || t.requestedUrl || '';
+    return u || t.requestedLoad?.url || '';
   }
 
   private info(t: Tab): TabInfo {
@@ -157,6 +168,7 @@ export class TabManager {
       local,
       internal: t.internal,
       env: t.internal ? null : badgeFor(url, this.settings.envGroups),
+      activeBoosts: [...t.cssKeys.keys(), ...t.tsBoosts].sort(),
     };
   }
 
@@ -171,6 +183,8 @@ export class TabManager {
       activeTabId: this.activeTabId,
       devServers: this.devServers,
       preview: this.preview,
+      phoneStatus: this.getPhoneStatus(),
+      localServerStatus: this.getLocalServerStatus(),
       settings: this.settings,
     };
   }
@@ -260,7 +274,7 @@ export class TabManager {
       view,
       internal,
       pendingUrl: null,
-      requestedUrl: null,
+      requestedLoad: null,
       crashUrl: null,
       errorFor: null,
       title: '',
@@ -270,6 +284,10 @@ export class TabManager {
       navigation: 0,
       commandRevision: 0,
       cssKeys: new Map(),
+      tsBoosts: new Set(),
+      cssJobs: new Map(),
+      boostReadyNavigation: -1,
+      localFailure: null,
     };
     this.insertTab(tab, opts.index);
     this.win.contentView.addChildView(view);
@@ -301,12 +319,16 @@ export class TabManager {
 
   private load(tab: Tab, url: string): void {
     tab.pendingUrl = null;
-    tab.requestedUrl = url;
+    const request = { url };
+    tab.requestedLoad = request;
     tab.crashUrl = null;
     tab.errorFor = null;
-    tab.view.webContents.loadURL(url).catch(() => {
-      /* navigation errors surface via did-fail-load */
-    });
+    tab.localFailure = null;
+    const finish = () => {
+      if (tab.requestedLoad === request) tab.requestedLoad = null;
+    };
+    // loadURL rejects on error or cancellation. The matching request clears in both cases.
+    void tab.view.webContents.loadURL(url).then(finish, finish);
   }
 
   private wire(tab: Tab): void {
@@ -331,14 +353,12 @@ export class TabManager {
       touch();
     });
     wc.on('did-navigate', () => {
-      tab.requestedUrl = null;
       this.persist();
       touch();
-      this.followPhone(tab);
+      if (tab.id === this.activeTabId) this.syncPhone();
     });
     wc.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
       if (!isMainFrame) return;
-      tab.requestedUrl = null;
       this.persist();
       touch();
       this.followPhone(tab);
@@ -349,19 +369,26 @@ export class TabManager {
       if (isSameDocument) return;
       tab.navigation++;
       tab.cssKeys.clear();
+      tab.tsBoosts.clear();
+      tab.cssJobs.clear();
+      tab.boostReadyNavigation = -1;
       if (url.startsWith(ERR_PREFIX)) return;
       tab.errors = 0;
       tab.errorFor = null;
+      tab.localFailure = null;
       touch();
     });
     wc.on('did-fail-load', (_e, code, desc, validatedUrl, isMainFrame) => {
       if (!isMainFrame || tab.internal || code === -3 || validatedUrl.startsWith('data:')) return;
       tab.errorFor = validatedUrl;
+      tab.localFailure = this.settings.devServerScan ? this.endpointStatus.failure(validatedUrl, code) : null;
       tab.title = 'Cannot reach page';
       wc.loadURL(errorPage(validatedUrl, `${desc} (${code})`)).catch(() => undefined);
+      if (tab.id === this.activeTabId && this.preview) this.syncPhone();
       touch();
     });
     wc.on('dom-ready', () => {
+      tab.boostReadyNavigation = tab.navigation;
       void this.applyBoosts(tab);
       if (!tab.internal && this.activeTabId === tab.id) this.followPhone(tab);
     });
@@ -388,7 +415,12 @@ export class TabManager {
       tab.crashUrl = restorableUrl(url) ? url : null;
       tab.title = 'Page stopped responding';
       tab.loading = false;
+      tab.cssKeys.clear();
+      tab.tsBoosts.clear();
+      tab.cssJobs.clear();
+      tab.boostReadyNavigation = -1;
       console.warn(`[quiver] tab ${tab.id} renderer gone: ${details.reason}`);
+      if (tab.id === this.activeTabId && this.preview) this.syncPhone();
       touch();
     });
   }
@@ -624,7 +656,7 @@ export class TabManager {
     const sb = this.sidebarWidth();
     this.shell.setBounds({ x: 0, y: 0, width: W, height: H });
     this.overlay.setBounds({ x: 0, y: 0, width: W, height: H });
-    const reserve = this.preview ? PHONE_W + PHONE_MARGIN * 2 : 0;
+    const reserve = this.phone ? PHONE_W + PHONE_MARGIN * 2 : 0;
     const desktopW = Math.max(240, W - sb - reserve);
     const rect: Rectangle = { x: sb, y: TOOLBAR_H, width: desktopW, height: Math.max(100, H - TOOLBAR_H) };
     for (const t of this.tabs.values()) {
@@ -660,50 +692,120 @@ export class TabManager {
   }
 
   private destroyPhone(): void {
-    if (!this.phone) return;
-    this.win.contentView.removeChildView(this.phone);
-    if (!this.phone.webContents.isDestroyed()) this.phone.webContents.close();
+    const phone = this.phone;
+    if (!phone) return;
     this.phone = null;
+    this.phonePartition = '';
+    this.phoneSpaceId = '';
     this.phoneUrl = '';
     this.phoneReady = false;
     this.phoneEmulated = false;
+    this.phoneReloadedForTouch = false;
+    this.phoneUnavailable = false;
+    this.phoneEmulationHeight = 0;
+    this.phoneEmulationBusy = null;
+    this.win.contentView.removeChildView(phone);
+    if (!phone.webContents.isDestroyed()) phone.webContents.close();
   }
 
-  /** Create/destroy/retarget the phone view so it mirrors the active tab, same cookie jar. */
-  syncPhone(): void {
+  private phoneTab(): Tab | null {
     const t = this.activeTab;
-    if (!this.preview || !t || t.internal) {
+    return t && !t.internal && !t.crashUrl && !t.errorFor && /^https?:/i.test(this.tabUrl(t)) ? t : null;
+  }
+
+  private phoneFits(): boolean {
+    return !this.win.isDestroyed() && this.win.getContentSize()[0] >= this.sidebarWidth() + 240 + PHONE_W + PHONE_MARGIN * 2;
+  }
+
+  private getPhoneStatus(): PhoneStatus {
+    if (!this.preview) return 'off';
+    const tab = this.phoneTab();
+    if (!tab) return 'paused';
+    if (!this.phoneFits()) return 'narrow';
+    const contents = this.phone?.webContents;
+    if (!contents || contents.isDestroyed() || this.phonePartition !== tab.partition || this.phoneSpaceId !== tab.spaceId) return 'starting';
+    if (this.phoneUnavailable) return 'unavailable';
+    return this.phoneReady && this.phoneEmulated && this.phoneReloadedForTouch && contents.debugger.isAttached() &&
+      this.phoneUrl === this.tabUrl(tab) ? 'active' : 'starting';
+  }
+
+  /** Create/destroy/retarget the phone view so it mirrors the active tab's session. */
+  syncPhone(): void {
+    const t = this.preview ? this.phoneTab() : null;
+    if (!t || !this.phoneFits()) {
       this.destroyPhone();
+      this.layout();
+      if (this.preview) this.emit();
       return;
     }
-    if (this.phone && this.phonePartition !== t.partition) this.destroyPhone();
+    if (this.phone && (this.phonePartition !== t.partition || this.phoneSpaceId !== t.spaceId || this.phone.webContents.isDestroyed())) {
+      this.destroyPhone();
+    }
     if (!this.phone) {
       this.phonePartition = t.partition;
-      this.phone = this.createView(t.partition, false);
-      this.phone.webContents.setUserAgent(MOBILE_UA);
-      this.phone.webContents.setWindowOpenHandler(({ url }) => {
-        if (/^https?:/i.test(url)) void this.phone?.webContents.loadURL(url).catch(() => undefined);
+      this.phoneSpaceId = t.spaceId;
+      const phone = this.createView(t.partition, false);
+      this.phone = phone;
+      const wc = phone.webContents;
+      wc.setUserAgent(MOBILE_UA);
+      wc.setWindowOpenHandler(({ url }) => {
+        if (this.phone === phone && /^https?:/i.test(url)) void wc.loadURL(url).catch(() => undefined);
         return { action: 'deny' };
       });
-      // Device emulation needs a live renderer: apply only after the first dom-ready, and again after every load.
-      this.phone.webContents.on('dom-ready', () => {
+      wc.on('did-start-navigation', ({ isMainFrame, isSameDocument }) => {
+        if (this.phone !== phone || !isMainFrame || isSameDocument) return;
+        this.phoneReady = false;
+        this.phoneUnavailable = false;
+        this.emit();
+      });
+      wc.on('dom-ready', () => {
+        if (this.phone !== phone) return;
         this.phoneReady = true;
         this.layout();
+        this.emit();
       });
-      this.attachShortcuts(this.phone.webContents);
-      this.win.contentView.addChildView(this.phone);
+      wc.on('render-process-gone', () => {
+        if (this.phone !== phone) return;
+        this.phoneReady = false;
+        this.phoneUnavailable = true;
+        this.emit();
+      });
+      wc.on('did-fail-load', (_event, code, _description, _url, isMainFrame) => {
+        if (this.phone !== phone || !isMainFrame || code === -3) return;
+        this.phoneReady = false;
+        this.phoneUnavailable = true;
+        this.emit();
+      });
+      wc.debugger.on('detach', () => {
+        if (this.phone !== phone) return;
+        this.phoneEmulated = false;
+        this.phoneReloadedForTouch = false;
+        this.phoneUnavailable = true;
+        this.emit();
+      });
+      this.attachShortcuts(wc);
+      this.win.contentView.addChildView(phone);
       this.bringOverlayToTop();
     }
-    this.layout();
     this.followPhone(t);
+    this.layout();
+    this.emit();
   }
 
   private followPhone(tab: Tab): void {
-    if (!this.preview || !this.phone || tab.id !== this.activeTabId || tab.internal) return;
+    const phone = this.phone;
+    if (!this.preview || !phone || tab.id !== this.activeTabId || tab.internal ||
+        this.phoneSpaceId !== tab.spaceId || this.phonePartition !== tab.partition) return;
     const url = this.tabUrl(tab);
     if (!/^https?:/i.test(url) || url === this.phoneUrl) return;
     this.phoneUrl = url;
-    void this.phone.webContents.loadURL(url).catch(() => undefined);
+    this.phoneReady = false;
+    this.phoneUnavailable = false;
+    void phone.webContents.loadURL(url).catch(() => {
+      if (this.phone !== phone || this.phoneUrl !== url) return;
+      this.phoneUnavailable = true;
+      this.emit();
+    });
   }
 
   /**
@@ -712,7 +814,12 @@ export class TabManager {
    */
   private applyEmulation(r: Rectangle): void {
     const wc = this.phone?.webContents;
-    if (!wc || wc.isDestroyed() || !this.phoneReady) return;
+    if (!wc || wc.isDestroyed() || !this.phoneReady || this.phoneEmulationBusy === wc) return;
+    if (this.phoneEmulated && this.phoneEmulationHeight === r.height && wc.debugger.isAttached()) {
+      this.reloadPhoneForTouch(wc);
+      return;
+    }
+    this.phoneEmulationBusy = wc;
     void (async () => {
       try {
         if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
@@ -720,20 +827,63 @@ export class TabManager {
         await send('Emulation.setDeviceMetricsOverride', { width: PHONE_W, height: r.height, deviceScaleFactor: 3, mobile: true, screenWidth: PHONE_W, screenHeight: r.height });
         await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
         await send('Emulation.setEmitTouchEventsForMouse', { enabled: true, configuration: 'mobile' });
-        if (!this.phoneEmulated) {
-          this.phoneEmulated = true;
-          wc.reload(); // touch support is decided at document creation, so load the page once more
-        }
+        if (this.phone?.webContents !== wc || wc.isDestroyed() || !wc.debugger.isAttached()) return;
+        this.phoneEmulated = true;
+        this.phoneEmulationHeight = r.height;
+        this.phoneUnavailable = false;
+        this.reloadPhoneForTouch(wc);
       } catch (err) {
+        if (this.phone?.webContents !== wc) return;
+        this.phoneEmulated = false;
+        this.phoneUnavailable = true;
         console.warn('[quiver] phone emulation failed:', (err as Error).message);
+      } finally {
+        if (this.phoneEmulationBusy === wc) this.phoneEmulationBusy = null;
+        if (this.phone?.webContents === wc && !wc.isDestroyed()) {
+          if (this.phone.getBounds().height !== r.height) this.layout();
+          this.emit();
+        }
       }
     })();
   }
 
+  private reloadPhoneForTouch(contents: WebContents): void {
+    if (this.phoneReloadedForTouch || !this.phoneReady) return;
+    this.phoneReloadedForTouch = true;
+    this.phoneReady = false;
+    contents.reload(); // Touch support is decided at document creation.
+  }
+
   // ───────── dev servers ─────────
   setDevServers(list: DevServer[]): void {
+    if (!this.settings.devServerScan) return;
     this.devServers = list;
+    this.endpointStatus.observe(list.map((server) => server.url));
     this.emit();
+  }
+
+  clearDevServers(): void {
+    this.devServers = [];
+    this.endpointStatus.clear();
+    this.emit();
+  }
+
+  private getLocalServerStatus(): LocalServerStatus | null {
+    const tab = this.activeTab;
+    if (!this.settings.devServerScan || !tab || tab.internal) return null;
+    const url = this.tabUrl(tab);
+    if (tab.errorFor === url && this.endpointStatus.retry(url, tab.localFailure)) return { state: 'recovered', tabId: tab.id, url };
+    if (this.endpointStatus.status(url)) return { state: 'missing', tabId: tab.id, url };
+    return null;
+  }
+
+  retryDevServer(tabId: number, url: string): boolean {
+    const tab = this.activeTab;
+    if (!this.settings.devServerScan || !tab || tab.id !== tabId || tab.errorFor !== url || this.tabUrl(tab) !== url) return false;
+    const destination = this.endpointStatus.retry(url, tab.localFailure);
+    if (!destination) return false;
+    this.load(tab, destination);
+    return true;
   }
 
   // ───────── boosts ─────────
@@ -755,65 +905,76 @@ export class TabManager {
     const navigation = tab.navigation;
     const frame = wc.mainFrame;
     const origin = new URL(wc.getURL()).origin;
-    const isCurrent = () => !wc.isDestroyed() && navigation === tab.navigation && frame === wc.mainFrame;
-    const m = this.boosts.matching(host);
-    for (const name of m.css) {
-      if (!isCurrent()) return;
-      const css = this.boosts.readIfExists(name);
-      if (css) {
-        try {
-          const key = await wc.insertCSS(css, { cssOrigin: 'user' });
-          if (isCurrent()) tab.cssKeys.set(name, key);
-        } catch {
-          /* page navigated away */
-        }
-      }
+    const isCurrent = () => this.tabs.get(tab.id) === tab && !wc.isDestroyed() && navigation === tab.navigation &&
+      navigation === tab.boostReadyNavigation && frame === wc.mainFrame;
+    let matching: ReturnType<Boosts['matching']>;
+    try {
+      matching = this.boosts.matching(host);
+    } catch {
+      return;
     }
-    for (const name of m.ts) {
+    for (const name of matching.css) {
+      if (!isCurrent()) return;
+      await this.applyCssBoost(tab, name);
+    }
+    for (const name of matching.ts) {
       if (!isCurrent()) return;
       const src = this.boosts.readIfExists(name);
       if (!src) continue;
       try {
         const script = wrapScript(transpileBoost(src), name);
-        await frame.executeJavaScript(`if (location.origin === ${JSON.stringify(origin)}) { ${script} }`, true);
+        const applied = await frame.executeJavaScript(`location.origin === ${JSON.stringify(origin)} && ${script}`, true);
+        if (applied === true && isCurrent()) {
+          tab.tsBoosts.add(name);
+          this.emit();
+        }
       } catch (err) {
         console.warn(`[quiver] boost ${name} failed:`, (err as Error).message);
       }
     }
   }
 
-  private async onBoostChanged(name: string, kind: 'css' | 'ts', removed: boolean): Promise<void> {
+  private applyCssBoost(tab: Tab, name: string): Promise<void> {
+    const wc = tab.view.webContents;
+    const navigation = tab.navigation;
+    const frame = wc.mainFrame;
+    const isCurrent = () => this.tabs.get(tab.id) === tab && !wc.isDestroyed() && navigation === tab.navigation &&
+      navigation === tab.boostReadyNavigation && frame === wc.mainFrame;
+    const operation = (tab.cssJobs.get(name) ?? Promise.resolve()).then(async () => {
+      if (!isCurrent()) return;
+      try {
+        const old = tab.cssKeys.get(name);
+        if (old) {
+          await wc.removeInsertedCSS(old);
+          if (!isCurrent()) return;
+          tab.cssKeys.delete(name);
+          this.emit();
+        }
+        const css = this.boosts.readIfExists(name);
+        if (!css) return;
+        const key = await wc.insertCSS(css, { cssOrigin: 'user' });
+        if (isCurrent()) {
+          tab.cssKeys.set(name, key);
+          this.emit();
+        }
+      } catch {
+        // A failed CSS operation leaves the last confirmed state in place.
+      }
+    }).finally(() => {
+      if (tab.cssJobs.get(name) === operation) tab.cssJobs.delete(name);
+    });
+    tab.cssJobs.set(name, operation);
+    return operation;
+  }
+
+  private onBoostChanged(name: string, kind: 'css' | 'ts', removed: boolean): void {
     for (const tab of this.tabs.values()) {
+      if (tab.boostReadyNavigation !== tab.navigation) continue;
       const host = this.hostOf(tab);
       if (!host || !boostMatchesHost(name, host)) continue;
-      const wc = tab.view.webContents;
-      if (wc.isDestroyed()) continue;
       if (kind === 'ts') {
-        if (!removed) wc.reload();
-        continue;
-      }
-      const navigation = tab.navigation;
-      const old = tab.cssKeys.get(name);
-      if (old) {
-        try {
-          await wc.removeInsertedCSS(old);
-        } catch {
-          /* gone */
-        }
-        if (wc.isDestroyed() || navigation !== tab.navigation) continue;
-        tab.cssKeys.delete(name);
-      }
-      if (!removed) {
-        const css = this.boosts.readIfExists(name);
-        if (css !== null) {
-          try {
-            const key = await wc.insertCSS(css, { cssOrigin: 'user' });
-            if (!wc.isDestroyed() && navigation === tab.navigation) tab.cssKeys.set(name, key);
-          } catch {
-            /* ignore */
-          }
-        }
-      }
+        if (!removed) tab.view.webContents.reload();
+      } else void this.applyCssBoost(tab, name);
     }
   }
 

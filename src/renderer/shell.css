@@ -49,6 +49,16 @@ body { display: grid; grid-template-columns: var(--sb, 264px) 1fr; grid-template
 .collapsed .newtab { margin: 0 6px 6px; }
 .phone-label { position: absolute; right: 12px; top: 0; width: 393px; height: 28px; display: none; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; }
 .preview .phone-label { display: flex; }
+.phone-label { padding-inline: 8px; text-align: center; overflow-wrap: anywhere; }
+#toolbar .icon-btn { flex: none; }
+.tool-status { display: inline-flex; width: auto; gap: 4px; padding-inline: 5px; white-space: nowrap; }
+.tool-label { font-size: 11px; color: var(--text); }
+.tool-count { color: var(--accent); font: 700 11px var(--mono); }
+.local-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 10px 6px; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 11px; }
+.local-status[data-state="missing"] { border-inline-start: 2px solid var(--staging); }
+.local-status[data-state="recovered"] { border-inline-start: 2px solid var(--local); }
+.local-status .btn { padding: 2px 7px; }
+.collapsed .local-status { justify-content: center; margin-inline: 5px; padding: 3px; }
 .space-isolation { margin: 0 10px 8px; font-size: 11px; color: var(--muted); }
 .tab-select { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; text-align: left; }
 .tab:focus-within .close { opacity: 1; }
@@ -69,4 +79,6 @@ body { display: grid; grid-template-columns: var(--sb, 264px) 1fr; grid-template
 @media (forced-colors: active) {
   .recovery-card, .recovery-card button { border-color: ButtonText; }
   .tab.active .tab-select, .space.active { outline: 1px solid Highlight; }
+  .local-status { border-color: ButtonText; }
+  .tool-status.on { outline: 1px solid Highlight; }
 }

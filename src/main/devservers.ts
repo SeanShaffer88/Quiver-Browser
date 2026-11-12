@@ -31,15 +31,15 @@ export function parseNetstat(out: string): LocalEndpoint[] {
   return [...endpoints.values()].sort((a, b) => a.port - b.port || (a.host < b.host ? -1 : a.host > b.host ? 1 : 0));
 }
 
-function listListening(): Promise<LocalEndpoint[]> {
+function listListening(): Promise<LocalEndpoint[] | null> {
   const windows = process.env.SystemRoot;
-  if (process.platform !== 'win32' || !windows) return Promise.resolve([]);
+  if (process.platform !== 'win32' || !windows) return Promise.resolve(null);
   return new Promise((resolve) => {
     // The unfiltered Windows listing includes TCP and TCPv6. The parser skips UDP.
     execFile(path.join(windows, 'System32', 'netstat.exe'), ['-ano'], {
       windowsHide: true, timeout: 4000, maxBuffer: 4_000_000,
     }, (err, stdout) => {
-      resolve(err ? [] : parseNetstat(stdout));
+      resolve(err ? null : parseNetstat(stdout));
     });
   });
 }
@@ -105,8 +105,9 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R
   return out;
 }
 
-export async function scanDevServers(): Promise<DevServer[]> {
+export async function scanDevServers(): Promise<DevServer[] | null> {
   const endpoints = await listListening();
+  if (!endpoints) return null;
   const res = await mapLimit(endpoints, 12, probe);
   return res.filter((x): x is DevServer => x !== null);
 }
@@ -144,7 +145,7 @@ export class DevServerWatcher {
     try {
       const generation = this.generation;
       const next = await scanDevServers();
-      if (generation !== this.generation) return;
+      if (!next || generation !== this.generation) return;
       if (JSON.stringify(next) !== JSON.stringify(this.servers)) {
         this.servers = next;
         this.onUpdate(next);

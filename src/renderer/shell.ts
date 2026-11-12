@@ -1,4 +1,4 @@
-import type { ShellState, TabInfo, Space } from '../shared/types';
+import type { LocalServerStatus, PhoneStatus, ShellState, TabInfo, Space } from '../shared/types';
 
 type Child = Node | string | null | undefined | false;
 
@@ -19,6 +19,9 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, 
 const sidebar = document.getElementById('sidebar')!;
 const toolbar = document.getElementById('toolbar')!;
 const recoveryStatus = document.getElementById('recovery-status')!;
+const phoneLabel = document.getElementById('phone-label')!;
+const developerStatus = h('div', { class: 'sr-only', role: 'status', 'aria-atomic': 'true' });
+document.body.append(developerStatus);
 let state: ShellState | null = null;
 let addingSpace = false;
 let renamingSpace: string | null = null;
@@ -51,7 +54,7 @@ const ICON = {
 };
 
 function icon(svg: string, label: string, onClick: () => void, extra: Record<string, any> = {}): HTMLButtonElement {
-  const b = h('button', { class: 'icon-btn' + (extra.on ? ' on' : ''), title: label, 'aria-label': label, disabled: extra.disabled, dataset: { focusKey: label }, onClick });
+  const b = h('button', { class: 'icon-btn' + (extra.on ? ' on' : ''), title: label, 'aria-label': label, disabled: extra.disabled, dataset: { focusKey: extra.focusKey ?? label }, onClick });
   b.innerHTML = svg;
   return b;
 }
@@ -249,7 +252,7 @@ function renderSidebar(s: ShellState): void {
   const tabsEl = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Tabs', dataset: { spaceId: s.activeSpaceId } },
     ...spaceTabs.map((t) => renderTab(t, t.id === s.activeTabId)));
 
-  const servers = h('section', { class: 'servers', 'aria-label': 'Local servers' }, h('h3', {}, h('span', {}, 'Local servers'), h('button', { class: 'icon-btn', style: undefined, title: 'Rescan now', 'aria-label': 'Rescan local servers', dataset: { focusKey: 'rescan' }, onClick: () => call('devserver:refresh') }, '↻')));
+  const servers = h('section', { class: 'servers', 'aria-label': 'Local servers' }, h('h3', {}, h('span', {}, 'Local servers'), h('button', { class: 'icon-btn', disabled: !s.settings.devServerScan, title: 'Rescan now', 'aria-label': 'Rescan local servers', dataset: { focusKey: 'rescan' }, onClick: () => call('devserver:refresh') }, '↻')));
   if (!s.settings.devServerScan) servers.append(h('div', { class: 'empty' }, 'Scanning is off (Settings).'));
   else if (s.devServers.length === 0) servers.append(h('div', { class: 'empty' }, 'No HTTP servers found on localhost.'));
   for (const d of s.devServers) {
@@ -267,7 +270,8 @@ function renderSidebar(s: ShellState): void {
     h('span', { class: 'recovery-compact' }, active.isolated ? 'Separate' : 'Shared'),
   );
   sidebar.replaceChildren(brand, renderSpaces(s), ...(isolation ? [isolation] : []),
-    ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderRecovery(s), tabsEl, servers);
+    ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderRecovery(s),
+    ...(s.localServerStatus ? [renderLocalServerStatus(s.localServerStatus)] : []), tabsEl, servers);
   tabsEl.scrollTop = previousScroll;
 }
 
@@ -275,19 +279,71 @@ function activeTab(s: ShellState): TabInfo | undefined {
   return s.tabs.find((t) => t.id === s.activeTabId);
 }
 
+const PHONE_LABELS: Record<PhoneStatus, { label: string; compact: string }> = {
+  off: { label: 'Phone preview off', compact: '' },
+  paused: { label: 'Phone preview paused. Open an HTTP or HTTPS page to resume.', compact: 'Paused' },
+  narrow: { label: 'Phone preview paused. Widen the window to resume.', compact: 'Widen' },
+  starting: { label: 'Starting phone preview', compact: 'Starting' },
+  active: { label: 'Phone preview shares this tab’s sign-in', compact: '' },
+  unavailable: { label: 'Phone preview unavailable. Turn it off and on to retry.', compact: 'Unavailable' },
+};
+
+function renderLocalServerStatus(status: LocalServerStatus): HTMLElement {
+  const recovered = status.state === 'recovered';
+  const label = recovered ? 'Local server is back' : 'Local server unavailable';
+  const card = h('div', { class: 'local-status', title: label, dataset: { state: status.state } },
+    h('span', { class: 'recovery-expanded' }, label));
+  if (recovered) {
+    card.append(h('button', {
+      class: 'btn', title: 'Retry the failed local page', 'aria-label': 'Retry local page',
+      dataset: { focusKey: 'retry-local-page' },
+      onClick: async () => {
+        try {
+          if (!await quiver.invoke('devserver:retry', status.tabId, status.url)) {
+            developerStatus.textContent = 'The local page changed. Review the active tab before retrying.';
+          }
+        } catch {
+          developerStatus.textContent = 'Could not retry the local page. Press Ctrl+R to try again.';
+        }
+      },
+    }, h('span', { class: 'recovery-expanded' }, 'Retry page'), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, '↻')));
+  } else {
+    card.append(h('span', { class: 'recovery-compact', 'aria-label': label }, '!'));
+  }
+  return card;
+}
+
 function renderToolbar(s: ShellState): void {
   const t = activeTab(s);
   const addr = h('button', { id: 'address', title: 'Search or enter a command (Ctrl+K / Ctrl+L)', 'aria-label': 'Address and command bar', dataset: { focusKey: 'address' }, onClick: () => call('cmd:open', undefined, 'current', 'address') });
   if (t?.env) addr.append(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env));
   addr.append(h('span', { class: 'url' + (t?.url ? '' : ' placeholder') }, t?.url || 'Search, paste a URL, JWT, or type gh / npm / mdn / env / boost…'), h('span', { class: 'hint' }, 'Ctrl+K'));
+  const phoneStatus = PHONE_LABELS[s.phoneStatus];
+  const phone = icon(ICON.phone, 'Phone preview (Ctrl+Shift+P)', () => call('preview:toggle'), { on: s.preview, focusKey: 'phone-preview' });
+  phone.title = `${phoneStatus.label} (Ctrl+Shift+P)`;
+  phone.setAttribute('aria-describedby', 'phone-label');
+  phone.setAttribute('aria-pressed', String(s.preview));
+  if (phoneStatus.compact) {
+    phone.classList.add('tool-status');
+    phone.append(h('span', { class: 'tool-label', 'aria-hidden': 'true' }, phoneStatus.compact));
+  }
+  const activeBoosts = t?.activeBoosts ?? [];
+  const count = activeBoosts.length;
+  const boostLabel = count ? `Boosts: ${count} active on this page` : 'Boosts: none active on this page';
+  const boost = icon(ICON.boost, `${boostLabel} (Ctrl+Shift+B)`, () => call('cmd:run', { type: 'internal', page: 'boosts' }), { on: count > 0, focusKey: 'boosts' });
+  if (count) {
+    boost.title = `${boostLabel}: ${activeBoosts.join(', ')} (Ctrl+Shift+B)`;
+    boost.classList.add('tool-status');
+    boost.append(h('span', { class: 'tool-count', 'aria-hidden': 'true' }, String(count)));
+  }
   toolbar.replaceChildren(
     icon(ICON.back, 'Back (Alt+←)', () => call('tab:back'), { disabled: !t?.canGoBack }),
     icon(ICON.forward, 'Forward (Alt+→)', () => call('tab:forward'), { disabled: !t?.canGoForward }),
     icon(ICON.reload, 'Reload (Ctrl+R)', () => call('tab:reload')),
     addr,
     icon(ICON.env, 'Switch environment: local → staging → prod (Ctrl+Alt+E)', () => call('env:switch'), { disabled: !t?.env }),
-    icon(ICON.phone, 'Toggle phone preview, 393 px with touch and mobile UA (Ctrl+Shift+P)', () => call('preview:toggle'), { on: s.preview }),
-    icon(ICON.boost, 'Boosts: site CSS / TypeScript (Ctrl+Shift+B)', () => call('cmd:run', { type: 'internal', page: 'boosts' })),
+    phone,
+    boost,
     icon(ICON.gear, 'Settings', () => call('cmd:run', { type: 'internal', page: 'settings' })),
   );
 }
@@ -296,7 +352,9 @@ function render(): void {
   if (!state) return;
   const focused = document.hasFocus() && document.activeElement instanceof HTMLElement ? document.activeElement : null;
   document.body.classList.toggle('collapsed', state.settings.sidebarCollapsed);
-  document.body.classList.toggle('preview', state.preview);
+  document.body.classList.toggle('preview', ['starting', 'active', 'unavailable'].includes(state.phoneStatus));
+  const phoneMessage = PHONE_LABELS[state.phoneStatus].label;
+  if (phoneLabel.textContent !== phoneMessage) phoneLabel.textContent = phoneMessage;
   document.body.style.setProperty('--sb', state.settings.sidebarCollapsed ? '56px' : '264px');
   const sp: Space | undefined = state.spaces.find((x) => x.id === state!.activeSpaceId);
   document.title = `Quiver — ${sp?.name ?? ''}`;
@@ -304,6 +362,9 @@ function render(): void {
   renderToolbar(state);
   const message = recoveryMessage(state);
   if (recoveryStatus.textContent !== message) recoveryStatus.textContent = message;
+  const devMessage = state.localServerStatus?.state === 'recovered' ? 'Local server is back. Retry the failed page.' :
+    state.localServerStatus?.state === 'missing' ? 'Local server unavailable.' : '';
+  if (developerStatus.textContent !== devMessage) developerStatus.textContent = devMessage;
   if (focused?.dataset.focusKey && !focused.isConnected && !focusShellControl(focused.dataset.focusKey)) {
     if (!focusShellControl('tab-' + state.activeTabId)) focusShellControl('address');
   }

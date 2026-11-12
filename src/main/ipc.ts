@@ -69,7 +69,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       mode,
       environment: tab && !tab.internal ? detectEnv(url, store.state.settings.envGroups)?.env : undefined,
       navigation: tab?.commandRevision ?? 0,
-      navigationPending: !!tab && (!!tab.requestedUrl || tab.view.webContents.isDestroyed() || tab.view.webContents.isLoadingMainFrame()),
+      navigationPending: !!tab && (!!tab.requestedLoad || tab.view.webContents.isDestroyed() || tab.view.webContents.isLoadingMainFrame()),
     };
   };
 
@@ -132,7 +132,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   function toggleSidebar() {
     store.state.settings.sidebarCollapsed = !store.state.settings.sidebarCollapsed;
     store.save();
-    tabs.layout();
+    tabs.syncPhone();
     tabs.emit();
   }
 
@@ -208,7 +208,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (!s.devServerScan) {
       devWatcher.stop();
       devWatcher.servers = [];
-      tabs.setDevServers([]);
+      tabs.clearDevServers();
     }
     tabs.emit();
   });
@@ -307,7 +307,12 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (existing) tabs.activateTab(existing.id);
     else tabs.navigate(String(url), { newTab: true });
   });
-  handle('devserver:refresh', () => devWatcher.tick());
+  handle('devserver:refresh', () => store.state.settings.devServerScan && devWatcher.tick());
+  handle('devserver:retry', (e, tabId: unknown, url: unknown) => {
+    if (e.sender !== shell.webContents) throw new Error('forbidden sender');
+    if (typeof tabId !== 'number' || !Number.isSafeInteger(tabId) || typeof url !== 'string') return false;
+    return tabs.retryDevServer(tabId, url);
+  });
 
   function openCommandBar(text?: string, mode: CommandMode = 'current', invoker?: 'address' | 'new-tab') {
     const cur = tabs.activeTab;
