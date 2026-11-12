@@ -3,18 +3,30 @@ name: Windows crafted interactions
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [feature/quiver-crafted-interactions]
   workflow_dispatch:
+
+concurrency:
+  group: crafted-interactions-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   command-bar:
-    name: Windows x64 command bar
+    name: Windows x64 command bar (${{ matrix.mode }})
     runs-on: windows-2025
     timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: default
+            evidenceDir: quiver-craft-command
+            artifact: quiver-command-bar-evidence
+          - mode: forced-contrast-150%
+            evidenceDir: quiver-craft-command-contrast
+            artifact: quiver-command-bar-contrast-evidence
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -24,14 +36,20 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
+      - name: Prepare the locked Electron runtime
+        run: node -e "console.log(require('electron'))"
       - run: npm test
       - name: Exercise command previews and focus with Windows keyboard input
+        if: matrix.mode == 'default'
         run: pwsh -NoProfile -STA -File scripts/verification/Test-CraftCommand.ps1
+      - name: Exercise command previews and focus at forced contrast and 150% scale
+        if: matrix.mode == 'forced-contrast-150%'
+        run: pwsh -NoProfile -STA -File scripts/verification/Test-CraftCommand.ps1 -ForcedContrastAndScale
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always()
         with:
-          name: quiver-command-bar-evidence
-          path: ${{ runner.temp }}/quiver-craft-command/*.json
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/${{ matrix.evidenceDir }}/*.json
           if-no-files-found: warn
           retention-days: 7
 
@@ -48,6 +66,8 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
+      - name: Prepare the locked Electron runtime
+        run: node -e "console.log(require('electron'))"
       - run: npm run build
       - name: Review, confirm, and undo bookmark imports on Windows
         run: pwsh -NoProfile -STA -File scripts/verification/Test-CraftBookmarks.ps1
@@ -56,5 +76,31 @@ jobs:
         with:
           name: quiver-bookmark-import-evidence
           path: ${{ runner.temp }}/quiver-craft-bookmarks/bookmark-evidence.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  recovery:
+    name: Windows x64 tab and window recovery
+    runs-on: windows-2025
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Prepare the locked Electron runtime
+        run: node -e "console.log(require('electron'))"
+      - run: npm run build
+      - name: Verify tab restoration, Space isolation, and window placement
+        run: pwsh -NoProfile -STA -File scripts/verification/Test-CraftRecovery.ps1
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: quiver-tab-and-window-recovery-evidence
+          path: ${{ runner.temp }}/quiver-craft-recovery/recovery-evidence.json
           if-no-files-found: warn
           retention-days: 7

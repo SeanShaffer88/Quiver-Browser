@@ -1,6 +1,6 @@
 #requires -Version 7.0
 [CmdletBinding()]
-param()
+param([switch]$ForcedContrastAndScale)
 
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
@@ -98,7 +98,8 @@ public static class QuiverCommandKeyboard
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $runnerTemp = (Resolve-Path -LiteralPath $env:RUNNER_TEMP).Path
-$workspace = Join-Path $runnerTemp 'quiver-craft-command'
+$workspaceName = if ($ForcedContrastAndScale) { 'quiver-craft-command-contrast' } else { 'quiver-craft-command' }
+$workspace = Join-Path $runnerTemp $workspaceName
 if (Test-Path -LiteralPath $workspace) { throw "The evidence workspace already exists at $workspace." }
 $profile = Join-Path $workspace 'data'
 [void][IO.Directory]::CreateDirectory($profile)
@@ -110,6 +111,8 @@ $electron = (Resolve-Path -LiteralPath (Join-Path $repo 'node_modules/electron/d
 $node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
 $commandInputName = 'Command or address'
 $fixtureInputName = 'Fixture focus target'
+$addressName = 'Address and command bar'
+$displayProbe = $null
 $steps = [Collections.Generic.List[object]]::new()
 $fixture = $null
 $app = $null
@@ -170,6 +173,19 @@ function Get-CommandField {
         [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $commandInputName)
     )
     if ($field -and !$field.Current.IsOffscreen) { $field }
+}
+
+function Get-AddressButton {
+    $window = Get-AppWindow
+    if (!$window) { return }
+    $button = $window.FindFirst(
+        [Windows.Automation.TreeScope]::Descendants,
+        [Windows.Automation.AndCondition]::new(
+            [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $addressName),
+            [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Button)
+        )
+    )
+    if ($button -and !$button.Current.IsOffscreen -and $button.Current.IsEnabled) { $button }
 }
 
 function Get-VisibleNames {
@@ -266,11 +282,12 @@ function Write-Evidence([string]$Result, [string]$Failure = '') {
         os = [Runtime.InteropServices.RuntimeInformation]::OSDescription
         architecture = [string][Runtime.InteropServices.RuntimeInformation]::OSArchitecture
         electron = (Get-Item -LiteralPath $electron).VersionInfo.ProductVersion
+        displayProbe = $displayProbe
         checks = @($steps.ToArray())
         fixtureRequests = @(Read-Requests)
         visibleAccessibilityNames = $names
         focusedAccessibilityElement = $focus
-        limits = @('UI Automation names and focus only', 'No screen-reader speech, OS high contrast, or physical mixed-DPI coverage')
+        limits = @('UI Automation names and focus', 'Forced display settings are Chromium process overrides', 'No screen-reader speech or physical mixed-DPI coverage')
     }
     [IO.File]::WriteAllText($evidencePath, ($data | ConvertTo-Json -Depth 10))
 }
@@ -287,7 +304,10 @@ const server = (name) => new Promise((resolve, reject) => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end('<!doctype html><title>Quiver command fixture</title><h1>Quiver command fixture</h1><label for="field">Fixture focus target</label><input id="field">');
+    res.end(`<!doctype html><title>Quiver command fixture</title><h1>Quiver command fixture</h1>
+      <label for="field">Fixture focus target</label><input id="field"><p id="display"></p>
+      <script>document.getElementById('display').textContent = 'Fixture display: forced colors ' +
+        matchMedia('(forced-colors: active)').matches + '; device pixel ratio ' + devicePixelRatio;</script>`);
   });
   service.once('error', reject);
   service.listen(0, '127.0.0.1', () => resolve('http://127.0.0.1:' + service.address().port));
@@ -314,6 +334,7 @@ try {
     $initial = "$staging/orders/42?sample=1#details"
     $environmentTarget = "$prod/orders/42?sample=1#details"
     $newTab = "$prod/docs"
+    $altNewTab = "$prod/keyboard-new-tab"
     $searchResult = "$staging/search?q=fixture%20release%20notes"
     $seed = [ordered]@{
         version = 1
@@ -331,7 +352,9 @@ try {
         bounds = @{ width = 920; height = 650; maximized = $false }
     }
     [IO.File]::WriteAllText($statePath, ($seed | ConvertTo-Json -Depth 10))
-    $app = Start-OwnedProcess $electron @('--force-renderer-accessibility', '--disable-background-networking', $repo) @{
+    $launchArguments = @('--force-renderer-accessibility', '--disable-background-networking')
+    if ($ForcedContrastAndScale) { $launchArguments += '--force-high-contrast', '--force-device-scale-factor=1.5' }
+    $app = Start-OwnedProcess $electron ($launchArguments + $repo) @{
         PORTABLE_EXECUTABLE_DIR = $workspace
     } $true
 
@@ -342,6 +365,12 @@ try {
     Wait-Session $initial 1
     $requestsBefore = @(Read-Requests).Count
     if ($requestsBefore -lt 1) { throw 'The fixture page was not requested by the owned Quiver instance.' }
+    if ($ForcedContrastAndScale) {
+        $displayProbe = Wait-For 'visible renderer proof of forced colors and 150 percent scale' {
+            Get-VisibleNames | Where-Object { $_ -ceq 'Fixture display: forced colors true; device pixel ratio 1.5' } | Select-Object -First 1
+        }
+        Record-Pass 'The Electron fixture reports forced colors active and a device pixel ratio of 1.5'
+    }
 
     Open-Command
     Type-Command $newTab
@@ -353,6 +382,21 @@ try {
         $focus.Current.Name -ceq $fixtureInputName -and (Find-Edit $fixtureInputName).Current.HasKeyboardFocus
     }
     Record-Pass 'Ctrl+L previews current-tab navigation and Escape restores the original page field'
+
+    $address = Wait-For 'visible Quiver address button' { Get-AddressButton }
+    $address.SetFocus()
+    $null = Wait-For 'focused address button before invoking it' { (Get-AddressButton).Current.HasKeyboardFocus }
+    Press-Key 0x0d
+    $null = Wait-For 'visible command field opened by the address button' { Get-CommandField }
+    Press-Key 0x1b
+    $null = Wait-For 'Escape to return keyboard focus to the address button' {
+        $focus = [Windows.Automation.AutomationElement]::FocusedElement
+        $focus.Current.Name -ceq $addressName -and (Get-AddressButton).Current.HasKeyboardFocus
+    }
+    Confirm-NoRequest $requestsBefore $initial 1
+    Record-Pass 'Keyboard activation of the address button opens the command bar and Escape restores that button'
+    (Find-Edit $fixtureInputName).SetFocus()
+    $null = Wait-For 'loopback edit control keyboard focus after address check' { (Find-Edit $fixtureInputName).Current.HasKeyboardFocus }
 
     Open-Command
     Type-Command '1700000000'
@@ -402,6 +446,16 @@ try {
         Read-Requests | Where-Object { $_.path -ceq '/search?q=fixture%20release%20notes' }
     }
     Record-Pass 'Search goes to the configured destination only after Enter'
+
+    Open-Command 0x54
+    $requestsBefore = @(Read-Requests).Count
+    Type-Command $altNewTab
+    Confirm-Preview 'Open in new tab' '/keyboard-new-tab' 'Space: Fixture Space'
+    Confirm-NoRequest $requestsBefore $searchResult 2
+    Press-Key 0x0d 0x12
+    Wait-Session $altNewTab 3
+    $null = Wait-For 'Alt+Enter new tab fixture request' { Read-Requests | Where-Object { $_.path -ceq '/keyboard-new-tab' } }
+    Record-Pass 'Alt+Enter confirms navigation when the command bar is already in new-tab mode'
     Write-Evidence 'passed'
 } catch {
     $failure = $_
