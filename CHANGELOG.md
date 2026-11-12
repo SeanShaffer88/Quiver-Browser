@@ -2,9 +2,9 @@
 
 All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog.com), versioning: SemVer.
 
-## [0.1.0] - Unreleased
+## [0.1.0-beta.1] - 2026-11-11
 
-Initial Windows build inspired by Flecha.
+First Windows x64 beta, inspired by Flecha.
 
 ### Added
 - Electron 45.3.1 shell (TypeScript, `contextIsolation` on, `nodeIntegration` off, sandboxed views, allow-listed IPC).

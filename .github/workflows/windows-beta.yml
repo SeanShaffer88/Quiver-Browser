@@ -1,0 +1,65 @@
+name: Windows beta verification
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows x64 beta
+    runs-on: windows-2025
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Compile and test
+        run: npm test
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Build unsigned candidate packages
+        run: npm run build:win -- --config.win.signExecutable=false --config.nsis.differentialPackage=false --publish never
+
+      - name: Build synthetic upgrade fixture
+        run: |
+          & ./node_modules/.bin/electron-builder.cmd --win nsis --x64 --config.extraMetadata.version=0.0.9 --config.directories.output=release/upgrade-fixture --config.compression=store --config.nsis.differentialPackage=false --config.win.signExecutable=false --publish never
+
+      - name: Verify installer lifecycle and hash the candidate assets
+        id: packages
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $setup = "release/Quiver-v$version-x64-Setup.exe"
+          $portable = "release/Quiver-v$version-x64-Portable.exe"
+          $fixture = 'release/upgrade-fixture/Quiver-v0.0.9-x64-Setup.exe'
+          $asarHash = (Get-FileHash -Algorithm SHA256 -LiteralPath 'release/win-unpacked/resources/app.asar').Hash
+          ./scripts/Test-WindowsInstaller.ps1 -Candidate $setup -Fixture $fixture -CandidateVersion $version -CandidateAsarSha256 $asarHash
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-FileHash -Algorithm SHA256 -LiteralPath $setup, $portable | ForEach-Object {
+            '{0}  {1}' -f $_.Hash.ToLowerInvariant(), (Split-Path -Leaf $_.Path)
+          } | Set-Content -LiteralPath 'release/SHA256SUMS.txt' -Encoding ascii
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: quiver-windows-x64
+          path: |
+            release/Quiver-v${{ steps.packages.outputs.version }}-x64-Setup.exe
+            release/Quiver-v${{ steps.packages.outputs.version }}-x64-Portable.exe
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
