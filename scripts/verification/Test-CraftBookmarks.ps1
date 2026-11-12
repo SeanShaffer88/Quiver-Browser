@@ -64,6 +64,7 @@ $settingsRoute = 'quiver://app/settings.html'
 $newTabRoute = 'quiver://app/newtab.html'
 $steps = [Collections.Generic.List[object]]::new()
 $script:appProcess = $null
+$script:settingsGearAttempts = [Collections.Generic.List[object]]::new()
 
 function Wait-For {
     param([string]$Description, [scriptblock]$Probe, [int]$Seconds = 25)
@@ -155,27 +156,98 @@ function Reset-FixtureSession {
     [IO.File]::WriteAllText($statePath, $json, [Text.UTF8Encoding]::new($false))
 }
 
+function Get-RectEvidence($Rect) {
+    if ($Rect.IsEmpty) { return $null }
+    [ordered]@{ x = $Rect.X; y = $Rect.Y; width = $Rect.Width; height = $Rect.Height }
+}
+
+function Get-GearSnapshot {
+    $window = Get-QuiverWindow
+    if (!$window) { return [ordered]@{ ownedWindowFound = $false; pid = $script:appProcess.Id } }
+    $condition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Settings')
+    $matches = @($window.FindAll([Windows.Automation.TreeScope]::Descendants, $condition) | ForEach-Object {
+        $current = $_.Current
+        [ordered]@{
+            name = $current.Name
+            role = $current.ControlType.ProgrammaticName
+            enabled = $current.IsEnabled
+            offscreen = $current.IsOffscreen
+            bounds = Get-RectEvidence $current.BoundingRectangle
+        }
+    })
+    $current = $window.Current
+    [ordered]@{
+        ownedWindowFound = $true
+        pid = $current.ProcessId
+        name = $current.Name
+        hwnd = $current.NativeWindowHandle
+        bounds = Get-RectEvidence $current.BoundingRectangle
+        settingsMatches = $matches
+    }
+}
+
+function Get-VisibleGear {
+    $button = Find-Control (Get-QuiverWindow) 'Settings' ([Windows.Automation.ControlType]::Button)
+    if (!$button -or !$button.Current.IsEnabled -or $button.Current.IsOffscreen) { return }
+    $bounds = $button.Current.BoundingRectangle
+    if (!$bounds.IsEmpty -and $bounds.Width -gt 0 -and $bounds.Height -gt 0) { return $button }
+}
+
+function Wait-ForSettingsNavigation([int]$Milliseconds) {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        try {
+            $route = Get-ActiveRoute (Read-State)
+            if ($route -ceq $settingsRoute) { return $true }
+            if ($route -and $route -cne $newTabRoute) { throw "Settings gear opened unexpected route '$route'." }
+        } catch [IO.IOException] {
+            # The store replaces the state file atomically.
+        }
+        Start-Sleep -Milliseconds 150
+    } while ($timer.ElapsedMilliseconds -lt $Milliseconds)
+    return $false
+}
+
 function Open-SettingsFromNewTab {
     $null = Wait-For 'fresh New Tab route before the Settings click' {
         (Get-ActiveRoute (Read-State)) -ceq $newTabRoute
     }
-    $null = Wait-For 'Settings gear to open the Settings route' {
-        $route = Get-ActiveRoute (Read-State)
-        if ($route -ceq $settingsRoute) { return $true }
-        if ($route -cne $newTabRoute) { return }
+    try {
+        $button = Wait-For 'visible enabled Settings toolbar gear' { Get-VisibleGear }
         $window = Get-QuiverWindow
-        $button = Find-Control $window 'Settings' ([Windows.Automation.ControlType]::Button)
-        if (!$button -or !$button.Current.IsEnabled -or $button.Current.IsOffscreen) { return }
         $bounds = $button.Current.BoundingRectangle
-        if ($bounds.IsEmpty -or $bounds.Width -le 0 -or $bounds.Height -le 0) { return }
         $x = [int]($bounds.X + $bounds.Width / 2)
         $y = [int]($bounds.Y + $bounds.Height / 2)
-        if ([QuiverTestInput]::Click([IntPtr]$window.Current.NativeWindowHandle, $script:appProcess.Id, $x, $y)) {
-            Start-Sleep -Milliseconds 900
+        $click = [ordered]@{ action = 'owned click'; x = $x; y = $y; before = Get-GearSnapshot }
+        $script:settingsGearAttempts.Add($click)
+        $click.sent = [QuiverTestInput]::Click([IntPtr]$window.Current.NativeWindowHandle, $script:appProcess.Id, $x, $y)
+        $click.navigated = Wait-ForSettingsNavigation 2500
+        Write-Host "Settings gear click accepted=$($click.sent), navigated=$($click.navigated)."
+        if (!$click.navigated) {
+            $button = Wait-For 'visible enabled Settings toolbar gear for UIA Invoke' { Get-VisibleGear }
+            $invoke = [ordered]@{ action = 'UIA Invoke'; before = Get-GearSnapshot }
+            $script:settingsGearAttempts.Add($invoke)
+            try {
+                $button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+                $invoke.sent = $true
+            } catch {
+                $invoke.error = $_.Exception.Message
+                throw
+            }
+            $invoke.navigated = Wait-ForSettingsNavigation 4000
+            Write-Host "Settings gear Invoke accepted=$($invoke.sent), navigated=$($invoke.navigated)."
+            if (!$invoke.navigated) { throw 'The visible Settings gear did not open Settings after click and UIA Invoke.' }
         }
+        Confirm-Route $settingsRoute
+    } catch {
+        $script:settingsGearAttempts.Add([ordered]@{
+            action = 'failure snapshot'
+            window = try { Get-GearSnapshot } catch { @{ error = $_.Exception.Message } }
+        })
+        throw
     }
-    Confirm-Route $settingsRoute
 }
+
 
 function Confirm-Route {
     param([string]$Route)
@@ -317,6 +389,7 @@ function Write-Evidence([string]$Result, [string]$Failure = '') {
         os = [Runtime.InteropServices.RuntimeInformation]::OSDescription
         installerCoverage = 'Launch argument and installer-specific Settings route'
         checks = @($steps.ToArray())
+        settingsGear = @($script:settingsGearAttempts.ToArray())
         lastRoute = try { Get-ActiveRoute (Read-State) } catch { $null }
     }
     [IO.File]::WriteAllText($evidencePath, ($data | ConvertTo-Json -Depth 10))
