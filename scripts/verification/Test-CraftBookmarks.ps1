@@ -232,11 +232,16 @@ function Open-ChromeProfile {
     $selection = $null
     if ($option.TryGetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern, [ref]$selection)) {
         $selection.Select()
-        if ($expand.Current.ExpandCollapseState -eq [Windows.Automation.ExpandCollapseState]::Expanded) {
-            $expand.Collapse()
-        }
+        $method = 'SelectionItem.Select'
     } else {
         $option.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+        $method = 'Invoke'
+    }
+    # Chromium can replace the expanded popup provider as the option is selected.
+    # Wait on the resulting Settings button in the owned window instead of reusing that provider.
+    $null = Wait-For "Review import to become enabled after $method selected '$profileLabel'" {
+        $button = Find-Control (Get-QuiverWindow) 'Review import' ([Windows.Automation.ControlType]::Button)
+        $button -and $button.Current.IsEnabled
     }
 }
 
