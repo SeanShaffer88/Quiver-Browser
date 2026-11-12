@@ -2,6 +2,13 @@
 
 All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog.com), versioning: SemVer.
 
+## [0.1.0-beta.2] - 2026-11-12
+
+- Use the Pierced Q icon in Quiver and its Windows installers.
+- Add a branded setup page with optional Windows Default Apps, bookmark import, and launch-at-sign-in choices.
+- Import bookmarks from selected Chrome, Edge, Brave, and Vivaldi profiles or from an HTML export.
+- Distribute the portable build as an offline PortableApps.com installer.
+
 ## [0.1.0-beta.1] - 2026-11-11
 
 First Windows x64 beta, inspired by Flecha.

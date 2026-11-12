@@ -12,7 +12,7 @@ jobs:
   windows:
     name: Windows x64 beta
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -31,22 +31,54 @@ jobs:
       - name: Audit dependencies
         run: npm audit --audit-level=high
 
-      - name: Build unsigned candidate packages
+      - name: Build unsigned Windows setup
         run: npm run build:win -- --config.win.signExecutable=false --config.nsis.differentialPackage=false --publish never
 
       - name: Build synthetic upgrade fixture
         run: |
           & ./node_modules/.bin/electron-builder.cmd --win nsis --x64 --config.extraMetadata.version=0.0.9 --config.directories.output=release/upgrade-fixture --config.compression=store --config.nsis.differentialPackage=false --config.win.signExecutable=false --publish never
 
-      - name: Verify installer lifecycle and hash the candidate assets
+      - name: Verify Windows setup and browser integration
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $setup = "release/Quiver-v$version-x64-Setup.exe"
+          $fixture = 'release/upgrade-fixture/Quiver-v0.0.9-x64-Setup.exe'
+          $asarHash = (Get-FileHash -Algorithm SHA256 -LiteralPath 'release/win-unpacked/resources/app.asar').Hash
+          ./scripts/Test-WindowsInstaller.ps1 -Candidate $setup -Fixture $fixture -CandidateVersion $version -CandidateAsarSha256 $asarHash
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Extract the pinned PortableApps.com compiler
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'PortableApps.comInstaller_3.9.24.paf.exe'
+          $tools = Join-Path $env:RUNNER_TEMP 'quiver-paf-tools'
+          $url = 'https://downloads.sourceforge.net/portableapps/PortableApps.com%20Installer/PortableApps.comInstaller_3.9.24.paf.exe'
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash
+          if ($hash -cne '7EF6E2758CB578843D767FB5FAFDBDE8BF872B84F0ACD6E64F18AFBB05C04F00') {
+            throw 'PortableApps.com compiler archive checksum mismatch.'
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $archive
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -cne 'DF99B68F457C981B0FDF83731DE299A26B64CCF7') {
+            throw 'Unexpected PortableApps.com compiler publisher.'
+          }
+          $sevenZip = Join-Path $env:ProgramFiles '7-Zip/7z.exe'
+          & $sevenZip x -tNsis -y "-o$tools" $archive 'PortableApps.comInstaller.exe' 'App\*' 'Other\Source\License.txt'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Build the offline PortableApps installer
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'quiver-paf-tools'
+          ./scripts/Build-PortableApps.ps1 -InstallerRoot $tools -UnpackedDirectory release/win-unpacked -OutputDirectory release/portableapps-build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Verify the PortableApps installer and hash the release assets
         id: packages
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $setup = "release/Quiver-v$version-x64-Setup.exe"
-          $portable = "release/Quiver-v$version-x64-Portable.exe"
-          $fixture = 'release/upgrade-fixture/Quiver-v0.0.9-x64-Setup.exe'
+          $portable = "release/portableapps-build/QuiverPortable_${version}_English.paf.exe"
           $asarHash = (Get-FileHash -Algorithm SHA256 -LiteralPath 'release/win-unpacked/resources/app.asar').Hash
-          ./scripts/Test-WindowsInstaller.ps1 -Candidate $setup -Fixture $fixture -CandidateVersion $version -CandidateAsarSha256 $asarHash
+          ./scripts/Test-PortableApps.ps1 -Installer $portable -AsarSha256 $asarHash
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Get-FileHash -Algorithm SHA256 -LiteralPath $setup, $portable | ForEach-Object {
             '{0}  {1}' -f $_.Hash.ToLowerInvariant(), (Split-Path -Leaf $_.Path)
@@ -58,7 +90,7 @@ jobs:
           name: quiver-windows-x64
           path: |
             release/Quiver-v${{ steps.packages.outputs.version }}-x64-Setup.exe
-            release/Quiver-v${{ steps.packages.outputs.version }}-x64-Portable.exe
+            release/portableapps-build/QuiverPortable_${{ steps.packages.outputs.version }}_English.paf.exe
             release/SHA256SUMS.txt
           if-no-files-found: error
           compression-level: 0

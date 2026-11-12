@@ -5,6 +5,7 @@ import { INTERNAL_PARTITION, INTERNAL_SCHEME } from '../shared/constants';
 import { Boosts } from './boosts';
 import { DevServerWatcher } from './devservers';
 import { registerIpc } from './ipc';
+import { parseLaunchArgs } from './launch-args';
 import type { ShortcutAction } from './shortcuts';
 import { Store } from './store';
 import { restrictInternalNavigation, TabManager } from './tabs';
@@ -55,11 +56,24 @@ function savedBounds(store: Store): Partial<Rectangle> & { width: number; height
 }
 
 async function main(): Promise<void> {
-  if (!app.requestSingleInstanceLock()) {
+  if (!app.requestSingleInstanceLock({ argv: process.argv })) {
     app.quit();
     return;
   }
+  type LaunchTargets = ReturnType<typeof parseLaunchArgs>;
+  let handleSecondInstance: ((targets: LaunchTargets) => void) | undefined;
+  const pendingLaunches: LaunchTargets[] = [];
+  app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
+    // Electron can reorder its event's argv. Use the original argument order for the option delimiter.
+    const forwarded = (additionalData as { argv?: unknown } | null)?.argv;
+    const targets = Array.isArray(forwarded) && forwarded.every((argument) => typeof argument === 'string')
+      ? parseLaunchArgs(forwarded)
+      : { urls: parseLaunchArgs(argv).urls, importBookmarks: false };
+    if (handleSecondInstance) handleSecondInstance(targets);
+    else pendingLaunches.push(targets);
+  });
   await app.whenReady();
+  if (process.platform === 'win32') app.setAppUserModelId('dev.quiver.browser');
   Menu.setApplicationMenu(null);
   registerInternalProtocol();
 
@@ -77,6 +91,7 @@ async function main(): Promise<void> {
     minHeight: 480,
     backgroundColor: '#14161a',
     title: 'Quiver',
+    icon: process.platform === 'win32' ? path.join(RENDERER_DIR, 'quiver-icon.ico') : undefined,
     show: false,
   });
   if (b.maximized) win.maximize();
@@ -169,10 +184,21 @@ async function main(): Promise<void> {
 
   await Promise.all([shell.webContents.loadURL('quiver://app/shell.html'), overlay.webContents.loadURL('quiver://app/commandbar.html')]);
   tabs.restore();
-  const extra = process.argv.slice(1).filter((a) => /^https?:\/\//i.test(a));
-  for (const u of extra) tabs.openTab(u);
+  const openLaunchTargets = ({ urls, importBookmarks }: LaunchTargets) => {
+    for (const url of urls) tabs.openTab(url);
+    if (importBookmarks) tabs.navigate('quiver://settings?import=bookmarks');
+  };
+  openLaunchTargets(parseLaunchArgs(process.argv));
   tabs.layout();
   win.show();
+  handleSecondInstance = (targets) => {
+    if (win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    openLaunchTargets(targets);
+  };
+  for (const targets of pendingLaunches) handleSecondInstance(targets);
+  pendingLaunches.length = 0;
 
   if (store.state.settings.devServerScan) devWatcher.start();
 
@@ -214,11 +240,6 @@ async function main(): Promise<void> {
     app.quit();
   });
 
-  app.on('second-instance', (_e, argv) => {
-    if (win.isMinimized()) win.restore();
-    win.focus();
-    for (const u of argv.slice(1).filter((a) => /^https?:\/\//i.test(a))) tabs.openTab(u);
-  });
   app.on('window-all-closed', () => app.quit());
 }
 

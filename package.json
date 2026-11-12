@@ -1,7 +1,7 @@
 {
   "name": "quiver",
   "productName": "Quiver",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "Quiver - a local-first Chromium browser for developers on Windows. Vertical sidebar, Spaces, developer command bar, environment switching, phone preview and Boosts.",
   "main": "dist/main/main.js",
   "license": "MIT",
@@ -15,7 +15,7 @@
     "build": "tsc -p tsconfig.main.json && tsc -p tsconfig.renderer.json && node scripts/copy-assets.mjs",
     "start": "npm run build && electron .",
     "test": "npm run build && node --test dist/tests/*.test.js",
-    "build:win": "npm run build && electron-builder --win nsis portable --x64",
+    "build:win": "npm run build && electron-builder --win nsis --x64",
     "build:msi": "npm run build && electron-builder --win msi --x64",
     "build:dir": "npm run build && electron-builder --win dir --x64"
   },
@@ -44,18 +44,17 @@
     "win": {
       "icon": "build/icon.ico",
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ]
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
       "artifactName": "Quiver-v${version}-x64-Setup.${ext}"
-    },
-    "portable": {
-      "artifactName": "Quiver-v${version}-x64-Portable.${ext}"
     },
     "msi": {
       "artifactName": "Quiver-v${version}-x64-Setup.${ext}"

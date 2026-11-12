@@ -30,6 +30,55 @@ $installDir = Join-Path $testRoot 'Quiver'
 $profileDir = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Quiver'
 $registryRoot = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
 
+$registeredApplications = 'HKCU:\Software\RegisteredApplications'
+$clientRoot = 'HKCU:\Software\Clients\StartMenuInternet\Quiver'
+$progIdRoot = 'HKCU:\Software\Classes\Quiver.Url'
+$startupShortcut = Join-Path ([Environment]::GetFolderPath('Startup')) 'Quiver Browser.lnk'
+$userChoicePaths = @('http','https') | ForEach-Object {
+    "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\$_\UserChoice"
+}
+
+function Get-UserChoices {
+    foreach ($registryPath in $userChoicePaths) {
+        $choice = Get-ItemProperty -LiteralPath $registryPath -ErrorAction SilentlyContinue
+        [pscustomobject]@{ ProgId=$choice.ProgId; Hash=$choice.Hash }
+    }
+}
+
+function Get-QuiverBrowserRegistration {
+    Get-ItemPropertyValue -LiteralPath $registeredApplications -Name 'Quiver' -ErrorAction SilentlyContinue
+}
+
+function Assert-BrowserIntegration([bool]$AtLogin) {
+    if ((ConvertTo-Json -InputObject @(Get-UserChoices) -Compress) -cne $originalUserChoices) {
+        throw 'Windows HTTP or HTTPS UserChoice changed during setup.'
+    }
+    if ((Get-QuiverBrowserRegistration) -cne 'Software\Clients\StartMenuInternet\Quiver\Capabilities') {
+        throw 'Quiver is missing from Windows RegisteredApplications.'
+    }
+    $urls = Get-ItemProperty -LiteralPath "$clientRoot\Capabilities\URLAssociations"
+    if ($urls.http -cne 'Quiver.Url' -or $urls.https -cne 'Quiver.Url') {
+        throw 'Quiver URL capability mappings differ.'
+    }
+    $command = (Get-Item -LiteralPath "$progIdRoot\shell\open\command").GetValue('')
+    $appPath = Join-Path $installDir 'Quiver.exe'
+    if ($command -cne ('"{0}" -- "%1"' -f $appPath)) {
+        throw 'Quiver URL command does not quote the installed executable and URL.'
+    }
+    if ((Test-Path -LiteralPath $startupShortcut -PathType Leaf) -ne $AtLogin) {
+        throw "Unexpected sign-in startup shortcut state (expected $AtLogin)."
+    }
+    if ($AtLogin) {
+        $shell = New-Object -ComObject WScript.Shell
+        try {
+            $shortcut = $shell.CreateShortcut($startupShortcut)
+            try {
+                if ($shortcut.TargetPath -ine $appPath) { throw 'Startup shortcut targets the wrong Quiver executable.' }
+            } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut) }
+        } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+    }
+}
+
 function Get-SetupPath([string]$Path, [string]$Version) {
     $item = Get-Item -LiteralPath $Path
     if ($item -isnot [IO.FileInfo] -or $item.Name -cne "Quiver-v$Version-x64-Setup.exe") {
@@ -96,6 +145,13 @@ function Assert-Removed {
     }
 }
 
+function Assert-BrowserIntegrationRemoved {
+    if ((Get-QuiverBrowserRegistration) -or (Test-Path -LiteralPath $clientRoot) -or
+        (Test-Path -LiteralPath $progIdRoot) -or (Test-Path -LiteralPath $startupShortcut)) {
+        throw 'Uninstall left Quiver browser registration or a startup shortcut.'
+    }
+}
+
 function Remove-TestInstallation([string]$Uninstaller, [string]$Step) {
     Invoke-Nsis $Uninstaller '/currentuser /S' $Step
     # NSIS may hand uninstall off to a child after its original process exits.
@@ -105,6 +161,7 @@ function Remove-TestInstallation([string]$Uninstaller, [string]$Step) {
         Start-Sleep -Milliseconds 250
     }
     Assert-Removed
+    Assert-BrowserIntegrationRemoved
 }
 
 $fixtureVersion = '0.0.9'
@@ -114,17 +171,21 @@ if ((Test-Path -LiteralPath $profileDir) -or @(Get-QuiverRegistration).Count -gt
     throw 'The runner already has a Quiver profile or installation.'
 }
 
+Assert-BrowserIntegrationRemoved
+$originalUserChoices = ConvertTo-Json -InputObject @(Get-UserChoices) -Compress
 $null = New-Item -ItemType Directory -Path $testRoot
 $installArguments = "/S /currentuser /D=$installDir"
 Invoke-Nsis $candidatePath $installArguments 'Clean beta install'
 $cleanInstall = Assert-Installed $CandidateVersion
+Assert-BrowserIntegration $false
 if ($cleanInstall.AsarSha256 -ine $CandidateAsarSha256) {
     throw 'Clean installation ASAR differs from the build output.'
 }
 Remove-TestInstallation $cleanInstall.Uninstaller 'Clean beta uninstall'
 
-Invoke-Nsis $fixturePath $installArguments 'Install synthetic 0.0.9 fixture'
+Invoke-Nsis $fixturePath "/STARTATLOGIN $installArguments" 'Install synthetic 0.0.9 fixture'
 $priorInstall = Assert-Installed $fixtureVersion
+Assert-BrowserIntegration $true
 $null = New-Item -ItemType Directory -Path $profileDir
 $sentinelPath = Join-Path $profileDir 'installer-lifecycle-sentinel.txt'
 $sentinel = [guid]::NewGuid().ToString('N')
@@ -132,6 +193,7 @@ $sentinel = [guid]::NewGuid().ToString('N')
 
 Invoke-Nsis $candidatePath $installArguments 'Upgrade fixture to beta'
 $upgraded = Assert-Installed $CandidateVersion
+Assert-BrowserIntegration $true
 if ($upgraded.AsarSha256 -ieq $priorInstall.AsarSha256 -or
     $upgraded.AsarSha256 -ine $cleanInstall.AsarSha256) {
     throw 'Upgrade did not replace the fixture payload with the verified beta payload.'
@@ -144,4 +206,9 @@ if ([IO.File]::ReadAllText($sentinelPath) -cne $sentinel) {
     throw 'Normal uninstall changed the synthetic profile sentinel.'
 }
 
+if ((ConvertTo-Json -InputObject @(Get-UserChoices) -Compress) -cne $originalUserChoices) {
+    throw 'Windows HTTP or HTTPS UserChoice changed during installer lifecycle.'
+}
+
+Write-Host 'PASS: browser registration, unchanged Windows default choices, and opted-in startup shortcut lifecycle.'
 Write-Host 'PASS: per-user clean install, synthetic-version upgrade, uninstall, payload and registration cleanup, and profile preservation.'

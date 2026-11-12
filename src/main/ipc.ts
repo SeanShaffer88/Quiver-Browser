@@ -1,8 +1,10 @@
 import { clipboard, ipcMain, Menu, type IpcMainInvokeEvent, type WebContentsView } from 'electron';
 import { INTERNAL_ORIGIN } from '../shared/constants';
 import { parseCommand, resolveInput } from '../shared/parser';
-import type { EnvGroup, Settings, Suggestion, SuggestionAction } from '../shared/types';
+import type { BookmarkImportResult, EnvGroup, Settings, Suggestion, SuggestionAction } from '../shared/types';
+import { mergeBookmarks } from './bookmarks';
 import { isValidBoostName, type Boosts } from './boosts';
+import { discoverBookmarkProfiles, readChromiumBookmarks } from './chromium-bookmarks';
 import type { DevServerWatcher } from './devservers';
 import type { Store } from './store';
 import { displayUrl, type TabManager } from './tabs';
@@ -135,6 +137,50 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       tabs.setDevServers([]);
     }
     tabs.emit();
+  });
+
+  const fromSettings = (event: IpcMainInvokeEvent) => {
+    const url = event.senderFrame?.url;
+    if (!url || new URL(url).pathname !== '/settings.html') throw new Error('forbidden sender');
+  };
+  const persistBookmarks = (input: unknown): BookmarkImportResult => {
+    const previous = store.state.bookmarks;
+    const { bookmarks, added, full } = mergeBookmarks(previous, input);
+    if (added) {
+      store.state.bookmarks = bookmarks;
+      if (!store.flush()) {
+        store.state.bookmarks = previous;
+        store.save();
+        return { error: 'Quiver could not save the bookmarks.' };
+      }
+    }
+    return { added, full };
+  };
+  const browserData = process.platform === 'win32' ? process.env.LOCALAPPDATA ?? '' : '';
+  handle('bookmarks:list', (event) => {
+    fromSettings(event);
+    return store.state.bookmarks;
+  });
+  handle('bookmarks:profiles', (event) => {
+    fromSettings(event);
+    return discoverBookmarkProfiles(browserData);
+  });
+  handle('bookmarks:import-profile', async (event, browser: unknown, profile: unknown): Promise<BookmarkImportResult> => {
+    fromSettings(event);
+    try {
+      return persistBookmarks(await readChromiumBookmarks(browserData, browser, profile));
+    } catch (error) {
+      return { error: (error as Error).message };
+    }
+  });
+  handle('bookmarks:import-file', (event, input: unknown) => {
+    fromSettings(event);
+    return persistBookmarks(input);
+  });
+  handle('bookmarks:open', (event, url: unknown) => {
+    fromSettings(event);
+    const bookmark = store.state.bookmarks.find((item) => item.url === url);
+    if (bookmark) tabs.openTab(bookmark.url);
   });
 
   // boosts

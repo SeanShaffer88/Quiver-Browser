@@ -2,7 +2,8 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_SEARCH } from '../shared/constants';
-import type { Settings, Space } from '../shared/types';
+import type { Bookmark, Settings, Space } from '../shared/types';
+import { normalizeBookmarks } from './bookmarks';
 
 export interface PersistedTab {
   url: string;
@@ -15,6 +16,7 @@ export interface PersistedState {
   tabsBySpace: Record<string, PersistedTab[]>;
   activeIndexBySpace: Record<string, number>;
   settings: Settings;
+  bookmarks: Bookmark[];
   bounds?: { x?: number; y?: number; width: number; height: number; maximized: boolean };
 }
 
@@ -36,6 +38,7 @@ export function defaultState(): PersistedState {
     tabsBySpace: {},
     activeIndexBySpace: {},
     settings: defaultSettings(),
+    bookmarks: [],
   };
 }
 
@@ -70,6 +73,7 @@ export class Store {
       const state: PersistedState = {
         ...base,
         ...raw,
+        bookmarks: normalizeBookmarks(raw.bookmarks),
         settings: {
           envGroups: raw.settings?.envGroups ?? base.settings.envGroups,
           searchEngine: raw.settings?.searchEngine ?? base.settings.searchEngine,
@@ -99,7 +103,7 @@ export class Store {
     this.timer = setTimeout(() => this.flush(), 250);
   }
 
-  flush(): void {
+  flush(): boolean {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -107,8 +111,10 @@ export class Store {
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
       writeFileAtomic(this.file, JSON.stringify(this.state, null, 2));
+      return true;
     } catch (err) {
       console.error('[quiver] could not save state:', (err as Error).message);
+      return false;
     }
   }
 }

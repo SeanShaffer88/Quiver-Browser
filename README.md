@@ -38,15 +38,21 @@ npm.cmd start              # compile and launch Quiver
 After closing Quiver, build the Windows packages from the repository root.
 
 ```powershell
-npm.cmd run build:win      # NSIS installer and portable EXE
+npm.cmd run build:win      # Windows setup EXE
 npm.cmd run build:msi      # optional MSI
 ```
 
 Outputs in `release\`:
 
-- `Quiver-v0.1.0-beta.1-x64-Setup.exe` - installer (per-user, choose folder)
-- `Quiver-v0.1.0-beta.1-x64-Portable.exe` - portable, stores all data in a `data\` folder next to the exe
-- `Quiver-v0.1.0-beta.1-x64-Setup.msi` - from `build:msi`
+- `Quiver-v0.1.0-beta.2-x64-Setup.exe` - installer (per-user, choose folder)
+- `QuiverPortable_0.1.0-beta.2_English.paf.exe` - offline PortableApps.com installer for a portable Quiver folder
+- `Quiver-v0.1.0-beta.2-x64-Setup.msi` - from `build:msi`
+
+Windows setup adds Quiver to Windows Default Apps. Select **Open Windows Default Apps after setup** to choose Quiver there. Setup can also open Quiver’s bookmark importer and add a launch-at-sign-in shortcut. Each option is opt-in on a fresh install. For unattended setup, `/S /currentuser /STARTATLOGIN` opts in to startup without opening Windows Settings or the importer.
+
+The portable installer keeps Quiver’s profile in `QuiverPortable\Data` and leaves default browser and startup choices alone. To build it locally, first build the Windows setup to populate `release\win-unpacked`. Then run `pwsh -File scripts/Build-PortableApps.ps1 -InstallerRoot <PortableApps.comInstaller-folder>`. This requires an official PortableApps.com Installer toolchain. The GitHub workflow pins and verifies the tool archive.
+
+In **Settings → Bookmarks**, choose a local profile from Chrome, Edge, Brave, or Vivaldi, or select an HTML bookmarks export from Firefox or another browser. Quiver imports HTTP and HTTPS bookmarks into its local library and opens pages only when you select a bookmark.
 
 Local packages are unsigned unless you configure code signing. Windows SmartScreen may show a warning.
 
@@ -105,7 +111,7 @@ The sidebar lists IPv4 and IPv6 HTTP servers reachable over loopback. Quiver use
 
 ### Where data lives
 - Installed: `%APPDATA%\Quiver\`
-- Portable: `data\` next to the exe
+- PortableApps: `Data\` in the QuiverPortable folder
 - Files: `quiver-state.json` (Spaces, tabs, settings, window bounds), `boosts\`, and Chromium partitions.
 
 To remove everything: uninstall, then delete that folder.
@@ -128,7 +134,7 @@ Quiver-Browser/
 
 ## Feature-parity checklist
 
-Quiver currently covers these Flecha workflows. Pinned tabs, folders, archives, general split view, and browser import are outside this build’s scope.
+Quiver currently covers these Flecha workflows. Pinned tabs, tab folders, archives, and general split view are outside this build’s scope.
 
 | # | Flecha feature | Quiver (Windows) | Status |
 |---|---|---|---|
@@ -146,14 +152,14 @@ Quiver currently covers these Flecha workflows. Pinned tabs, folders, archives, 
 | 7 | Boosts | CSS live, TS transpile + reload, `all.css`, profile storage | Included |
 | 8 | Coding-agent browser automation | Omitted from the Windows build | Unavailable |
 | 9 | Local-first / no telemetry | No analytics, no accounts, atomic local JSON | Included |
-| 10 | Windows installer / build script | NSIS, portable, optional MSI | Build targets configured |
+| 10 | Windows installer / build script | Branded Windows setup, offline PortableApps.com installer, optional MSI | Build targets configured |
 | – | Other browser features | Chrome Web Store extensions, sync, bookmarks, history UI, downloads UI, permission prompts, password manager, tab drag-reorder, auto-update | Unavailable |
 
 ## Verification
 
 On Windows 11 x64, all 10 unit tests passed. The unpacked and portable builds verified tab restoration, Space cookie isolation, IPv4 and IPv6 dev-server discovery, CSS and TypeScript Boosts, and a 393 px phone preview with touch emulation.
 
-The Windows beta workflow checks clean NSIS installation, upgrade from a synthetic older build, and uninstallation on an isolated GitHub-hosted runner. Windows 10, MSI packaging, and screen-reader behavior remain unverified.
+The Windows beta workflow checks NSIS installation, upgrade and removal, default browser registration, sign-in startup, and PortableApps installation and profile preservation on an isolated GitHub-hosted runner. Windows 10, MSI packaging, and screen-reader behavior remain unverified.
 
 ## License
 
