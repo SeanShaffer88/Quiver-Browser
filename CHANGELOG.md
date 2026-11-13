@@ -4,6 +4,8 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+- HLS downloads fetch a separate audio playlist (`#EXT-X-MEDIA`, preferring `DEFAULT=YES`) and combine fragmented-MP4 video and audio into one `.mp4`, so the best variant is no longer passed over for a lower one with audio inside.
+- Local servers in the sidebar are named after their project folder (`package.json` name, else the folder name), found from the listening process's command line.
 - WebDAV downloads (`davs://…`): files or whole folders, passwords only over HTTPS, listings confined to the folder.
 - DASH downloads combine fragmented-MP4 video and audio into one `.mp4` with Quiver's own muxer.
 - Native downloaders: FTP/FTPS (resumable, encryption first, no FTP bounce), HLS with AES-128, on-demand MPEG-DASH, and Metalink with mirror failover and checksum checks; `download <address>` in the command bar; Windows shares open in File Explorer.
