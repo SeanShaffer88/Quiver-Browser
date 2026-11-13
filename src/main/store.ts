@@ -46,6 +46,7 @@ export function defaultSettings(): Settings {
     devServerScan: true,
     sidebarCollapsed: false,
     sitePermissions: {},
+    rememberHistory: true,
     privacy: normalizePrivacy(undefined, process.platform),
   };
 }
@@ -116,6 +117,7 @@ export class Store {
           devServerScan: raw.settings?.devServerScan ?? base.settings.devServerScan,
           sidebarCollapsed: raw.settings?.sidebarCollapsed ?? base.settings.sidebarCollapsed,
           sitePermissions: normalizeSitePermissions(raw.settings?.sitePermissions),
+          rememberHistory: typeof raw.settings?.rememberHistory === 'boolean' ? raw.settings.rememberHistory : true,
           privacy: normalizePrivacy(raw.settings?.privacy, process.platform),
         },
       } as PersistedState;

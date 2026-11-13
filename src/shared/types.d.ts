@@ -36,6 +36,8 @@ export interface Settings {
   sidebarCollapsed: boolean;
   /** Saved camera/microphone/screen decisions by origin. */
   sitePermissions: Record<string, 'allow' | 'block'>;
+  /** Keep a local browsing history for command-bar search. */
+  rememberHistory: boolean;
   privacy: PrivacySettings;
 }
 

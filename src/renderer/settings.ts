@@ -296,6 +296,8 @@ function renderGroups(): void {
   $<HTMLInputElement>('engine').value = settings.searchEngine;
   $<HTMLInputElement>('scan').checked = settings.devServerScan;
   renderSitePermissions(settings.sitePermissions);
+  $<HTMLInputElement>('history-on').checked = settings.rememberHistory;
+  void showHistoryCount();
   renderPrivacy(settings.privacy);
 })();
 
@@ -378,6 +380,16 @@ for (const box of document.querySelectorAll<HTMLInputElement>('[data-sync]')) {
 }
 quiver.on('sync:changed', () => void syncCall('sync:status'));
 void syncCall('sync:status');
+async function showHistoryCount(): Promise<void> {
+  const count = (await quiver.invoke('history:count')) as number;
+  $('history-count').textContent = count === 1 ? '1 page' : `${count.toLocaleString()} pages`;
+}
+$<HTMLInputElement>('history-on').addEventListener('change', (e) => void quiver.invoke('settings:set', { rememberHistory: (e.target as HTMLInputElement).checked }));
+$('history-clear').addEventListener('click', async () => {
+  if (!confirm('Clear all saved history on this device?')) return;
+  await quiver.invoke('history:clear');
+  await showHistoryCount();
+});
 function renderPrivacy(p: Settings['privacy']): void {
   $<HTMLInputElement>('privacy-gpc').checked = p.gpc;
   $<HTMLInputElement>('privacy-webrtc').checked = p.hideLocalIp;

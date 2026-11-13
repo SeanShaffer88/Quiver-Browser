@@ -15,6 +15,7 @@ import { topicMarkdown, type Research } from './research';
 import { researchSuggestions } from './research-commands';
 import { meetSuggestions } from './meetings';
 import type { SyncService } from './sync-service';
+import type { History } from './history';
 import { tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
 
@@ -29,6 +30,7 @@ export interface IpcDeps {
   runCommand: (command: BrowserCommand) => void;
   research: Research;
   sync: SyncService;
+  history: History;
   /** Reapply privacy settings after they change. */
   onPrivacyChanged: () => void;
 }
@@ -125,7 +127,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     const tabQuery = tabSearchQuery(text);
     if (tabQuery !== undefined) return tabSearchSuggestions(tabQuery, context.spaceId, openTabTargets());
     const palette = paletteQuery(text);
-    const sources = () => ({ activeSpaceId: context.spaceId, tabs: openTabTargets(), bookmarks: store.state.bookmarks });
+    const sources = () => ({ activeSpaceId: context.spaceId, tabs: openTabTargets(), bookmarks: store.state.bookmarks, history: d.history.list() });
     if (palette && palette.scope !== 'all') return paletteSuggestions(palette.scope, palette.query, sources());
     const parsed = parseCommand(text, parseContext(context));
     const fellThrough = parsed.length === 1 && (parsed[0].kind === 'url' || parsed[0].kind === 'search');
@@ -391,6 +393,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (patch.envGroups !== undefined) s.envGroups = sanitizeEnvGroups(patch.envGroups);
     if (typeof patch.searchEngine === 'string' && /^https?:\/\/.+%s/.test(patch.searchEngine)) s.searchEngine = patch.searchEngine;
     if (typeof patch.devServerScan === 'boolean') s.devServerScan = patch.devServerScan;
+    if (typeof patch.rememberHistory === 'boolean') s.rememberHistory = patch.rememberHistory;
     if (patch.privacy !== undefined && typeof patch.privacy === 'object') {
       s.privacy = normalizePrivacy({ ...s.privacy, ...patch.privacy }, process.platform);
       d.onPrivacyChanged();
@@ -431,6 +434,12 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (typeof origin === 'string' && origin in store.state.settings.sitePermissions) tabs.media?.forget(origin);
     return store.state.settings.sitePermissions;
   });
+
+  handle('settings', 'history:clear', () => {
+    d.history.clear();
+    return d.history.list().length;
+  });
+  handle('settings', 'history:count', () => d.history.list().length);
 
   const imports = new BookmarkImports<WebFrameMain>(store.state, () => {
     const saved = store.flush();
