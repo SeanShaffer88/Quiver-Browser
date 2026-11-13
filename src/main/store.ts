@@ -7,6 +7,7 @@ import type { Bookmark, Settings, Space } from '../shared/types';
 import { validBookmarkUndo, type BookmarkUndo } from './bookmark-import';
 import { normalizeBookmarks } from './bookmarks';
 import { normalizeFolders } from './tab-tree';
+import { normalizeTopics, type Topic } from './research';
 import { hasSavedNewTabPlaceholder, normalizeRecentlyClosed, type PersistedClosedTab } from './session-recovery';
 
 export interface PersistedTab {
@@ -28,6 +29,8 @@ export interface PersistedState {
   bookmarks: Bookmark[];
   bookmarkUndo?: BookmarkUndo;
   sessionOpen?: boolean;
+  topics?: Topic[];
+  activeTopicBySpace?: Record<string, string>;
   bounds?: { x?: number; y?: number; width: number; height: number; maximized: boolean };
 }
 
@@ -108,6 +111,10 @@ export class Store {
         },
       } as PersistedState;
       state.spaces = state.spaces.map((space) => ({ ...space, folders: normalizeFolders(space.folders) }));
+      const knownSpaces = new Set(state.spaces.map(({ id }) => id));
+      state.topics = normalizeTopics(raw.topics, knownSpaces);
+      state.activeTopicBySpace = Object.fromEntries(Object.entries(raw.activeTopicBySpace ?? {})
+        .filter(([space, topic]) => knownSpaces.has(space) && state.topics!.some((t) => t.id === topic && t.spaceId === space)));
       state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);
       const spaceIds = new Set(state.spaces.map(({ id }) => id));
       const soleNewTabSpaces = new Set([...spaceIds].filter((id) => hasSavedNewTabPlaceholder(state.tabsBySpace?.[id])));

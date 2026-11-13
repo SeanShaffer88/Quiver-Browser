@@ -602,11 +602,19 @@ function renderToolbar(s: ShellState): void {
     boost.classList.add('tool-status');
     boost.append(h('span', { class: 'tool-count', 'aria-hidden': 'true' }, String(count)));
   }
+  const research = s.research && h('button', {
+    class: 'research-chip',
+    title: `Researching “${s.research.name}”: ${s.research.count} items recorded in this Space. Open notes`,
+    'aria-label': `Researching ${s.research.name}, ${s.research.count} items. Open research notes`,
+    dataset: { focusKey: 'research' },
+    onClick: () => call('cmd:run', { type: 'internal', page: 'research', topic: s.research!.id }),
+  }, h('span', { class: 'dot', 'aria-hidden': 'true' }), h('span', { class: 'research-name' }, s.research.name), h('span', { class: 'tool-count', 'aria-hidden': 'true' }, String(s.research.count)));
   toolbar.replaceChildren(
     icon(ICON.back, 'Back (Alt+←)', () => call('tab:back'), { disabled: !t?.canGoBack }),
     icon(ICON.forward, 'Forward (Alt+→)', () => call('tab:forward'), { disabled: !t?.canGoForward }),
     icon(ICON.reload, 'Reload (Ctrl+R)', () => call('tab:reload')),
     addr,
+    ...(research ? [research] : []),
     icon(ICON.env, 'Switch environment: local → staging → prod (Ctrl+Alt+E)', () => call('env:switch'), { disabled: !t?.env }),
     phone,
     boost,

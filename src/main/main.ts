@@ -6,6 +6,7 @@ import { Boosts } from './boosts';
 import { configureSitePermissions } from './browser-policy';
 import { DevServerWatcher } from './devservers';
 import { registerIpc } from './ipc';
+import { Research } from './research';
 import { parseLaunchArgs } from './launch-args';
 import type { ShortcutAction } from './shortcuts';
 import { Store } from './store';
@@ -234,8 +235,20 @@ async function main(): Promise<void> {
   );
   tabs.attachShortcuts(shell.webContents);
 
+  const research = new Research(store.state, () => store.save(), () => {
+    tabs.emit();
+    for (const tab of tabs.tabs.values()) {
+      if (tab.internalPage === 'research' && !tab.view.webContents.isDestroyed()) tab.view.webContents.send('research:changed');
+    }
+  });
+  research.prune(new Set(tabs.spaces.map(({ id }) => id)));
+  tabs.onVisit = (spaceId, url, title) => research.recordPage(spaceId, url, title);
+  tabs.researchStatus = (spaceId) => {
+    const topic = research.active(spaceId);
+    return topic && { id: topic.id, name: topic.name, count: topic.items.length };
+  };
   actions = registerIpc({
-    tabs, store, boosts, devWatcher, overlay, shell,
+    tabs, store, boosts, devWatcher, overlay, shell, research,
     runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings') : onShortcut(command)),
   });
 

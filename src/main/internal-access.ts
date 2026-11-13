@@ -1,6 +1,6 @@
 import { INTERNAL_ORIGIN, INTERNAL_SCHEME } from '../shared/constants';
 
-export type InternalRole = 'shell' | 'commandbar' | 'settings' | 'boosts';
+export type InternalRole = 'shell' | 'commandbar' | 'settings' | 'boosts' | 'research';
 export type InternalPage = InternalRole | 'newtab';
 
 export function internalPage(url: string): InternalPage | undefined {
@@ -16,6 +16,7 @@ export function internalPage(url: string): InternalPage | undefined {
     case '/commandbar.html': return 'commandbar';
     case '/settings.html': return 'settings';
     case '/boosts.html': return 'boosts';
+    case '/research.html': return 'research';
     case '/newtab.html': return 'newtab';
     default: return undefined;
   }

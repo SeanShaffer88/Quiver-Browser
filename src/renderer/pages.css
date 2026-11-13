@@ -43,3 +43,17 @@ kbd, code { font: 12px var(--mono); background: var(--panel-2); border: 1px soli
 #editor { flex: 1; resize: none; font: 13px/1.5 var(--mono); tab-size: 2; white-space: pre; overflow: auto; }
 .toolbar { display: flex; gap: 8px; align-items: center; }
 .toolbar .name { font: 600 14px var(--mono); flex: 1; overflow: hidden; text-overflow: ellipsis; }
+/* research */
+.research-title { margin: 0; font-size: 18px; }
+.research main { overflow-y: auto; }
+.research .name-input { flex: 1; font-weight: 600; font-size: 15px; min-width: 160px; }
+.topic-notes { width: 100%; resize: vertical; font: inherit; font-size: 13px; line-height: 1.5; }
+.trail { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.trail-item { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; background: var(--panel); }
+.trail-head { display: flex; align-items: center; gap: 8px; }
+.trail-head .link { flex: 1; text-align: left; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trail-head .link:hover { text-decoration: underline; }
+.trail-item .k { font: 10px var(--mono); color: var(--accent); text-transform: uppercase; }
+.trail-item.search .k { color: var(--local); }
+.item-note { width: 100%; resize: vertical; margin-top: 6px; font: inherit; font-size: 12px; line-height: 1.4; }
+@media (forced-colors: active) { .trail-item { border-color: CanvasText; } }
