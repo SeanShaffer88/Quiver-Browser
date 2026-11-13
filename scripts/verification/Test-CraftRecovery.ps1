@@ -182,13 +182,20 @@ function Get-ReopenedTab([string]$Space, [string]$Url) {
 }
 
 function Open-ClosedTab([string]$Name, [string]$Space, [string]$Url) {
-    $control = Wait-For "visible $Name button" {
+    # The sidebar can re-render between finding the button and reading its bounds, leaving a detached element
+    # whose rectangle is NaN or infinite. Read the bounds inside the wait and retry until they are usable.
+    $found = Wait-For "visible $Name button with usable bounds" {
         $button = Find-Visible $Name
-        if ($button -and $button.Current.ControlType -eq [Windows.Automation.ControlType]::Button -and
-            $button.Current.IsEnabled -and !$button.Current.BoundingRectangle.IsEmpty) { $button }
+        if ($button -and $button.Current.ControlType -eq [Windows.Automation.ControlType]::Button -and $button.Current.IsEnabled) {
+            $rect = $button.Current.BoundingRectangle
+            $usable = !$rect.IsEmpty -and $rect.Width -gt 0 -and $rect.Height -gt 0 -and
+                ![double]::IsNaN($rect.X) -and ![double]::IsNaN($rect.Y) -and ![double]::IsInfinity($rect.X) -and ![double]::IsInfinity($rect.Y)
+            if ($usable) { [pscustomobject]@{ control = $button; bounds = $rect } }
+        }
     }
+    $control = $found.control
     $window = Get-Window
-    $bounds = $control.Current.BoundingRectangle
+    $bounds = $found.bounds
     $x = [int]($bounds.X + $bounds.Width / 2)
     $y = [int]($bounds.Y + $bounds.Height / 2)
     $steps.reopenAction = [ordered]@{ before = Save-ReopenSnapshot; x = $x; y = $y }
