@@ -296,6 +296,7 @@ function renderGroups(): void {
   $<HTMLInputElement>('engine').value = settings.searchEngine;
   $<HTMLInputElement>('scan').checked = settings.devServerScan;
   renderSitePermissions(settings.sitePermissions);
+  renderPrivacy(settings.privacy);
 })();
 
 $('addgroup').addEventListener('click', () => {
@@ -334,3 +335,41 @@ function renderSitePermissions(saved: Record<string, 'allow' | 'block'>): void {
     return item;
   }));
 }
+function renderPrivacy(p: Settings['privacy']): void {
+  $<HTMLInputElement>('privacy-gpc').checked = p.gpc;
+  $<HTMLInputElement>('privacy-webrtc').checked = p.hideLocalIp;
+  $<HTMLSelectElement>('privacy-dns').value = p.secureDns;
+  $<HTMLInputElement>('privacy-doh').value = p.dohTemplate;
+  $('privacy-doh-row').hidden = p.secureDns !== 'custom';
+  $<HTMLInputElement>('privacy-spell').checked = p.spellcheck;
+  $<HTMLInputElement>('privacy-clear').checked = p.clearOnExit;
+  if (!navigator.userAgent.includes('Windows')) {
+    $('privacy-spell-note').textContent = 'On this system Chromium downloads spelling dictionaries from Google when spell check is on.';
+  }
+}
+
+async function savePrivacy(patch: Partial<Settings['privacy']>, message = 'Saved'): Promise<void> {
+  try {
+    await quiver.invoke('settings:set', { privacy: patch });
+    const settings = (await quiver.invoke('settings:get')) as Settings;
+    renderPrivacy(settings.privacy);
+    const rejected = Object.entries(patch).some(([key, value]) => settings.privacy[key as keyof Settings['privacy']] !== value);
+    flash($('privacy-status'), rejected ? 'Not saved: enter an https:// DNS-over-HTTPS address.' : message, rejected ? 'err' : undefined);
+  } catch (e) {
+    flash($('privacy-status'), (e as Error).message, 'err');
+  }
+}
+
+const checkbox = (id: string, key: 'gpc' | 'hideLocalIp' | 'spellcheck' | 'clearOnExit') =>
+  $<HTMLInputElement>(id).addEventListener('change', (e) => void savePrivacy({ [key]: (e.target as HTMLInputElement).checked }));
+checkbox('privacy-gpc', 'gpc');
+checkbox('privacy-webrtc', 'hideLocalIp');
+checkbox('privacy-spell', 'spellcheck');
+checkbox('privacy-clear', 'clearOnExit');
+$<HTMLSelectElement>('privacy-dns').addEventListener('change', (e) => {
+  const mode = (e.target as HTMLSelectElement).value as Settings['privacy']['secureDns'];
+  $('privacy-doh-row').hidden = mode !== 'custom';
+  if (mode === 'custom') $<HTMLInputElement>('privacy-doh').focus();
+  else void savePrivacy({ secureDns: mode });
+});
+$('privacy-doh-save').addEventListener('click', () => void savePrivacy({ secureDns: 'custom', dohTemplate: $<HTMLInputElement>('privacy-doh').value }));

@@ -138,6 +138,15 @@ The sidebar lists IPv4 and IPv6 HTTP servers reachable over loopback. Quiver use
 Type `meet` in the command bar to start a Google Meet or a Jitsi room, or `meet <link>`, a Meet code (`abc-defg-hij`) or a Zoom meeting ID to join. Zoom links open in Zoom's web client, so no app is needed. When a site asks for your camera, microphone or screen, Quiver asks in the toolbar: **Allow this time** (until the tab leaves the page), **Always allow** or **Block** for that site. Screen sharing then shows a menu of screens and windows to share. Tabs using the camera, microphone or screen show a red dot in the sidebar. Saved choices are listed in **Settings → Camera, microphone and screen sharing**.
 
 Only secure pages (`https`, or `http` on localhost) in a tab's main frame can ask. Known meeting sites report the camera and microphone as available so their join screens work; other sites read as denied until they ask and you agree.
+### Privacy
+
+Quiver sends no telemetry, has no account and does not check for updates; crash reports stay on the device. **Settings → Privacy** controls what pages and Chromium can send:
+
+- **Global Privacy Control** (on by default): sends `Sec-GPC: 1` and `DNT: 1` with page requests.
+- **Hide local IP** (on by default): WebRTC uses only the public interface, so sites can't read local network addresses.
+- **Secure DNS**: automatic (default), off, or a custom DNS-over-HTTPS server.
+- **Spell check**: on Windows it uses the Windows spell checker and downloads nothing. On other systems it is off by default because Chromium would download dictionaries from Google.
+- **Clear on exit**: deletes cookies, site storage and cache in every Space when Quiver closes; tabs, bookmarks and notes stay.
 
 ### Where data lives
 - Installed: `%APPDATA%\Quiver\`
@@ -184,7 +193,7 @@ Quiver currently covers these Flecha workflows. Archives and general split view 
 | 8 | Coding-agent browser automation | Omitted from the Windows build | Unavailable |
 | 9 | Local-first / no telemetry | No analytics, no accounts, atomic local JSON | Included |
 | 10 | Windows installer / build script | Branded Windows setup, offline PortableApps.com installer, optional MSI | Build targets configured |
-| – | Other browser features | Chrome Web Store extensions, sync, bookmark editing, history UI, downloads UI, permission prompts other than camera/microphone/screen, password manager, auto-update | Unavailable |
+| – | Other browser features | Chrome Web Store extensions, sync, bookmark editing, history UI, downloads UI, permission prompts other than camera/microphone/screen, third-party cookie blocking, password manager, auto-update | Unavailable |
 
 ## Verification
 

@@ -1,13 +1,14 @@
 import { app, BaseWindow, crashReporter, desktopCapturer, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { INTERNAL_PARTITION, INTERNAL_SCHEME } from '../shared/constants';
+import { INTERNAL_PARTITION, INTERNAL_SCHEME, SHARED_PARTITION } from '../shared/constants';
 import { Boosts } from './boosts';
 import { configureSitePermissions } from './browser-policy';
 import { DevServerWatcher } from './devservers';
 import { registerIpc } from './ipc';
 import { meetingProvider } from './meetings';
 import { MediaPermissions } from './site-permissions';
+import { clearSessions, PrivacyController } from './privacy';
 import { Research } from './research';
 import { parseLaunchArgs } from './launch-args';
 import type { ShortcutAction } from './shortcuts';
@@ -126,9 +127,24 @@ async function main(): Promise<void> {
   await app.whenReady();
   if (process.platform === 'win32') app.setAppUserModelId('dev.quiver.browser');
   Menu.setApplicationMenu(null);
+  // Privacy settings must reach every session before anything (including the internal protocol) creates one.
+  const store = new Store();
+  const privacy = new PrivacyController(() => store.state.settings.privacy, (options) => app.configureHostResolver(options));
+  app.on('session-created', (ses) => privacy.configureSession(ses));
+  app.on('web-contents-created', (_event, contents) => privacy.configureContents(contents));
+  privacy.configureSession(session.defaultSession);
+  privacy.apply();
   registerInternalProtocol();
 
-  const store = new Store();
+  let clearedOnExit = false;
+  app.on('will-quit', (event) => {
+    if (clearedOnExit || !store.state.settings.privacy.clearOnExit) return;
+    // Clear web Spaces only; Quiver's own pages and settings are kept.
+    event.preventDefault();
+    clearedOnExit = true;
+    const partitions = [SHARED_PARTITION, ...store.state.spaces.filter((sp) => sp.isolated).map((sp) => `persist:quiver-space-${sp.id}`)];
+    void clearSessions(partitions.map((partition) => session.fromPartition(partition))).finally(() => app.quit());
+  });
   const boosts = new Boosts();
   boosts.startWatching();
 
@@ -282,6 +298,7 @@ async function main(): Promise<void> {
   };
   actions = registerIpc({
     tabs, store, boosts, devWatcher, overlay, shell, research,
+    onPrivacyChanged: () => privacy.apply(),
     runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings') : onShortcut(command)),
   });
 
