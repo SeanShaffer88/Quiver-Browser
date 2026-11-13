@@ -48,6 +48,20 @@
     </div>
   </div>
 
+  <h2>Arc sidebar preview</h2>
+  <p class="note" id="arc-sidebar-help">Choose a copy of Arc’s <code>StorableSidebar.json</code> to review its Spaces, Favorites, and pinned tabs on this device.</p>
+  <div class="row">
+    <button type="button" class="btn" id="arc-sidebar-choose" aria-describedby="arc-sidebar-help">Choose Arc sidebar file…</button>
+    <input id="arc-sidebar-file" type="file" accept=".json,application/json" hidden>
+    <button type="button" class="btn" id="arc-sidebar-clear" hidden>Clear preview</button>
+  </div>
+  <p class="status" id="arc-sidebar-status" role="status"></p>
+  <section class="group arc-sidebar-review" id="arc-sidebar-review" aria-labelledby="arc-sidebar-heading" hidden>
+    <h3 id="arc-sidebar-heading" tabindex="-1">Review Arc sidebar</h3>
+    <div id="arc-sidebar-content"></div>
+    <p class="note">Preview only. Quiver has not added any Spaces or tabs.</p>
+  </section>
+
   <h2>Environments</h2>
   <p class="note">Group the origins of one app once. Then <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>) cycles local → staging → production, keeping path, query and hash. Leave an origin empty to skip it.</p>
   <div id="groups"></div>
