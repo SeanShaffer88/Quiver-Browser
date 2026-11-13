@@ -9,6 +9,7 @@ import { configureSitePermissions } from './browser-policy';
 import { DevServerWatcher } from './devservers';
 import { History } from './history';
 import { Downloads } from './downloads';
+import { cleanUserAgent } from './browsing';
 import { registerIpc } from './ipc';
 import { meetingProvider } from './meetings';
 import { MediaPermissions } from './site-permissions';
@@ -130,6 +131,8 @@ async function main(): Promise<void> {
     if (handleSecondInstance) handleSecondInstance(targets);
     else pendingLaunches.push(targets);
   });
+  // Before any session exists, so every page and request sees the plain Chromium user agent.
+  app.userAgentFallback = cleanUserAgent(app.userAgentFallback, app.getName());
   await app.whenReady();
   if (process.platform === 'win32') app.setAppUserModelId('dev.quiver.browser');
   Menu.setApplicationMenu(null);
@@ -240,6 +243,22 @@ async function main(): Promise<void> {
         break;
       case 'downloads':
         tabs.navigate('quiver://downloads');
+        break;
+      case 'find':
+        tabs.find(null);
+        break;
+      case 'find-next':
+      case 'find-prev':
+        tabs.find(null, a === 'find-next');
+        break;
+      case 'zoom-in':
+        tabs.zoom(1);
+        break;
+      case 'zoom-out':
+        tabs.zoom(-1);
+        break;
+      case 'zoom-reset':
+        tabs.zoom(0);
         break;
       default: {
         const m = a.match(/^tab-(\d)$/);

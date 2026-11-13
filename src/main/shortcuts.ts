@@ -18,6 +18,12 @@ export type ShortcutAction =
   | 'devtools'
   | 'boosts'
   | 'downloads'
+  | 'find'
+  | 'find-next'
+  | 'find-prev'
+  | 'zoom-in'
+  | 'zoom-out'
+  | 'zoom-reset'
   | `tab-${number}`;
 
 /** Map a key event to a browser shortcut. Uses physical key codes so keyboard layouts (incl. AltGr) don't matter. */
@@ -28,6 +34,7 @@ export function shortcutFor(input: Input): ShortcutAction | null {
 
   if (code === 'F12') return 'devtools';
   if (code === 'F5') return 'reload';
+  if (code === 'F3' && !ctrl && !alt) return shift ? 'find-prev' : 'find-next';
   if (alt && !ctrl && !shift) {
     if (code === 'ArrowLeft') return 'back';
     if (code === 'ArrowRight') return 'forward';
@@ -40,6 +47,9 @@ export function shortcutFor(input: Input): ShortcutAction | null {
   if (code === 'KeyI' && shift && !alt) return 'devtools';
   if (code === 'KeyB' && shift && !alt) return 'boosts';
   if (code === 'Tab' && !alt) return shift ? 'prev-tab' : 'next-tab';
+  if (!alt && (code === 'Equal' || code === 'NumpadAdd')) return 'zoom-in';
+  if (!alt && !shift && (code === 'Minus' || code === 'NumpadSubtract')) return 'zoom-out';
+  if (!alt && !shift && (code === 'Digit0' || code === 'Numpad0')) return 'zoom-reset';
   if ((code === 'PageUp' || code === 'PageDown') && !alt) {
     if (shift) return code === 'PageUp' ? 'move-tab-up' : 'move-tab-down';
     return code === 'PageUp' ? 'prev-tab' : 'next-tab';
@@ -60,6 +70,8 @@ export function shortcutFor(input: Input): ShortcutAction | null {
       return 'toggle-sidebar';
     case 'KeyJ':
       return 'downloads';
+    case 'KeyF':
+      return 'find';
     default:
       break;
   }

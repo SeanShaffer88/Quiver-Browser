@@ -132,6 +132,10 @@ export interface ShellState {
   /** Sidebar rows for the active Space. */
   sidebar: SidebarRow[];
   activeTabId: number | null;
+  /** The find bar for the active tab, when open. */
+  find?: { tabId: number; text: string; matches: number; active: number };
+  /** Zoom factor of the active tab (1 = 100%). */
+  zoom: number;
   /** The research topic recording in the active Space. */
   research?: { id: string; name: string; count: number };
   /** A camera / microphone / screen request waiting on the active tab. */
@@ -172,7 +176,8 @@ export type SuggestionAction =
 
 export type BrowserCommand =
   | 'command-new' | 'close-tab' | 'reopen-tab' | 'reload' | 'back' | 'forward' | 'next-tab' | 'prev-tab'
-  | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings' | 'downloads';
+  | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings' | 'downloads'
+  | 'find' | 'zoom-in' | 'zoom-out' | 'zoom-reset';
 
 export interface Suggestion {
   kind: string;

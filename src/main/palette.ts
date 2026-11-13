@@ -20,6 +20,10 @@ export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string
   { command: 'boosts', label: 'Open Boosts', keys: 'Ctrl+Shift+B', keywords: 'css script' },
   { command: 'settings', label: 'Open Settings', keys: '', keywords: 'preferences options' },
   { command: 'downloads', label: 'Open downloads', keys: 'Ctrl+J', keywords: 'files saved' },
+  { command: 'find', label: 'Find in page', keys: 'Ctrl+F', keywords: 'search text' },
+  { command: 'zoom-in', label: 'Zoom in', keys: 'Ctrl+=', keywords: 'bigger larger text size' },
+  { command: 'zoom-out', label: 'Zoom out', keys: 'Ctrl+-', keywords: 'smaller text size' },
+  { command: 'zoom-reset', label: 'Reset zoom', keys: 'Ctrl+0', keywords: '100 percent default size' },
 ];
 
 const PER_KIND = 8;

@@ -8,6 +8,7 @@ const INVOKE = new Set([
   'space:create', 'space:menu', 'space:rename', 'space:activate',
   'folder:toggle', 'folder:rename', 'folder:move', 'folder:menu',
   'permission:decide', 'sitepermissions:forget',
+  'find:query', 'find:close', 'zoom:reset',
   'sidebar:toggle', 'preview:toggle', 'env:switch',
   'cmd:open', 'cmd:close', 'cmd:suggest', 'cmd:commit', 'cmd:run',
   'settings:get', 'settings:set', 'sync:status', 'sync:choose', 'sync:disconnect', 'sync:options', 'sync:now',
@@ -20,7 +21,7 @@ const INVOKE = new Set([
   'research:list', 'research:get', 'research:rename', 'research:notes', 'research:item-note', 'research:item-remove',
   'research:delete', 'research:resume', 'research:stop', 'research:open', 'research:export',
 ]);
-const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'folder:rename-start', 'research:changed', 'sync:changed', 'downloads:changed']);
+const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'folder:rename-start', 'research:changed', 'sync:changed', 'downloads:changed', 'find:focus']);
 
 contextBridge.exposeInMainWorld('quiver', {
   invoke: (channel: string, ...args: unknown[]): Promise<unknown> =>

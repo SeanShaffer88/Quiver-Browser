@@ -39,6 +39,7 @@ import type { MediaPermissions } from './site-permissions';
 import { normalizeSyncedSpaces, type SyncedSpace } from './sync';
 import { canNest, deleteFolder, displayOrder, folderName, normalizeFolders, placeRelative, sidebarRows } from './tab-tree';
 import type { Downloads } from './downloads';
+import { nextZoom } from './browsing';
 
 interface Tab {
   id: number;
@@ -247,6 +248,8 @@ export class TabManager {
       tabs: [...this.tabs.values()].map((t) => this.info(t)),
       sidebar: sidebarRows(this.spaceTabs(this.activeSpaceId), this.folders(this.activeSpaceId)),
       activeTabId: this.activeTabId,
+      find: this.findState && this.findState.tabId === this.activeTabId ? { ...this.findState } : undefined,
+      zoom: this.activeZoom(),
       research: this.researchStatus?.(this.activeSpaceId),
       permissionPrompt: this.activePrompt(),
       downloads: this.downloads?.summary(),
@@ -433,9 +436,19 @@ export class TabManager {
       tab.loading = false;
       touch();
     });
+    wc.on('found-in-page', (_event, result) => {
+      if (!this.findState || this.findState.tabId !== tab.id || result.requestId !== this.findRequest) return;
+      if (result.finalUpdate || result.matches !== undefined) {
+        this.findState.matches = result.matches;
+        this.findState.active = result.activeMatchOrdinal;
+        this.emit();
+      }
+    });
+    wc.on('zoom-changed', () => this.emit());
     wc.on('did-navigate', () => {
       // A new document starts without the previous page's camera or microphone access.
       this.media?.reset(wc.id);
+      if (this.findState?.tabId === tab.id) this.stopFind();
       visit();
       this.persist();
       touch();
@@ -507,6 +520,7 @@ export class TabManager {
   activateTab(id: number): void {
     const tab = this.tabs.get(id);
     if (!tab) return;
+    if (this.findState && this.findState.tabId !== id) this.stopFind();
     if (tab.spaceId !== this.activeSpaceId) {
       this.store.state.activeSpaceId = tab.spaceId;
       this.store.save();
@@ -783,6 +797,60 @@ export class TabManager {
     else if (t.errorFor) this.load(t, t.errorFor);
     else if (t.initialInternalUrl && internalPage(t.view.webContents.getURL()) !== t.internalPage) this.load(t, t.initialInternalUrl);
     else t.view.webContents.reload();
+  }
+
+  // ───────── find in page and zoom ─────────
+  private findState: { tabId: number; text: string; matches: number; active: number } | null = null;
+  private findRequest = 0;
+
+  /** Open the find bar for the active tab, or search it. Empty text clears the highlights. */
+  find(text: string | null, forward = true, findNext = false): void {
+    const tab = this.activeTab;
+    if (!tab || tab.view.webContents.isDestroyed()) return;
+    const wc = tab.view.webContents;
+    if (text === null) {
+      // Open (or re-focus) the bar, searching again for the last text if any.
+      this.findState ??= { tabId: tab.id, text: '', matches: 0, active: 0 };
+      this.emit();
+      this.shell.webContents.focus();
+      this.shell.webContents.send('find:focus');
+      if (this.findState.text) this.findRequest = wc.findInPage(this.findState.text, { forward, findNext: true });
+      return;
+    }
+    const query = text.slice(0, 500);
+    this.findState = { tabId: tab.id, text: query, matches: 0, active: 0 };
+    if (!query) {
+      wc.stopFindInPage('clearSelection');
+      this.emit();
+      return;
+    }
+    this.findRequest = wc.findInPage(query, { forward, findNext });
+    this.emit();
+  }
+
+  stopFind(focusPage = false): void {
+    const state = this.findState;
+    this.findState = null;
+    const tab = state && this.tabs.get(state.tabId);
+    if (tab && !tab.view.webContents.isDestroyed()) {
+      tab.view.webContents.stopFindInPage('keepSelection');
+      if (focusPage) tab.view.webContents.focus();
+    }
+    this.emit();
+  }
+
+  private activeZoom(): number {
+    const tab = this.activeTab;
+    if (!tab || tab.internal || tab.view.webContents.isDestroyed()) return 1;
+    return Math.round(tab.view.webContents.getZoomFactor() * 100) / 100;
+  }
+
+  zoom(direction: -1 | 0 | 1): void {
+    const tab = this.activeTab;
+    if (!tab || tab.view.webContents.isDestroyed()) return;
+    const wc = tab.view.webContents;
+    wc.setZoomFactor(nextZoom(wc.getZoomFactor(), direction));
+    this.emit();
   }
 
   toggleDevTools(): void {
