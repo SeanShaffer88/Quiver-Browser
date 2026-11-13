@@ -277,4 +277,4 @@ export interface DownloadInfo {
   error?: string;
 }
 
-export type NativeKind = 'ftp' | 'hls' | 'dash' | 'metalink';
+export type NativeKind = 'ftp' | 'hls' | 'dash' | 'metalink' | 'webdav';

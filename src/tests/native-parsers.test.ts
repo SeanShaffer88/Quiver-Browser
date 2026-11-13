@@ -86,6 +86,7 @@ test('the command bar offers downloads and shares', async () => {
   assert.deepEqual(label('ftp://ftp.example/pub/tool.iso'), [['Download FTP: tool.iso', 'download']]);
   assert.deepEqual(label('download example.com/file.zip'), [['Download file.zip', 'download']]);
   assert.deepEqual(label('\\\\nas\\media'), [['Open in File Explorer', 'open-share']]);
+  assert.deepEqual(label('davs://cloud.example/dav/docs/'), [['Download WebDAV: docs (folder)', 'download']]);
   assert.equal(downloadSuggestions('download javascript:alert(1)')?.[0].action.type, 'noop');
   assert.deepEqual(downloadSuggestions('download', 'https://cdn.example/a/index.m3u8')?.map((x) => x.label), ['Download this HLS stream']);
   assert.equal(downloadSuggestions('download', 'https://example.com/')?.[0].action.type, 'noop');

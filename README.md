@@ -176,7 +176,8 @@ Quiver has its own downloaders for addresses Chromium can't save, with no extra 
 
 - **FTP and FTPS.** Type an `ftp://` or `ftps://` address, or `download ftp://…`. Pages' FTP links ask first. Downloads resume after a pause. Quiver tries encryption first and never sends a password to a server without it. Data connections always go back to the same server.
 - **HLS (`.m3u8`).** Chromium plays HLS streams itself. To save one, type `download` while it's open, or `download <address>`. Quiver picks the best stream with audio included and decrypts AES-128 segments. Live and DRM-protected streams are refused.
-- **MPEG-DASH (`.mpd`).** Links and `download <address>` save the best video and audio as separate files. Quiver doesn't combine them.
+- **MPEG-DASH (`.mpd`).** Links and `download <address>` save the best video and audio. When both are fragmented MP4, the usual case, Quiver combines them into one `.mp4` itself. Otherwise they stay separate files.
+- **WebDAV.** Type `davs://server/folder/` (or `dav://`, `webdav://`, `webdavs://`) to download a file or a whole folder with its structure. For a password, use `davs://user:password@server/…`; Quiver sends it only over HTTPS. Listings that point outside the folder or to another server are ignored.
 - **Metalink (`.meta4`, `.metalink`).** Quiver downloads the listed files, trying mirrors best first. A mirror whose size or checksum (SHA-256 and others) doesn't match is skipped.
 - **Windows file shares.** Type `\\server\share` or `smb://server/share` to open it in File Explorer. Links in pages never do this, because Windows may sign in to the server with your account.
 
