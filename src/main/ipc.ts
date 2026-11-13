@@ -44,7 +44,7 @@ export interface IpcDeps {
 
 const MAX_COMMAND_LENGTH = 65536;
 
-const KIND_LABEL = { ftp: 'FTP', hls: 'HLS stream', dash: 'DASH stream', metalink: 'Metalink' } as const;
+const KIND_LABEL = { ftp: 'FTP', hls: 'HLS stream', dash: 'DASH stream', metalink: 'Metalink', webdav: 'WebDAV' } as const;
 
 /** `download <url>`, a typed ftp:// address, or a typed Windows share (\\server\share, smb://server/share). */
 export function downloadSuggestions(text: string, currentUrl = ''): Suggestion[] | undefined {
@@ -53,7 +53,7 @@ export function downloadSuggestions(text: string, currentUrl = ''): Suggestion[]
   if (share) {
     return [{ kind: 'share', label: 'Open in File Explorer', detail: `${share} · Windows may sign in to this server with your account`, action: { type: 'open-share', path: share } }];
   }
-  const m = /^download(?:\s+(\S+))?$/i.exec(trimmed) ?? (/^ftps?:\/\/\S+$/i.test(trimmed) ? [trimmed, trimmed] : null);
+  const m = /^download(?:\s+(\S+))?$/i.exec(trimmed) ?? (/^(?:ftps?|(?:web)?davs?):\/\/\S+$/i.test(trimmed) ? [trimmed, trimmed] : null);
   if (!m) return undefined;
   const raw = m[1];
   if (!raw) {
@@ -63,11 +63,11 @@ export function downloadSuggestions(text: string, currentUrl = ''): Suggestion[]
     return [{ kind: 'download', label: 'Type an address to download: web, FTP, HLS (.m3u8), DASH (.mpd) or Metalink', action: { type: 'noop' } }];
   }
   const url = URL.parse(/^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
-  if (!url || !['http:', 'https:', 'ftp:', 'ftps:'].includes(url.protocol)) {
-    return [{ kind: 'download', label: 'Quiver downloads web, FTP, HLS, DASH and Metalink addresses', action: { type: 'noop' } }];
+  if (!url || !['http:', 'https:', 'ftp:', 'ftps:', 'dav:', 'davs:', 'webdav:', 'webdavs:'].includes(url.protocol)) {
+    return [{ kind: 'download', label: 'Quiver downloads web, FTP, WebDAV, HLS, DASH and Metalink addresses', action: { type: 'noop' } }];
   }
   const kind = nativeKind(url.href);
-  const leaf = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() ?? url.host);
+  const leaf = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() ?? url.host) + (kind === 'webdav' && url.pathname.endsWith('/') ? ' (folder)' : '');
   return [{ kind: 'download', label: kind ? `Download ${KIND_LABEL[kind]}: ${leaf}` : `Download ${leaf}`, detail: url.host, action: { type: 'download', url: url.href } }];
 }
 type AuthorizedInvokeEvent = IpcMainInvokeEvent & { senderFrame: WebFrameMain };

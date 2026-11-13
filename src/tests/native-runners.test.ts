@@ -107,3 +107,19 @@ test('addresses route to the right downloader', () => {
   assert.equal(nativeKind('https://h/x.zip'), null);
   assert.equal(nativeKind('file:///x.m3u8'), null);
 });
+
+test('fragmented MP4 video and audio combine into one playable file (needs ffmpeg; skipped without it)', async (t) => {
+  const { execFileSync } = await import('node:child_process');
+  try { execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' }); } catch { t.skip('ffmpeg not installed'); return; }
+  const { muxFragmentedMp4 } = await import('../main/native/mux');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quiver-mux-'));
+  const frag = ['-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4'];
+  execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc=duration=4:size=160x120:rate=25', '-c:v', 'libx264', '-g', '25', ...frag, path.join(dir, 'v.mp4')]);
+  execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'sine=duration=4', '-c:a', 'aac', '-frag_duration', '1000000', ...frag, path.join(dir, 'a.mp4')]);
+  muxFragmentedMp4(path.join(dir, 'v.mp4'), path.join(dir, 'a.mp4'), path.join(dir, 'out.mp4'));
+  const streams = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', path.join(dir, 'out.mp4')]).toString().trim().split('\n');
+  assert.deepEqual(streams, ['video', 'audio']);
+  execFileSync('ffmpeg', ['-v', 'error', '-xerror', '-i', path.join(dir, 'out.mp4'), '-f', 'null', '-']);
+  assert.throws(() => muxFragmentedMp4(path.join(dir, 'v.mp4'), path.join(dir, 'missing.mp4'), path.join(dir, 'x.mp4')));
+  assert.ok(!fs.existsSync(path.join(dir, 'x.mp4')));
+});
