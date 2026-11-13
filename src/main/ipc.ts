@@ -1,4 +1,4 @@
-import { clipboard, ipcMain, Menu, type IpcMainInvokeEvent, type WebContentsView, type WebFrameMain } from 'electron';
+import { clipboard, dialog, ipcMain, Menu, type IpcMainInvokeEvent, type WebContentsView, type WebFrameMain } from 'electron';
 import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
 import { detectEnv } from '../shared/env';
 import { parseCommand } from '../shared/parser';
@@ -14,6 +14,7 @@ import { normalizePrivacy } from './privacy';
 import { topicMarkdown, type Research } from './research';
 import { researchSuggestions } from './research-commands';
 import { meetSuggestions } from './meetings';
+import type { SyncService } from './sync-service';
 import { tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
 
@@ -27,6 +28,7 @@ export interface IpcDeps {
   /** Runs a browser action chosen in the command palette. */
   runCommand: (command: BrowserCommand) => void;
   research: Research;
+  sync: SyncService;
   /** Reapply privacy settings after they change. */
   onPrivacyChanged: () => void;
 }
@@ -43,7 +45,7 @@ export function sanitizeEnvGroups(input: unknown): EnvGroup[] {
     .filter((g) => g.local || g.staging || g.prod);
 }
 
-export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?: CommandMode) => void; toggleSidebar: () => void } {
+export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?: CommandMode) => void; toggleSidebar: () => void; applySettings: (patch: Partial<Settings>) => void } {
   const { tabs, store, boosts, devWatcher, overlay, shell, research } = d;
 
   const handle = (role: InternalRole, channel: string, fn: (e: AuthorizedInvokeEvent, ...args: any[]) => unknown) => {
@@ -382,7 +384,9 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
 
   // settings
   handle('settings', 'settings:get', () => store.state.settings);
-  handle('settings', 'settings:set', (_e, patch: Partial<Settings>) => {
+  /** Apply a settings change from the Settings page or from sync. Every field is validated. */
+  const applySettings = (patch: Partial<Settings>) => {
+    if (!patch || typeof patch !== 'object') return;
     const s = store.state.settings;
     if (patch.envGroups !== undefined) s.envGroups = sanitizeEnvGroups(patch.envGroups);
     if (typeof patch.searchEngine === 'string' && /^https?:\/\/.+%s/.test(patch.searchEngine)) s.searchEngine = patch.searchEngine;
@@ -399,6 +403,28 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       tabs.clearDevServers();
     }
     tabs.emit();
+  };
+  handle('settings', 'settings:set', (_e, patch: Partial<Settings>) => applySettings(patch));
+
+  // sync
+  handle('settings', 'sync:status', () => d.sync.status());
+  handle('settings', 'sync:choose', async () => {
+    const result = await dialog.showOpenDialog({ title: 'Choose a folder to sync through', properties: ['openDirectory', 'createDirectory'] });
+    if (result.canceled || !result.filePaths[0]) return d.sync.status();
+    await d.sync.setFolder(result.filePaths[0]);
+    return d.sync.status();
+  });
+  handle('settings', 'sync:disconnect', async () => {
+    await d.sync.setFolder(null);
+    return d.sync.status();
+  });
+  handle('settings', 'sync:options', (_e, include: unknown, deviceName: unknown) => {
+    d.sync.setOptions((include && typeof include === 'object' ? include : {}) as Record<string, boolean>, typeof deviceName === 'string' ? deviceName : undefined);
+    return d.sync.status();
+  });
+  handle('settings', 'sync:now', async () => {
+    await d.sync.syncNow();
+    return d.sync.status();
   });
 
   handle('settings', 'sitepermissions:forget', (_e, origin: string) => {
@@ -507,5 +533,5 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     });
   }
 
-  return { openCommandBar, toggleSidebar };
+  return { openCommandBar, toggleSidebar, applySettings };
 }

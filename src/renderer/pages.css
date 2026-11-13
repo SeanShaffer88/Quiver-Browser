@@ -61,3 +61,7 @@ kbd, code { font: 12px var(--mono); background: var(--panel-2); border: 1px soli
 .site-permissions { list-style: none; padding: 0; margin: 6px 0; display: flex; flex-direction: column; gap: 6px; }
 .site-permissions li { display: flex; gap: 10px; align-items: center; }
 .site-permissions .mono { flex: 1; }
+/* sync */
+.sync-parts { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; margin: 8px 0; display: flex; flex-direction: column; gap: 6px; }
+.sync-parts legend { color: var(--muted); padding: 0 4px; }
+.sync-parts label { display: flex; gap: 8px; align-items: baseline; }

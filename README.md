@@ -138,6 +138,14 @@ The sidebar lists IPv4 and IPv6 HTTP servers reachable over loopback. Quiver use
 Type `meet` in the command bar to start a Google Meet or a Jitsi room, or `meet <link>`, a Meet code (`abc-defg-hij`) or a Zoom meeting ID to join. Zoom links open in Zoom's web client, so no app is needed. When a site asks for your camera, microphone or screen, Quiver asks in the toolbar: **Allow this time** (until the tab leaves the page), **Always allow** or **Block** for that site. Screen sharing then shows a menu of screens and windows to share. Tabs using the camera, microphone or screen show a red dot in the sidebar. Saved choices are listed in **Settings → Camera, microphone and screen sharing**.
 
 Only secure pages (`https`, or `http` on localhost) in a tab's main frame can ask. Known meeting sites report the camera and microphone as available so their join screens work; other sites read as denied until they ask and you agree.
+### Sync
+
+In **Settings → Sync**, choose a folder you already sync with OneDrive, Dropbox, Syncthing or similar. Quiver keeps a `Quiver Sync` subfolder there in which each device writes only its own file, so sync clients never create conflict copies. No Quiver server is involved.
+
+- **What syncs:** settings (environments, search engine, local-server scanning), bookmarks, Spaces with their folders and pinned tabs, and research topics. Boosts can also sync, but that is off by default because they run code on websites.
+- **When:** at launch, every minute, and on **Sync now**. For each part, the most recent change on any device wins.
+- **First sync:** a device syncing for the first time merges its bookmarks, topics, Spaces and pinned tabs with what is already shared.
+- **What sync never does:** delete a Space or close a tab. A pinned tab removed on another device becomes a regular tab. Cookies, open regular tabs and privacy settings stay per device.
 ### Privacy
 
 Quiver sends no telemetry, has no account and does not check for updates; crash reports stay on the device. **Settings → Privacy** controls what pages and Chromium can send:
@@ -193,7 +201,7 @@ Quiver currently covers these Flecha workflows. Archives and general split view 
 | 8 | Coding-agent browser automation | Omitted from the Windows build | Unavailable |
 | 9 | Local-first / no telemetry | No analytics, no accounts, atomic local JSON | Included |
 | 10 | Windows installer / build script | Branded Windows setup, offline PortableApps.com installer, optional MSI | Build targets configured |
-| – | Other browser features | Chrome Web Store extensions, sync, bookmark editing, history UI, downloads UI, permission prompts other than camera/microphone/screen, third-party cookie blocking, password manager, auto-update | Unavailable |
+| – | Other browser features | Chrome Web Store extensions, account-based sync, bookmark editing, history UI, downloads UI, permission prompts other than camera/microphone/screen, third-party cookie blocking, password manager, auto-update | Unavailable |
 
 ## Verification
 

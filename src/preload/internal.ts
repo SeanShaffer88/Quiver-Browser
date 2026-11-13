@@ -10,7 +10,7 @@ const INVOKE = new Set([
   'permission:decide', 'sitepermissions:forget',
   'sidebar:toggle', 'preview:toggle', 'env:switch',
   'cmd:open', 'cmd:close', 'cmd:suggest', 'cmd:commit', 'cmd:run',
-  'settings:get', 'settings:set',
+  'settings:get', 'settings:set', 'sync:status', 'sync:choose', 'sync:disconnect', 'sync:options', 'sync:now',
   'bookmarks:list', 'bookmarks:profiles', 'bookmarks:review-profile', 'bookmarks:review-file',
   'bookmarks:cancel-review', 'bookmarks:confirm', 'bookmarks:undo', 'bookmarks:open',
   'boost:list', 'boost:read', 'boost:save', 'boost:create', 'boost:delete', 'boost:dir',
@@ -18,7 +18,7 @@ const INVOKE = new Set([
   'research:list', 'research:get', 'research:rename', 'research:notes', 'research:item-note', 'research:item-remove',
   'research:delete', 'research:resume', 'research:stop', 'research:open', 'research:export',
 ]);
-const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'folder:rename-start', 'research:changed']);
+const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'folder:rename-start', 'research:changed', 'sync:changed']);
 
 contextBridge.exposeInMainWorld('quiver', {
   invoke: (channel: string, ...args: unknown[]): Promise<unknown> =>

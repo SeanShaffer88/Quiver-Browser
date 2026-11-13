@@ -36,7 +36,8 @@ import {
 } from './session-recovery';
 import { moveInGroup } from './tab-order';
 import type { MediaPermissions } from './site-permissions';
-import { canNest, deleteFolder, displayOrder, folderName, placeRelative, sidebarRows } from './tab-tree';
+import { normalizeSyncedSpaces, type SyncedSpace } from './sync';
+import { canNest, deleteFolder, displayOrder, folderName, normalizeFolders, placeRelative, sidebarRows } from './tab-tree';
 
 interface Tab {
   id: number;
@@ -803,6 +804,68 @@ export class TabManager {
   }
 
   // ───────── spaces ─────────
+  // ───────── sync ─────────
+  /** Spaces with their folders and pinned tabs, as published to other devices. */
+  syncedSpaces(): SyncedSpace[] {
+    return this.spaces.map((sp) => ({
+      id: sp.id, name: sp.name, color: sp.color, isolated: sp.isolated, folders: this.folders(sp.id),
+      pinned: this.spaceTabs(sp.id).filter((t) => t.pinned).flatMap((t) => {
+        const url = this.tabUrl(t);
+        if (!restorableUrl(url)) return [];
+        const title = t.titleIsExplicit ? normalizeTabTitle(t.title, url) : '';
+        return [{ url, ...(title ? { title } : {}), ...(t.folderId ? { folderId: t.folderId } : {}) }];
+      }),
+    }));
+  }
+
+  /**
+   * Apply Spaces from another device. Adds missing Spaces, updates names, colors and folders, opens missing pinned
+   * tabs lazily and unpins (never closes) pinned tabs the other device no longer has. Spaces are never deleted.
+   */
+  applySyncedSpaces(raw: unknown): void {
+    for (const remote of normalizeSyncedSpaces(raw, restorableUrl)) {
+      let space = this.spaces.find((sp) => sp.id === remote.id);
+      if (!space) {
+        space = { id: remote.id, name: remote.name, color: remote.color, isolated: remote.isolated };
+        this.store.state.spaces.push(space);
+      } else {
+        // Isolation is not changed on an existing Space: it decides which cookie jar its tabs already use.
+        space.name = remote.name;
+        space.color = remote.color;
+      }
+      space.folders = normalizeFolders(remote.folders);
+      const known = new Set(space.folders.map((f) => f.id));
+      const tabs = this.spaceTabs(space.id);
+      const unmatched = new Set(tabs);
+      const desired: Tab[] = [];
+      for (const pin of remote.pinned) {
+        const folderId = pin.folderId && known.has(pin.folderId) ? pin.folderId : null;
+        let tab = [...unmatched].find((t) => t.pinned && this.tabUrl(t) === pin.url) ?? [...unmatched].find((t) => this.tabUrl(t) === pin.url);
+        if (!tab) {
+          tab = this.openTab(pin.url, { spaceId: space.id, activate: false, lazy: true, pinned: true, folderId });
+          if (pin.title) {
+            tab.title = pin.title;
+            tab.titleIsExplicit = true;
+          }
+        }
+        unmatched.delete(tab);
+        tab.pinned = true;
+        tab.folderId = folderId;
+        desired.push(tab);
+      }
+      for (const tab of unmatched) {
+        tab.pinned = false;
+        tab.folderId = null;
+      }
+      const others = [...this.tabs.values()].filter((t) => t.spaceId !== space!.id);
+      const rest = this.spaceTabs(space.id).filter((t) => !desired.includes(t));
+      this.tabs.clear();
+      for (const t of [...others, ...desired, ...rest]) this.tabs.set(t.id, t);
+    }
+    this.persist();
+    this.emit();
+  }
+
   createSpace(name: string, isolated: boolean): Space {
     const id = `space-${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
     const space: Space = {

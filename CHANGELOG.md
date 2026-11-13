@@ -5,6 +5,7 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 ## [Unreleased]
 
 - Meetings: camera, microphone and screen-share prompts (allow once, always or block per site), a screen/window picker, a live indicator on tabs, `meet` commands to start or join Meet, Zoom (web client), Teams, Webex, Jitsi and Whereby, and saved choices in Settings.
+- Folder sync: settings, bookmarks, Spaces with folders and pinned tabs, research topics and (opt-in) Boosts sync through a folder you already sync, one file per device, newest change wins, first sync merges.
 - Privacy settings: Global Privacy Control, WebRTC local-IP hiding, Secure DNS (automatic, off or custom DoH), spell check without dictionary downloads off Windows, and clearing site data on exit.
 - Research topics: `research <name>` records command-bar searches and visited pages in the Space, `note <text>` annotates the current page, and `quiver://research` keeps topic notes, the trail and a Markdown export.
 - Command palette: `Ctrl+K` fuzzy-matches browser actions, open tabs and bookmarks beneath the address result; `>` lists actions, `bm` lists bookmarks, and `tab` search is now fuzzy.
