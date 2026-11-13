@@ -1,6 +1,6 @@
 /** Shared plumbing for Quiver's own downloaders (FTP, HLS, DASH, Metalink). */
 
-export type Fetcher = (url: string, init?: { headers?: Record<string, string>; signal?: AbortSignal }) => Promise<Response>;
+export type Fetcher = (url: string, init?: { method?: string; body?: string; headers?: Record<string, string>; signal?: AbortSignal }) => Promise<Response>;
 
 export interface JobProgress {
   received: number;
