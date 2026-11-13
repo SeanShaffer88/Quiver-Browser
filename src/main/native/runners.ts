@@ -1,6 +1,7 @@
 import { createDecipheriv, createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { parseMpd } from './dash';
+import { muxFragmentedMp4 } from './mux';
 import { ftpDownload } from './ftp';
 import { parseM3u8, pickVariant, segmentIv, type HlsSegment } from './hls';
 import { fetchBytes, fetchOk, fetchText, type JobContext } from './job';
@@ -96,7 +97,10 @@ export async function runHls(url: string, name: string, ctx: JobContext, place: 
   }
 }
 
-/** Save an on-demand MPEG-DASH stream: the best video and best audio, each as its own file (Quiver doesn't mux). */
+/**
+ * Save an on-demand MPEG-DASH stream: the best video and best audio. When both are fragmented MP4, they are
+ * combined into one .mp4; otherwise (or if combining fails) each is saved as its own file.
+ */
 export async function runDash(url: string, name: string, ctx: JobContext, place: Place): Promise<string[]> {
   const tracks = parseMpd(await fetchText(ctx, url), url);
   const totalParts = tracks.reduce((n, t) => n + t.segments.length + (t.init ? 1 : 0), 0);
@@ -122,7 +126,20 @@ export async function runDash(url: string, name: string, ctx: JobContext, place:
     } catch (error) {
       stream.destroy();
       fs.rmSync(part, { force: true });
+      for (const f of saved) fs.rmSync(f, { force: true });
       throw error;
+    }
+  }
+  const [video, audio] = tracks;
+  if (saved.length === 2 && video.kind === 'video' && audio.kind === 'audio' && !video.mime.includes('webm') && !audio.mime.includes('webm')) {
+    const combined = place(`${name}.mp4`);
+    try {
+      ctx.progress({ received, total: received, detail: 'Combining video and audio' });
+      muxFragmentedMp4(saved[0], saved[1], combined);
+      for (const f of saved) fs.rmSync(f, { force: true });
+      return [combined];
+    } catch {
+      // Not a shape Quiver can combine: keep the two files.
     }
   }
   return saved;
@@ -200,9 +217,10 @@ export async function runMetalink(url: string, ctx: JobContext, place: Place): P
 }
 
 /** Which of Quiver's own downloaders handles an address, judged by scheme and file extension. */
-export function nativeKind(url: string, mime = ''): 'ftp' | 'hls' | 'dash' | 'metalink' | null {
+export function nativeKind(url: string, mime = ''): 'ftp' | 'hls' | 'dash' | 'metalink' | 'webdav' | null {
   const parsed = URL.parse(url);
   if (!parsed) return null;
+  if (['dav:', 'davs:', 'webdav:', 'webdavs:'].includes(parsed.protocol)) return 'webdav';
   if (parsed.protocol === 'ftp:' || parsed.protocol === 'ftps:') return 'ftp';
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
   const path = parsed.pathname.toLowerCase();

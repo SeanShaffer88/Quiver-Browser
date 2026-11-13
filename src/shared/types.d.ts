@@ -279,7 +279,7 @@ export interface DownloadInfo {
   error?: string;
 }
 
-export type NativeKind = 'ftp' | 'hls' | 'dash' | 'metalink';
+export type NativeKind = 'ftp' | 'hls' | 'dash' | 'metalink' | 'webdav';
 
 /** An Arc sidebar entry as Settings previews it: titles and hosts, never full URLs. */
 export type ArcNode =
