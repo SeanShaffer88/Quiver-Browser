@@ -47,6 +47,39 @@ export interface Settings {
   privacy: PrivacySettings;
   /** Light, dark, or follow Windows. Applied through nativeTheme so every page's prefers-color-scheme follows. */
   theme: 'system' | 'light' | 'dark';
+  /** Rebound shortcuts: action → binding such as "Ctrl+Shift+KeyB" ('' = no key). Missing actions use defaults. */
+  shortcuts: Record<string, string>;
+  /** Opt-in: look up the latest Quiver release on GitHub at most once a day. Never downloads anything. */
+  checkForUpdates: boolean;
+}
+
+/** One rebindable action for Settings → Shortcuts. */
+export interface ShortcutRow {
+  action: string;
+  label: string;
+  /** Human labels of the current keys, e.g. ["Ctrl+B"]; empty when unbound. */
+  keys: string[];
+  /** Current bindings in stored form, e.g. ["Ctrl+KeyB"]. */
+  bindings: string[];
+  isDefault: boolean;
+  /** Whether a web page gets the key first. */
+  pageFirst: boolean;
+}
+
+/** A newer Quiver release, found by the opt-in check. */
+export interface UpdateNotice {
+  version: string;
+  url: string;
+}
+
+export interface UpdateStatus {
+  enabled: boolean;
+  /** Epoch ms of the last completed check, 0 if none. */
+  lastCheckedAt: number;
+  current: string;
+  latest?: string;
+  notice?: UpdateNotice;
+  error?: string;
 }
 
 export interface PrivacySettings {
@@ -189,6 +222,10 @@ export interface ShellState {
   /** The floating preview of a link opened from a pinned tab. */
   peek?: PeekView;
   settings: Settings;
+  /** Key labels for rebindable actions (e.g. { 'toggle-sidebar': 'Ctrl+B' }); '' when unbound. */
+  keys: Record<string, string>;
+  /** A newer Quiver release the user hasn't dismissed. */
+  update?: UpdateNotice;
 }
 
 export interface TabCommandTarget {

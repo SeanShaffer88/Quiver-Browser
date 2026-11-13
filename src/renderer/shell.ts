@@ -60,6 +60,24 @@ function icon(svg: string, label: string, onClick: () => void, extra: Record<str
   return b;
 }
 
+/** A control label with the action's current keys appended, e.g. "Find in page (Ctrl+F)"; rebinding changes it. */
+function withKeys(s: ShellState, label: string, action: string): string {
+  const keys = s.keys?.[action];
+  return keys ? `${label} (${keys})` : label;
+}
+
+/** The opt-in "Quiver X is available" notice. It only links to the release page; nothing is downloaded. */
+function renderUpdateNotice(s: ShellState): HTMLElement[] {
+  const u = s.update;
+  if (!u) return [];
+  const label = `Quiver ${u.version} is available`;
+  return [h('div', { class: 'recovery-card update-card', role: 'status', title: label },
+    h('p', { class: 'recovery-copy recovery-expanded' }, label),
+    h('button', { class: 'btn', title: `Open the Quiver ${u.version} release page`, 'aria-label': `Open the Quiver ${u.version} release page`, dataset: { focusKey: 'update-open' }, onClick: () => call('update:open') },
+      h('span', { class: 'recovery-expanded' }, 'Release notes'), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, '↑')),
+    h('button', { class: 'btn', title: 'Dismiss', 'aria-label': `Dismiss the Quiver ${u.version} notice`, dataset: { focusKey: 'update-dismiss' }, onClick: () => call('update:dismiss') }, '×'))];
+}
+
 const call = (ch: string, ...a: unknown[]) => quiver.invoke(ch, ...a).catch((e: Error) => console.error(ch, e.message));
 
 function renderSpaces(s: ShellState): HTMLElement {
@@ -534,6 +552,8 @@ function sidebarKey(s: ShellState): string {
     devServers,
     rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.recentlyClosed, rest.recoveryNotice, rest.arcImportOffer, rest.localServerStatus,
     rest.settings.sidebarCollapsed, rest.settings.devServerScan, addingSpace, renamingSpace, renamingFolder,
+    rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.recentlyClosed, rest.recoveryNotice, rest.localServerStatus,
+    rest.settings.sidebarCollapsed, rest.settings.devServerScan, rest.keys, rest.update, addingSpace, renamingSpace, renamingFolder,
   ]);
 }
 
@@ -544,7 +564,7 @@ function renderSidebar(s: ShellState): void {
   const spaceTabs = s.tabs.filter((t) => t.spaceId === s.activeSpaceId);
   const brand = h('div', { class: 'brand' });
   const logo = h('img', { src: 'quiver-icon.png', width: 22, height: 22, alt: '' });
-  brand.append(logo, h('span', { class: 'name' }, 'Quiver'), icon(ICON.sidebar, 'Collapse / expand sidebar (Ctrl+B)', () => call('sidebar:toggle')));
+  brand.append(logo, h('span', { class: 'name' }, 'Quiver'), icon(ICON.sidebar, withKeys(s, 'Collapse / expand sidebar', 'toggle-sidebar'), () => call('sidebar:toggle')));
 
   const newtab = h('button', { class: 'newtab', title: 'Open the command bar in a new tab (Ctrl+T)', dataset: { focusKey: 'new-tab' }, onClick: () => call('cmd:open', '', 'new', 'new-tab') }, h('span', {}, '＋ New tab'), h('kbd', {}, 'Ctrl+T'));
 
@@ -572,7 +592,7 @@ function renderSidebar(s: ShellState): void {
     h('span', { class: 'recovery-compact' }, active.isolated ? 'Separate' : 'Shared'),
   );
   sidebar.replaceChildren(brand, renderSpaces(s), ...(isolation ? [isolation] : []),
-    ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderRecovery(s),
+    ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderUpdateNotice(s), ...renderRecovery(s),
     ...(s.localServerStatus ? [renderLocalServerStatus(s.localServerStatus)] : []), tabsEl, servers);
   tabsEl.scrollTop = previousScroll;
   tabList = { scroller: tabsEl, inner, rows: s.sidebar, meta: rowMeta(s.sidebar), tabs: new Map(spaceTabs.map((t) => [t.id, t])), activeId: s.activeTabId };
@@ -659,8 +679,8 @@ function renderToolbar(s: ShellState): void {
   if (t?.env) addr.append(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env));
   addr.append(h('span', { class: 'url' + (t?.url ? '' : ' placeholder') }, t?.url || 'Search, paste a URL, JWT, or type gh / npm / mdn / env / boost…'), h('span', { class: 'hint' }, 'Ctrl+K'));
   const phoneStatus = PHONE_LABELS[s.phoneStatus];
-  const phone = icon(ICON.phone, 'Phone preview (Ctrl+Shift+P)', () => call('preview:toggle'), { on: s.preview, focusKey: 'phone-preview' });
-  phone.title = `${phoneStatus.label} (Ctrl+Shift+P)`;
+  const phone = icon(ICON.phone, withKeys(s, 'Phone preview', 'preview'), () => call('preview:toggle'), { on: s.preview, focusKey: 'phone-preview' });
+  phone.title = withKeys(s, phoneStatus.label, 'preview');
   phone.setAttribute('aria-describedby', 'phone-label');
   phone.setAttribute('aria-pressed', String(s.preview));
   if (phoneStatus.compact) {
@@ -670,9 +690,9 @@ function renderToolbar(s: ShellState): void {
   const activeBoosts = t?.activeBoosts ?? [];
   const count = activeBoosts.length;
   const boostLabel = count ? `Boosts: ${count} active on this page` : 'Boosts: none active on this page';
-  const boost = icon(ICON.boost, `${boostLabel} (Ctrl+Shift+B)`, () => call('cmd:run', { type: 'internal', page: 'boosts' }), { on: count > 0, focusKey: 'boosts' });
+  const boost = icon(ICON.boost, withKeys(s, boostLabel, 'boosts'), () => call('cmd:run', { type: 'internal', page: 'boosts' }), { on: count > 0, focusKey: 'boosts' });
   if (count) {
-    boost.title = `${boostLabel}: ${activeBoosts.join(', ')} (Ctrl+Shift+B)`;
+    boost.title = withKeys(s, `${boostLabel}: ${activeBoosts.join(', ')}`, 'boosts');
     boost.classList.add('tool-status');
     boost.append(h('span', { class: 'tool-count', 'aria-hidden': 'true' }, String(count)));
   }
@@ -701,14 +721,14 @@ function renderToolbar(s: ShellState): void {
     onClick: () => call('cmd:run', { type: 'internal', page: 'downloads' }),
   }, h('span', { 'aria-hidden': 'true' }, '↓'), h('span', {}, dl.progress === null ? String(dl.active) : `${Math.floor(dl.progress * 100)}%`));
   toolbar.replaceChildren(
-    icon(ICON.back, 'Back (Alt+←)', () => call('tab:back'), { disabled: !t?.canGoBack }),
-    icon(ICON.forward, 'Forward (Alt+→)', () => call('tab:forward'), { disabled: !t?.canGoForward }),
+    icon(ICON.back, withKeys(s, 'Back', 'back'), () => call('tab:back'), { disabled: !t?.canGoBack }),
+    icon(ICON.forward, withKeys(s, 'Forward', 'forward'), () => call('tab:forward'), { disabled: !t?.canGoForward }),
     icon(ICON.reload, 'Reload (Ctrl+R)', () => call('tab:reload')),
     permissionBar || (s.find ? renderFindBar(s.find) : null) || addr,
-    ...(s.zoom !== 1 && Number.isFinite(s.zoom) ? [h('button', { class: 'zoom-chip', title: 'Reset zoom (Ctrl+0)', 'aria-label': `Zoom ${Math.round(s.zoom * 100)} percent. Reset zoom`, dataset: { focusKey: 'zoom' }, onClick: () => call('zoom:reset') }, `${Math.round(s.zoom * 100)}%`)] : []),
+    ...(s.zoom !== 1 && Number.isFinite(s.zoom) ? [h('button', { class: 'zoom-chip', title: withKeys(s, 'Reset zoom', 'zoom-reset'), 'aria-label': `Zoom ${Math.round(s.zoom * 100)} percent. Reset zoom`, dataset: { focusKey: 'zoom' }, onClick: () => call('zoom:reset') }, `${Math.round(s.zoom * 100)}%`)] : []),
     ...(research ? [research] : []),
     ...(downloadsButton ? [downloadsButton] : []),
-    icon(ICON.env, 'Switch environment: local → staging → prod (Ctrl+Alt+E)', () => call('env:switch'), { disabled: !t?.env }),
+    icon(ICON.env, withKeys(s, 'Switch environment: local → staging → prod', 'env'), () => call('env:switch'), { disabled: !t?.env }),
     phone,
     boost,
     icon(ICON.gear, 'Settings', () => call('cmd:run', { type: 'internal', page: 'settings' })),

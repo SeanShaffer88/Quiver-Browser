@@ -12,6 +12,8 @@ import { DEFAULT_ARCHIVE_HOURS, normalizeArchive, normalizeArchiveHours, type Ar
 import { normalizeSyncState, type SyncState } from './sync-service';
 import { normalizePrivacy } from './privacy';
 import { normalizeTheme } from '../shared/theme';
+import { normalizeShortcutOverrides } from './shortcuts';
+import { normalizeUpdateState, type UpdateState } from './updates';
 import { normalizeFolders } from './tab-tree';
 import { normalizeTopics, type Topic } from './research';
 import { hasSavedNewTabPlaceholder, normalizeRecentlyClosed, type PersistedClosedTab } from './session-recovery';
@@ -44,6 +46,8 @@ export interface PersistedState {
   activeTopicBySpace?: Record<string, string>;
   /** The first-launch Arc import offer: shown while pending, never again once dismissed or used. */
   arcImportOffer?: 'pending' | 'dismissed';
+  /** Opt-in release check bookkeeping (see updates.ts). */
+  updates?: UpdateState;
   bounds?: { x?: number; y?: number; width: number; height: number; maximized: boolean };
 }
 
@@ -60,6 +64,8 @@ export function defaultSettings(): Settings {
     peekPinnedLinks: true,
     privacy: normalizePrivacy(undefined, process.platform),
     theme: 'system',
+    shortcuts: {},
+    checkForUpdates: false,
   };
 }
 
@@ -137,6 +143,8 @@ export class Store {
           peekPinnedLinks: typeof raw.settings?.peekPinnedLinks === 'boolean' ? raw.settings.peekPinnedLinks : true,
           privacy: normalizePrivacy(raw.settings?.privacy, process.platform),
           theme: normalizeTheme(raw.settings?.theme),
+          shortcuts: normalizeShortcutOverrides(raw.settings?.shortcuts) as Record<string, string>,
+          checkForUpdates: raw.settings?.checkForUpdates === true,
         },
       } as PersistedState;
       state.spaces = state.spaces.map((space) => ({ ...space, folders: normalizeFolders(space.folders) }));
@@ -144,6 +152,7 @@ export class Store {
       state.topics = normalizeTopics(raw.topics, knownSpaces);
       state.activeTopicBySpace = Object.fromEntries(Object.entries(raw.activeTopicBySpace ?? {})
         .filter(([space, topic]) => knownSpaces.has(space) && state.topics!.some((t) => t.id === topic && t.spaceId === space)));
+      state.updates = normalizeUpdateState(raw.updates);
       state.sync = normalizeSyncState(raw.sync, os.hostname());
       state.archive = normalizeArchive(raw.archive, new Set(state.spaces.map(({ id }) => id)));
       state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);

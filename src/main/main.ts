@@ -1,4 +1,5 @@
 import { app, BaseWindow, clipboard, crashReporter, dialog, desktopCapturer, Menu, nativeTheme, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
+import { app, BaseWindow, clipboard, net, crashReporter, dialog, desktopCapturer, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME, SHARED_PARTITION } from '../shared/constants';
@@ -20,7 +21,8 @@ import { normalizeTopics, Research } from './research';
 import { normalizeSyncState, SyncService } from './sync-service';
 import os from 'node:os';
 import { parseLaunchArgs } from './launch-args';
-import type { ShortcutAction } from './shortcuts';
+import { setShortcutOverrides, type ShortcutAction } from './shortcuts';
+import { UpdateChecker } from './updates';
 import { Store } from './store';
 import { restrictInternalNavigation, TabManager } from './tabs';
 import { placeWindow } from './window-placement';
@@ -140,6 +142,7 @@ async function main(): Promise<void> {
   Menu.setApplicationMenu(null);
   // Privacy settings must reach every session before anything (including the internal protocol) creates one.
   const store = new Store();
+  setShortcutOverrides(store.state.settings.shortcuts);
   const privacy = new PrivacyController(() => store.state.settings.privacy, (options) => app.configureHostResolver(options));
   app.on('session-created', (ses) => privacy.configureSession(ses));
   app.on('web-contents-created', (_event, contents) => privacy.configureContents(contents));
@@ -430,8 +433,20 @@ async function main(): Promise<void> {
       if (tab.internalPage === 'settings' && !tab.view.webContents.isDestroyed()) tab.view.webContents.send('sync:changed');
     }
   });
+  const updates = new UpdateChecker(
+    () => store.state.updates ?? { lastCheckedAt: 0 },
+    (next) => {
+      store.state.updates = next;
+      store.save();
+    },
+    () => store.state.settings.checkForUpdates,
+    app.getVersion(),
+    // Chromium's network stack, so the system proxy applies; the release check is the only request Quiver makes itself.
+    (url, init) => net.fetch(url, init),
+  );
+  tabs.updateNotice = () => updates.notice();
   actions = registerIpc({
-    tabs, store, boosts, devWatcher, overlay, shell, research, sync, history, downloads,
+    tabs, store, boosts, devWatcher, overlay, shell, research, sync, history, downloads, updates,
     onPrivacyChanged: () => privacy.apply(),
     onThemeChanged: () => { nativeTheme.themeSource = store.state.settings.theme; },
     runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings') : onShortcut(command)),
@@ -457,6 +472,10 @@ async function main(): Promise<void> {
   // Archive unused temporary tabs shortly after launch and then every few minutes.
   setTimeout(() => tabs.archiveStale(), 60_000).unref();
   setInterval(() => tabs.archiveStale(), 5 * 60_000).unref();
+  // Opt-in release check: does nothing unless enabled in Settings, and then at most once a day.
+  const checkForUpdates = () => void updates.maybeCheck().then((status) => status && tabs.emit());
+  setTimeout(checkForUpdates, 30_000).unref();
+  setInterval(checkForUpdates, 60 * 60_000).unref();
   tabs.layout();
   win.show();
   handleSecondInstance = (targets) => {

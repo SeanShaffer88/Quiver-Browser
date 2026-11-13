@@ -208,7 +208,7 @@
   <div class="row"><label for="history-on">Remember history</label><input id="history-on" type="checkbox"><span class="note">Keeps up to 5,000 visited web pages on this device so <kbd>Ctrl+K</kbd> can find them (<code>h</code> <i>words</i> searches only history).</span></div>
   <div class="row"><label>Saved pages</label><span id="history-count" class="note">…</span><button class="btn danger" id="history-clear">Clear history</button></div>
   <h2>Privacy</h2>
-  <p class="note">Quiver sends no telemetry, has no account and does not check for updates. Crash reports stay on this device. These settings apply to all Spaces.</p>
+  <p class="note">Quiver sends no telemetry, has no account and checks for updates only if you turn that on under Updates. Crash reports stay on this device. These settings apply to all Spaces.</p>
   <div class="row"><label for="privacy-gpc">Global Privacy Control</label><input id="privacy-gpc" type="checkbox"><span class="note">Tell sites not to sell or share your data (<code>Sec-GPC</code> and <code>DNT</code> headers).</span></div>
   <div class="row"><label for="privacy-webrtc">Hide local IP</label><input id="privacy-webrtc" type="checkbox"><span class="note">Keep WebRTC calls from revealing addresses on your local network.</span></div>
   <div class="row">
@@ -227,6 +227,18 @@
   <div class="row"><label for="privacy-spell">Spell check</label><input id="privacy-spell" type="checkbox"><span class="note" id="privacy-spell-note">Uses the Windows spell checker; nothing is downloaded.</span></div>
   <div class="row"><label for="privacy-clear">Clear on exit</label><input id="privacy-clear" type="checkbox"><span class="note">Delete cookies, site storage and cache in every Space when Quiver closes. You will be signed out of sites; tabs, bookmarks and notes are kept.</span></div>
   <p class="status" id="privacy-status" role="status"></p>
+
+  <h2 id="shortcuts-heading">Shortcuts</h2>
+  <p class="note">Choose Change, then press the new key combination (Esc cancels). Keys marked “page first” go to the web page first, as in Chrome: in an editor such as Google Docs, <kbd>Ctrl+B</kbd> is bold and <kbd>Ctrl+F</kbd> is the editor’s own find. Quiver always keeps <kbd>Ctrl+T</kbd>, <kbd>Ctrl+W</kbd>, <kbd>Ctrl+L</kbd>, <kbd>Ctrl+K</kbd>, <kbd>Ctrl+R</kbd>/<kbd>F5</kbd>, <kbd>F12</kbd>, <kbd>Ctrl+J</kbd>, <kbd>Ctrl+Tab</kbd>, <kbd>Ctrl+PageUp/PageDown</kbd> (with or without Shift), <kbd>Ctrl+Shift+T/N/I</kbd>, <kbd>Ctrl+1–9</kbd> and <kbd>Alt+1–9</kbd>.</p>
+  <table class="shortcuts" aria-labelledby="shortcuts-heading">
+    <thead><tr><th scope="col">Action</th><th scope="col">Keys</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody id="shortcut-rows"></tbody>
+  </table>
+  <div class="row"><button class="btn" id="shortcuts-reset-all">Reset all shortcuts</button><span class="status" id="shortcut-status" role="status"></span></div>
+
+  <h2 id="updates-heading">Updates</h2>
+  <div class="row"><label for="updates-on">Check for new versions</label><input id="updates-on" type="checkbox"><span class="note">Off by default. When on, Quiver asks GitHub (<code>api.github.com</code>) once a day for the latest release and shows a notice in the sidebar when a newer one exists. Nothing is downloaded or installed; the notice opens the release page.</span></div>
+  <div class="row"><button class="btn" id="updates-check" disabled>Check now</button><span class="status" id="updates-status" role="status"></span></div>
 
   <h2>Downloads</h2>
   <div class="row"><label for="ask-save">Ask where to save</label><input id="ask-save" type="checkbox"><span class="note">Show Save As for every download. When off, files go straight to your Downloads folder (the Data folder in Quiver Portable) and get a number if the name is taken.</span></div>

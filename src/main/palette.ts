@@ -1,7 +1,11 @@
 import type { Bookmark, BrowserCommand, Suggestion, TabCommandTarget } from '../shared/types';
 import type { HistoryEntry } from './history';
+import { isRebindable, shortcutLabel } from './shortcuts';
 
-/** Browser actions the command palette can run. Each maps to an existing shortcut handler. */
+/**
+ * Browser actions the command palette can run. Each maps to an existing shortcut handler. `keys` is the default hint;
+ * actions the user can rebind show their current keys instead (see commandKeys).
+ */
 export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string; keys: string; keywords?: string }[] = [
   { command: 'command-new', label: 'New tab', keys: 'Ctrl+T', keywords: 'open' },
   { command: 'close-tab', label: 'Close tab', keys: 'Ctrl+W' },
@@ -33,6 +37,11 @@ export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string
   { command: 'unsplit', label: 'Exit split view', keys: 'Ctrl+Shift+-', keywords: 'close side by side single pane unsplit' },
   { command: 'zoom-reset', label: 'Reset zoom', keys: 'Ctrl+0', keywords: '100 percent default size' },
 ];
+
+/** The key hint for a palette action, following the user's rebound shortcuts. */
+export function commandKeys(c: (typeof BROWSER_COMMANDS)[number]): string {
+  return isRebindable(c.command) ? shortcutLabel(c.command) : c.keys;
+}
 
 const PER_KIND = 8;
 const TOTAL = 20;
@@ -138,7 +147,7 @@ export function paletteSuggestions(scope: PaletteScope, query: string, sources: 
     BROWSER_COMMANDS.forEach((c, order) => {
       const s = score(c.label, c.keywords ? `${c.label} ${c.keywords}` : '');
       if (s >= 0 && (query || scope === 'actions')) {
-        actions.push({ score: s, order, suggestion: { kind: 'action', label: c.label, detail: c.keys || undefined, action: { type: 'browser', command: c.command } } });
+        actions.push({ score: s, order, suggestion: { kind: 'action', label: c.label, detail: commandKeys(c) || undefined, action: { type: 'browser', command: c.command } } });
       }
     });
   }

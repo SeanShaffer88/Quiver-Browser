@@ -99,6 +99,9 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 ### Appearance and Settings
 
 **Settings → Appearance** picks System (follow Windows' app mode, the default), Light or Dark. The choice applies to Quiver's pages, native menus and dialogs, and websites that support `prefers-color-scheme`. Windows high-contrast themes override both palettes. Settings lists its sections at the side (at the top in a narrow window); type in **Search settings** to show only sections containing every word, Enter to jump to the first and Esc to clear.
+**Page first, like Chrome.** Shortcuts marked *page first* in **Settings → Shortcuts** (sidebar, find, zoom, phone preview, environments, Boosts and the copy/console/Space actions) go to the web page first: when focus is in a text field or editor, or the page handles the key itself, the page keeps it, so `Ctrl+B` is bold and `Ctrl+F` is the editor's own find in Google Docs or GitHub. Otherwise Quiver runs the action. Quiver always keeps the reserved keys: `Ctrl+T`, `Ctrl+W`, `Ctrl+L`, `Ctrl+K`, `Ctrl+R`/`F5`, `F12`, `Ctrl+J`, `Ctrl+Tab`/`Ctrl+Shift+Tab`, `Ctrl+(Shift+)PageUp/PageDown`, `Ctrl+Shift+T/N/I`, `Ctrl+1…9` and `Alt+1…9`. Quiver's own pages and the sidebar keep every key.
+
+**Rebinding.** In **Settings → Shortcuts**, choose **Change** and press a new combination (`Esc` cancels), **Remove** to leave an action without a key, or **Reset to default**. A key must use `Ctrl` or `Alt` (function keys may stand alone); reserved keys, editing keys (`Ctrl+C/V/X/A/Z/Y`) and keys another action uses are refused with the reason. Tooltips and the command bar's action list show your keys.
 
 ### Command bar
 
@@ -164,13 +167,17 @@ In **Settings → Sync**, choose a folder you already sync with OneDrive, Dropbo
 - **What sync never does:** delete a Space or close a tab. A pinned tab removed on another device becomes a regular tab. Cookies, open regular tabs and privacy settings stay per device.
 ### Privacy
 
-Quiver sends no telemetry, has no account and does not check for updates; crash reports stay on the device. **Settings → Privacy** controls what pages and Chromium can send:
+Quiver sends no telemetry, has no account and checks for updates only if you turn that on (see Updates); crash reports stay on the device. **Settings → Privacy** controls what pages and Chromium can send:
 
 - **Global Privacy Control** (on by default): sends `Sec-GPC: 1` and `DNT: 1` with page requests.
 - **Hide local IP** (on by default): WebRTC uses only the public interface, so sites can't read local network addresses.
 - **Secure DNS**: automatic (default), off, or a custom DNS-over-HTTPS server.
 - **Spell check**: on Windows it uses the Windows spell checker and downloads nothing. On other systems it is off by default because Chromium would download dictionaries from Google.
 - **Clear on exit**: deletes cookies, site storage and cache in every Space when Quiver closes; tabs, bookmarks and notes stay.
+
+### Updates
+
+**Settings → Updates → Check for new versions** is off by default, because Quiver makes no network connections of its own unless you ask. When on, Quiver asks GitHub's public API (`api.github.com/repos/SeanShaffer88/Quiver-Browser/releases/latest`, no account, `User-Agent: Quiver`) at most once a day, or when you click **Check now**. If the latest release is newer than your build (SemVer, so `0.1.0-beta.4` is newer than `0.1.0-beta.3` and `0.1.0` newer than both), the sidebar shows **Quiver X is available** with a button that opens the release page in a tab; dismiss it with ×. Quiver never downloads or installs anything; only a release page of this repository on `github.com` is accepted.
 
 ### Downloads
 
