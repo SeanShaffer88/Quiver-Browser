@@ -64,7 +64,7 @@ This section describes the current source. See the release notes for the feature
 
 ### Shortcuts
 
-Right-click a tab to pin it or file it in a folder. Pinned tabs and folders sit above the **Tabs** divider; folders nest, collapse (click, or `←` / `→`), rename (double-click or `F2`) and can be dragged onto other folders. Drop a tab on a folder to pin it there, or on the divider to unpin it. Drag a tab in the sidebar to reorder it within its Space; the order is saved with the session. In the tab list, `↑` / `↓` / `Home` / `End` move focus between tabs. The list only draws the rows in view, so Spaces with hundreds of tabs stay responsive.
+Right-click a tab to pin it or file it in a folder. A pinned tab remembers the page it was pinned on: closing it (`Ctrl+W`) takes it back there and moves on, and **Remove pinned tab** in its menu removes it. Temporary tabs below the **Tabs** divider that you haven't looked at for 12 hours move to the archive (change or turn off in **Settings → Tabs**); type `archive` in the command bar to search and reopen them. Pinned tabs and folders sit above the **Tabs** divider; folders nest, collapse (click, or `←` / `→`), rename (double-click or `F2`) and can be dragged onto other folders. Drop a tab on a folder to pin it there, or on the divider to unpin it. Drag a tab in the sidebar to reorder it within its Space; the order is saved with the session. In the tab list, `↑` / `↓` / `Home` / `End` move focus between tabs. The list only draws the rows in view, so Spaces with hundreds of tabs stay responsive.
 
 Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a title or hostname to narrow the results. Use the arrow keys and Enter to switch directly to a tab in its Space. Each result shows its Space and, when available, its environment.
 
@@ -103,6 +103,7 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `> reload` · `> phone` | Browser actions only (tab, navigation, sidebar, preview, environment, DevTools, Boosts, Settings) |
 | `tab orders` | Open tabs across Spaces |
 | `bm react` · `bookmarks` | Bookmarks |
+| `archive` · `archive react` | Tabs archived after going unused; Enter reopens one in its Space |
 | `research webgpu` · `research` · `note read later` | Start or continue a research topic · list topics · note on this page |
 
 Matching is fuzzy: letters must start words (`rct` → *Reopen closed tab*) or follow each other (`dash` → *dashboard*), and all words must match in any order.
@@ -175,7 +176,7 @@ Quiver-Browser/
 
 ## Feature-parity checklist
 
-Quiver currently covers these Flecha workflows. Archives and general split view are outside this build’s scope.
+Quiver currently covers these Flecha workflows. General split view is outside this build’s scope.
 
 | # | Flecha feature | Quiver (Windows) | Status |
 |---|---|---|---|

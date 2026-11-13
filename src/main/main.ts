@@ -321,6 +321,9 @@ async function main(): Promise<void> {
   };
   openLaunchTargets(parseLaunchArgs(process.argv));
   sync.start();
+  // Archive unused temporary tabs shortly after launch and then every few minutes.
+  setTimeout(() => tabs.archiveStale(), 60_000).unref();
+  setInterval(() => tabs.archiveStale(), 5 * 60_000).unref();
   tabs.layout();
   win.show();
   handleSecondInstance = (targets) => {

@@ -295,6 +295,7 @@ function renderGroups(): void {
   renderGroups();
   $<HTMLInputElement>('engine').value = settings.searchEngine;
   $<HTMLInputElement>('scan').checked = settings.devServerScan;
+  $<HTMLSelectElement>('archive-after').value = String(settings.archiveAfterHours);
   renderPrivacy(settings.privacy);
 })();
 
@@ -388,3 +389,5 @@ $<HTMLSelectElement>('privacy-dns').addEventListener('change', (e) => {
   else void savePrivacy({ secureDns: mode });
 });
 $('privacy-doh-save').addEventListener('click', () => void savePrivacy({ secureDns: 'custom', dohTemplate: $<HTMLInputElement>('privacy-doh').value }));
+
+$<HTMLSelectElement>('archive-after').addEventListener('change', (e) => void quiver.invoke('settings:set', { archiveAfterHours: Number((e.target as HTMLSelectElement).value) }));

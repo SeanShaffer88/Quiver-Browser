@@ -409,8 +409,8 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
   }, ...kids);
   const close = h('button', {
     class: 'close',
-    title: 'Close tab (Ctrl+W)',
-    'aria-label': 'Close ' + t.title,
+    title: t.pinned ? 'Back to the pinned page (Ctrl+W). Right-click to remove the pinned tab' : 'Close tab (Ctrl+W)',
+    'aria-label': (t.pinned ? 'Return to pinned page: ' : 'Close ') + t.title,
     dataset: { focusKey: 'close-tab-' + t.id },
     onClick: () => call('tab:close', t.id),
   }, '×');

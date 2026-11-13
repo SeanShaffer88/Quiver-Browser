@@ -97,6 +97,19 @@
   <div class="row"><label for="privacy-clear">Clear on exit</label><input id="privacy-clear" type="checkbox"><span class="note">Delete cookies, site storage and cache in every Space when Quiver closes. You will be signed out of sites; tabs, bookmarks and notes are kept.</span></div>
   <p class="status" id="privacy-status" role="status"></p>
 
+  <h2>Tabs</h2>
+  <div class="row">
+    <label for="archive-after">Archive unused tabs</label>
+    <select id="archive-after">
+      <option value="0">Never</option>
+      <option value="12">After 12 hours</option>
+      <option value="24">After 1 day</option>
+      <option value="168">After 7 days</option>
+      <option value="720">After 30 days</option>
+    </select>
+  </div>
+  <p class="note">Tabs below the divider that you haven't looked at for this long move to the archive. Pinned tabs, the tab you're on in each Space and tabs playing sound stay. Type <kbd>archive</kbd> in the command bar to search and reopen them. Closing a pinned tab takes it back to its pinned page instead of removing it.</p>
+
   <h2>Local servers</h2>
   <div class="row"><label for="scan">Detect servers</label><input id="scan" type="checkbox"><span class="note">Lists HTTP servers listening on this machine (netstat + a local request for the page title). Pauses while the window is in the background.</span></div>
 </div>

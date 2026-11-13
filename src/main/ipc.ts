@@ -13,6 +13,7 @@ import { paletteQuery, paletteSuggestions } from './palette';
 import { normalizePrivacy } from './privacy';
 import { topicMarkdown, type Research } from './research';
 import { researchSuggestions } from './research-commands';
+import { archiveSuggestions, normalizeArchiveHours } from './archive';
 import type { SyncService } from './sync-service';
 import { tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
@@ -119,6 +120,8 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   const suggestionsFor = (text: string, context: CommandContext): Suggestion[] => {
     const topics = researchSuggestions(text, research.inSpace(context.spaceId), research.active(context.spaceId), context.internal ? '' : context.url);
     if (topics) return topics;
+    const archived = /^archive(?:\s+([\s\S]*))?$/i.exec(text.trim());
+    if (archived) return archiveSuggestions((archived[1] ?? '').trim(), tabs.archive);
     const tabQuery = tabSearchQuery(text);
     if (tabQuery !== undefined) return tabSearchSuggestions(tabQuery, context.spaceId, openTabTargets());
     const palette = paletteQuery(text);
@@ -178,7 +181,11 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
         ],
       },
       { type: 'separator' },
-      { label: 'Close tab', click: () => tabs.closeTab(tab.id) },
+      ...(tab.pinned ? [
+        { label: 'Make this page the pinned page', enabled: !tab.internal, click: () => tabs.setPinnedPage(tab.id) },
+        { label: 'Back to pinned page (Ctrl+W)', click: () => tabs.closeTab(tab.id) },
+        { label: 'Remove pinned tab', click: () => tabs.closeTab(tab.id, { remove: true }) },
+      ] : [{ label: 'Close tab', click: () => tabs.closeTab(tab.id) }]),
     ]).popup();
   });
 
@@ -315,6 +322,9 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       case 'internal':
         tabs.navigate(`quiver://${action.page}`);
         break;
+      case 'unarchive':
+        if (!tabs.unarchive(action.url, action.archivedAt)) return 'stale';
+        break;
       case 'browser':
         closeOverlay(true);
         d.runCommand(action.command);
@@ -383,6 +393,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (patch.envGroups !== undefined) s.envGroups = sanitizeEnvGroups(patch.envGroups);
     if (typeof patch.searchEngine === 'string' && /^https?:\/\/.+%s/.test(patch.searchEngine)) s.searchEngine = patch.searchEngine;
     if (typeof patch.devServerScan === 'boolean') s.devServerScan = patch.devServerScan;
+    if (patch.archiveAfterHours !== undefined) s.archiveAfterHours = normalizeArchiveHours(patch.archiveAfterHours);
     if (patch.privacy !== undefined && typeof patch.privacy === 'object') {
       s.privacy = normalizePrivacy({ ...s.privacy, ...patch.privacy }, process.platform);
       d.onPrivacyChanged();

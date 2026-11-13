@@ -86,6 +86,9 @@ export function commandChoice(suggestion: Suggestion, context: CommandContext): 
     case 'research':
       preview = { title: label, destination: detail, space: context.spaceName, canRun: true };
       break;
+    case 'unarchive':
+      preview = { title: 'Reopen archived tab', destination: detail, space: context.spaceName, tab: 'new', canRun: true };
+      break;
     case 'browser':
       preview = { title: label, destination: detail ? `Shortcut: ${detail}` : undefined, canRun: true };
       accessibleLabel = detail ? `${label}, ${detail}` : label;
