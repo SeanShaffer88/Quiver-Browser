@@ -284,6 +284,13 @@ function Confirm-Bookmarks {
         }
         $null = Wait-For "visible bookmark '$($wanted.title)'" {
             $element = Find-Control (Get-QuiverWindow) $wanted.title ([Windows.Automation.ControlType]::Button)
+            # Settings opens at the top; the list can start below the fold, so scroll to it as a person would.
+            if ($element -and $element.Current.IsOffscreen) {
+                $scroll = $null
+                if ($element.TryGetCurrentPattern([Windows.Automation.ScrollItemPattern]::Pattern, [ref]$scroll)) {
+                    try { $scroll.ScrollIntoView() } catch { }
+                }
+            }
             $element -and !$element.Current.IsOffscreen
         }
     }
