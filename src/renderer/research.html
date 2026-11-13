@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+<title>Research</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="pages.css">
+</head>
+<body>
+<div class="boosts research">
+  <aside>
+    <h1 class="research-title">Research</h1>
+    <p class="note">Start a topic from the command bar with <kbd>research</kbd> <code>name</code>. While it records, searches and pages in that Space join its trail. Add a note to the current page with <kbd>note</kbd> <code>text</code>. Topics stay on this device.</p>
+    <div id="topics" role="listbox" aria-label="Topics"></div>
+  </aside>
+  <main id="topic" aria-live="polite">
+    <p class="note" id="empty">No topic selected.</p>
+  </main>
+</div>
+<script type="module" src="research.js"></script>
+</body>
+</html>

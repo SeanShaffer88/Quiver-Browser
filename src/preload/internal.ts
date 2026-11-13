@@ -13,8 +13,10 @@ const INVOKE = new Set([
   'bookmarks:cancel-review', 'bookmarks:confirm', 'bookmarks:undo', 'bookmarks:open',
   'boost:list', 'boost:read', 'boost:save', 'boost:create', 'boost:delete', 'boost:dir',
   'devserver:open', 'devserver:refresh', 'devserver:retry',
+  'research:list', 'research:get', 'research:rename', 'research:notes', 'research:item-note', 'research:item-remove',
+  'research:delete', 'research:resume', 'research:stop', 'research:open', 'research:export',
 ]);
-const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start']);
+const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'research:changed']);
 
 contextBridge.exposeInMainWorld('quiver', {
   invoke: (channel: string, ...args: unknown[]): Promise<unknown> =>

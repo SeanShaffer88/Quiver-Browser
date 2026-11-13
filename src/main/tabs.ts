@@ -122,6 +122,10 @@ export class TabManager {
   private restoring = false;
   preview = false;
   devServers: DevServer[] = [];
+  /** Called for each main-frame page a web tab shows (research recording). */
+  onVisit?: (spaceId: string, url: string, title: string) => void;
+  /** The research topic recording in a Space, for the toolbar. */
+  researchStatus?: (spaceId: string) => ShellState['research'];
   private readonly endpointStatus = new EndpointStatus();
 
   private phone: WebContentsView | null = null;
@@ -226,6 +230,7 @@ export class TabManager {
       activeSpaceId: this.activeSpaceId,
       tabs: [...this.tabs.values()].map((t) => this.info(t)),
       activeTabId: this.activeTabId,
+      research: this.researchStatus?.(this.activeSpaceId),
       devServers: this.devServers,
       preview: this.preview,
       phoneStatus: this.getPhoneStatus(),
@@ -393,9 +398,13 @@ export class TabManager {
     const wc = tab.view.webContents;
     this.attachShortcuts(wc);
     const touch = () => this.emit();
+    const visit = () => {
+      if (!tab.internal && !wc.isDestroyed()) this.onVisit?.(tab.spaceId, wc.getURL(), tab.titleIsExplicit ? tab.title : '');
+    };
     wc.on('page-title-updated', (_e, title, explicitSet) => {
       tab.title = title;
       tab.titleIsExplicit = explicitSet;
+      visit();
       touch();
       this.persist();
     });
@@ -412,12 +421,14 @@ export class TabManager {
       touch();
     });
     wc.on('did-navigate', () => {
+      visit();
       this.persist();
       touch();
       if (tab.id === this.activeTabId) this.syncPhone();
     });
     wc.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
       if (!isMainFrame) return;
+      visit();
       this.persist();
       touch();
       this.followPhone(tab);
