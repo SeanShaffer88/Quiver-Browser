@@ -1,4 +1,4 @@
-import type { LocalServerStatus, PhoneStatus, ShellState, TabInfo, Space } from '../shared/types';
+import type { LocalServerStatus, PhoneStatus, ShellState, SidebarRow, TabInfo, Space } from '../shared/types';
 import { scrollToReveal, visibleRows } from './virtual-list.js';
 
 type Child = Node | string | null | undefined | false;
@@ -144,50 +144,75 @@ function renderAddForm(): HTMLElement {
   );
 }
 
-let draggingTab: { id: number; from: number } | null = null;
+type Drag = { kind: 'tab'; id: number; row: number } | { kind: 'folder'; id: string; row: number };
+let dragging: Drag | null = null;
+let renamingFolder: string | null = null;
 
 function clearDropMarks(): void {
-  for (const el of sidebar.querySelectorAll('.drop-before, .drop-after')) el.classList.remove('drop-before', 'drop-after');
-}
-
-/** Final index for a tab dropped before or after the tab at `over`, once the moving tab leaves its slot. */
-function dropIndex(from: number, over: number, after: boolean): number {
-  if (from < over) return after ? over : over - 1;
-  return after ? over + 1 : over;
+  for (const el of sidebar.querySelectorAll('.drop-before, .drop-after, .drop-into')) el.classList.remove('drop-before', 'drop-after', 'drop-into');
 }
 
 // The tab list is windowed: only rows near the viewport (plus the active, focused and dragged rows) are in the DOM,
 // so Spaces with hundreds of tabs stay cheap to re-render on every state update and to scroll.
 const TAB_ROW_H = 32;
 const TAB_OVERSCAN = 8;
-let tabList: { scroller: HTMLElement; inner: HTMLElement; tabs: TabInfo[]; activeId: number | null } | null = null;
+interface RowMeta { level: number; setsize: number; posinset: number }
+let tabList: {
+  scroller: HTMLElement; inner: HTMLElement; rows: SidebarRow[]; meta: RowMeta[]; tabs: Map<number, TabInfo>; activeId: number | null;
+} | null = null;
 let revealedTab = '';
 let paintQueued = false;
 
-function focusedTabId(): number | undefined {
-  const m = lastShellFocus?.match(/^(?:close-)?tab-(\d+)$/);
-  return m ? Number(m[1]) : undefined;
+function rowKey(row: SidebarRow): string {
+  return row.kind === 'tab' ? 'tab-' + row.tabId : row.kind === 'folder' ? 'folder:' + row.id : 'divider';
+}
+
+/** Tree position for each row (aria-level / setsize / posinset), computed for the whole list since most rows are not in the DOM. */
+function rowMeta(rows: readonly SidebarRow[]): RowMeta[] {
+  const parentOf: string[] = [];
+  const stack: string[] = [];
+  for (const row of rows) {
+    if (row.kind === 'divider') { parentOf.push(''); stack.length = 0; continue; }
+    const depth = row.depth;
+    stack.length = depth;
+    const parent = row.kind === 'tab' && !row.pinned ? 'temporary' : depth ? stack[depth - 1] ?? 'root' : 'root';
+    parentOf.push(parent);
+    if (row.kind === 'folder') stack[depth] = row.id;
+  }
+  const sizes = new Map<string, number>();
+  for (const parent of parentOf) sizes.set(parent, (sizes.get(parent) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  return rows.map((row, i) => {
+    const parent = parentOf[i];
+    const pos = (seen.get(parent) ?? 0) + 1;
+    seen.set(parent, pos);
+    return { level: row.kind === 'divider' ? 0 : row.depth + 1, setsize: sizes.get(parent) ?? 1, posinset: pos };
+  });
+}
+
+function focusedRowKey(): string | undefined {
+  const m = lastShellFocus?.match(/^(?:close-)?(tab-\d+)$/);
+  return m ? m[1] : lastShellFocus?.startsWith('folder:') || lastShellFocus?.startsWith('rename-folder:') ? 'folder:' + lastShellFocus.split(':').slice(1).join(':') : undefined;
 }
 
 function paintTabs(): void {
   if (!tabList) return;
-  const { scroller, inner, tabs, activeId } = tabList;
-  const indexOf = (id: number | null | undefined) => (id == null ? -1 : tabs.findIndex((t) => t.id === id));
-  const rows = visibleRows({
-    count: tabs.length, rowHeight: TAB_ROW_H, scrollTop: scroller.scrollTop, viewport: scroller.clientHeight || window.innerHeight,
-    overscan: TAB_OVERSCAN, keep: [indexOf(activeId), indexOf(focusedTabId()), draggingTab?.from ?? -1],
+  const { scroller, inner, rows, activeId } = tabList;
+  const indexOfKey = (key: string | undefined) => (key ? rows.findIndex((r) => rowKey(r) === key) : -1);
+  const visible = visibleRows({
+    count: rows.length, rowHeight: TAB_ROW_H, scrollTop: scroller.scrollTop, viewport: scroller.clientHeight || window.innerHeight,
+    overscan: TAB_OVERSCAN, keep: [indexOfKey(activeId == null ? undefined : 'tab-' + activeId), indexOfKey(focusedRowKey()), dragging?.row ?? -1],
   });
   const existing = new Map<string, HTMLElement>();
-  for (const el of [...inner.children] as HTMLElement[]) existing.set(el.dataset.tabId ?? '', el);
-  const wanted = new Set(rows.map((i) => String(tabs[i].id)));
-  for (const [id, el] of existing) if (!wanted.has(id)) el.remove();
+  for (const el of [...inner.children] as HTMLElement[]) existing.set(el.dataset.rowKey ?? '', el);
+  const wanted = new Set(visible.map((i) => rowKey(rows[i])));
+  for (const [key, el] of existing) if (!wanted.has(key)) el.remove();
   // Kept rows never move in the DOM (moving a node would drop its focus); new rows are inserted around them.
   let previous: HTMLElement | null = null;
-  for (const i of rows) {
-    const t = tabs[i];
-    let el = existing.get(String(t.id));
+  for (const i of visible) {
+    let el = existing.get(rowKey(rows[i]));
     if (!el || !el.isConnected) {
-      el = renderTab(t, t.id === activeId, i, tabs.length);
+      el = renderRow(i);
       if (previous) previous.after(el);
       else inner.prepend(el);
     }
@@ -207,41 +232,179 @@ function queuePaintTabs(): void {
   });
 }
 
-function revealTab(index: number): void {
+function revealRow(index: number): void {
   if (!tabList) return;
   const { scroller } = tabList;
   const top = scrollToReveal(index, TAB_ROW_H, scroller.scrollTop, scroller.clientHeight);
   if (top !== scroller.scrollTop) scroller.scrollTop = top;
 }
 
-function moveTabFocus(e: KeyboardEvent, index: number): void {
-  if (!tabList || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-  const last = tabList.tabs.length - 1;
-  const next = e.key === 'ArrowDown' ? Math.min(index + 1, last) : e.key === 'ArrowUp' ? Math.max(index - 1, 0)
-    : e.key === 'Home' ? 0 : e.key === 'End' ? last : -1;
-  if (next < 0) return;
-  e.preventDefault();
-  revealTab(next);
-  lastShellFocus = 'tab-' + tabList.tabs[next].id;
+function focusRow(index: number): void {
+  if (!tabList) return;
+  const row = tabList.rows[index];
+  if (!row || row.kind === 'divider') return;
+  revealRow(index);
+  lastShellFocus = rowKey(row);
   paintTabs();
   focusShellControl(lastShellFocus);
 }
 
-function renderTab(t: TabInfo, active: boolean, index: number, total: number): HTMLElement {
+function moveRowFocus(e: KeyboardEvent, index: number): void {
+  if (!tabList || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  const rows = tabList.rows;
+  const focusable = rows.flatMap((r, i) => (r.kind === 'divider' ? [] : [i]));
+  const at = focusable.indexOf(index);
+  const row = rows[index];
+  let next = -1;
+  if (e.key === 'ArrowDown') next = focusable[Math.min(at + 1, focusable.length - 1)];
+  else if (e.key === 'ArrowUp') next = focusable[Math.max(at - 1, 0)];
+  else if (e.key === 'Home') next = focusable[0];
+  else if (e.key === 'End') next = focusable[focusable.length - 1];
+  else if (row.kind === 'folder' && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+    const collapse = e.key === 'ArrowLeft';
+    e.preventDefault();
+    if (row.collapsed !== collapse) void call('folder:toggle', row.id, collapse);
+    else if (!collapse) next = index + 1 < rows.length && rows[index + 1].kind !== 'divider' && 'depth' in rows[index + 1] && (rows[index + 1] as { depth: number }).depth > row.depth ? index + 1 : -1;
+    else next = parentRow(index);
+  } else if (row.kind === 'tab' && row.pinned && e.key === 'ArrowLeft') next = parentRow(index);
+  if (next === undefined || next < 0) return;
+  e.preventDefault();
+  focusRow(next);
+}
+
+function parentRow(index: number): number {
+  if (!tabList) return -1;
+  const row = tabList.rows[index];
+  if (row.kind === 'divider' || row.depth === 0) return -1;
+  for (let i = index - 1; i >= 0; i--) {
+    const r = tabList.rows[i];
+    if (r.kind === 'folder' && r.depth === row.depth - 1) return i;
+  }
+  return -1;
+}
+
+const lowerHalf = (e: DragEvent) => {
+  const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  return e.clientY > box.top + box.height / 2;
+};
+
+/** Drag-and-drop wiring shared by every row; `drop` decides what a drop on this row means. */
+function dropTarget(mark: (e: DragEvent) => 'drop-before' | 'drop-after' | 'drop-into' | null, drop: (drag: Drag, e: DragEvent) => void) {
+  return {
+    onDragover: (e: DragEvent) => {
+      if (!dragging) return;
+      const cls = mark(e);
+      clearDropMarks();
+      if (!cls) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      (e.currentTarget as HTMLElement).classList.add(cls);
+    },
+    onDragleave: (e: DragEvent) => (e.currentTarget as HTMLElement).classList.remove('drop-before', 'drop-after', 'drop-into'),
+    onDrop: (e: DragEvent) => {
+      e.preventDefault();
+      clearDropMarks();
+      const drag = dragging;
+      dragging = null;
+      if (drag) drop(drag, e);
+    },
+    onDragend: () => {
+      dragging = null;
+      clearDropMarks();
+    },
+  };
+}
+
+function dragSource(start: () => Drag) {
+  return {
+    draggable: true,
+    onDragstart: (e: DragEvent) => {
+      dragging = start();
+      e.dataTransfer?.setData('application/x-quiver-' + dragging.kind, String(dragging.id));
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+    },
+  };
+}
+
+function renderRow(index: number): HTMLElement {
+  const { rows, meta, tabs, activeId } = tabList!;
+  const row = rows[index];
+  const el = row.kind === 'tab' ? renderTab(tabs.get(row.tabId)!, row, row.tabId === activeId, index, meta[index])
+    : row.kind === 'folder' ? renderFolder(row, index, meta[index]) : renderDivider(index);
+  el.dataset.rowKey = rowKey(row);
+  el.style.setProperty('--depth', String(row.kind === 'divider' ? 0 : row.depth));
+  return el;
+}
+
+function renderDivider(index: number): HTMLElement {
+  const next = tabList!.rows[index + 1];
+  return h('div', {
+    class: 'tab-divider', 'aria-hidden': 'true',
+    ...dropTarget(() => 'drop-after', (drag) => {
+      if (drag.kind === 'folder') void call('folder:move', drag.id, null);
+      else void call('tab:place', drag.id, { pinned: false, folderId: null, targetId: next?.kind === 'tab' ? next.tabId : null, after: false });
+    }),
+  }, h('span', {}, 'Tabs'));
+}
+
+function renderFolder(row: Extract<SidebarRow, { kind: 'folder' }>, index: number, m: RowMeta): HTMLElement {
+  if (renamingFolder === row.id) {
+    const input = h('input', { class: 'space-edit', value: row.name, 'aria-label': 'Rename folder', maxLength: 40, dataset: { focusKey: 'rename-folder:' + row.id } });
+    const finish = (save: boolean) => {
+      if (renamingFolder !== row.id) return;
+      renamingFolder = null;
+      if (save && input.value.trim()) void call('folder:rename', row.id, input.value);
+      lastShellFocus = 'folder:' + row.id;
+      render();
+      focusShellControl(lastShellFocus);
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') finish(true);
+      if (e.key === 'Escape') finish(false);
+    });
+    input.addEventListener('blur', () => finish(true));
+    return h('div', { class: 'folder renaming' }, input);
+  }
+  const select = h('button', {
+    class: 'tab-select',
+    role: 'treeitem',
+    'aria-label': `${row.name}, folder, ${row.count} ${row.count === 1 ? 'tab' : 'tabs'}`,
+    'aria-expanded': String(!row.collapsed),
+    'aria-level': String(m.level), 'aria-setsize': String(m.setsize), 'aria-posinset': String(m.posinset),
+    dataset: { focusKey: 'folder:' + row.id },
+    title: row.name + '\nClick to ' + (row.collapsed ? 'expand' : 'collapse') + ' · right-click for options · drop tabs here to pin',
+    onClick: () => call('folder:toggle', row.id),
+    onDblclick: () => { renamingFolder = row.id; render(); focusShellControl('rename-folder:' + row.id); },
+    onKeydown: (e: KeyboardEvent) => {
+      if (e.key === 'F2') { e.preventDefault(); renamingFolder = row.id; render(); focusShellControl('rename-folder:' + row.id); return; }
+      moveRowFocus(e, index);
+    },
+  }, h('span', { class: 'chev', 'aria-hidden': 'true' }, row.collapsed ? '▸' : '▾'), h('span', { class: 'title' }, row.name), h('span', { class: 'count' }, String(row.count)));
+  return h('div', {
+    class: 'folder',
+    onContextmenu: (e: Event) => { e.preventDefault(); void call('folder:menu', row.id); },
+    ...dragSource(() => ({ kind: 'folder', id: row.id, row: index })),
+    ...dropTarget((e) => (dragging?.kind === 'folder' && dragging.id === row.id ? null : 'drop-into'), (drag) => {
+      if (drag.kind === 'folder') void call('folder:move', drag.id, row.id);
+      else void call('tab:place', drag.id, { pinned: true, folderId: row.id, targetId: null, after: true });
+    }),
+  }, select);
+}
+
+function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active: boolean, index: number, m: RowMeta): HTMLElement {
   const fav = t.favicon ? h('img', { class: 'fav', src: t.favicon, alt: '' }) : h('span', { class: 'fav' });
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
   if (t.local && t.errors > 0) kids.push(h('span', { class: 'err', title: `${t.errors} console error(s) since last navigation` }, String(t.errors > 99 ? '99+' : t.errors)));
   const select = h('button', {
     class: 'tab-select',
-    role: 'tab',
-    'aria-label': t.title,
+    role: 'treeitem',
+    'aria-label': t.pinned ? t.title + ', pinned' : t.title,
     'aria-selected': String(active),
-    'aria-setsize': String(total),
-    'aria-posinset': String(index + 1),
+    'aria-level': String(m.level), 'aria-setsize': String(m.setsize), 'aria-posinset': String(m.posinset),
     dataset: { focusKey: 'tab-' + t.id },
-    onKeydown: (e: KeyboardEvent) => moveTabFocus(e, index),
-    title: t.title + '\n' + t.url + '\nDrag or press Ctrl+Shift+PageUp/PageDown to move',
+    onKeydown: (e: KeyboardEvent) => moveRowFocus(e, index),
+    title: t.title + '\n' + t.url + '\nDrag or press Ctrl+Shift+PageUp/PageDown to move · right-click to pin or file in a folder',
     onClick: () => call('tab:activate', t.id),
   }, ...kids);
   const close = h('button', {
@@ -251,41 +414,18 @@ function renderTab(t: TabInfo, active: boolean, index: number, total: number): H
     dataset: { focusKey: 'close-tab-' + t.id },
     onClick: () => call('tab:close', t.id),
   }, '×');
-  const lowerHalf = (e: DragEvent) => {
-    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    return e.clientY > box.top + box.height / 2;
-  };
   return h('div', {
-    class: 'tab' + (active ? ' active' : '') + (t.loading ? ' loading' : ''),
+    class: 'tab' + (active ? ' active' : '') + (t.loading ? ' loading' : '') + (t.pinned ? ' pinned' : ''),
     dataset: { tabId: String(t.id) },
-    draggable: true,
     onAuxclick: (e: MouseEvent) => {
       if (e.button === 1) void call('tab:close', t.id);
     },
-    onDragstart: (e: DragEvent) => {
-      draggingTab = { id: t.id, from: index };
-      e.dataTransfer?.setData('application/x-quiver-tab', String(t.id));
-      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-    },
-    onDragover: (e: DragEvent) => {
-      if (!draggingTab) return;
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-      clearDropMarks();
-      if (draggingTab.id !== t.id) (e.currentTarget as HTMLElement).classList.add(lowerHalf(e) ? 'drop-after' : 'drop-before');
-    },
-    onDragleave: (e: DragEvent) => (e.currentTarget as HTMLElement).classList.remove('drop-before', 'drop-after'),
-    onDrop: (e: DragEvent) => {
-      e.preventDefault();
-      clearDropMarks();
-      const drag = draggingTab;
-      draggingTab = null;
-      if (drag && drag.id !== t.id) void call('tab:move', drag.id, dropIndex(drag.from, index, lowerHalf(e)));
-    },
-    onDragend: () => {
-      draggingTab = null;
-      clearDropMarks();
-    },
+    onContextmenu: (e: Event) => { e.preventDefault(); void call('tab:menu', t.id); },
+    ...dragSource(() => ({ kind: 'tab', id: t.id, row: index })),
+    ...dropTarget((e) => (dragging?.kind === 'tab' && dragging.id === t.id ? null : lowerHalf(e) ? 'drop-after' : 'drop-before'), (drag, e) => {
+      if (drag.kind === 'folder') void call('folder:move', drag.id, row.pinned ? row.folderId : null);
+      else void call('tab:place', drag.id, { pinned: row.pinned, folderId: row.folderId, targetId: t.id, after: lowerHalf(e) });
+    }),
   }, select, close);
 }
 
@@ -367,8 +507,8 @@ function renderSidebar(s: ShellState): void {
   const previousTabs = sidebar.querySelector<HTMLElement>('.tabs');
   const previousScroll = previousTabs?.dataset.spaceId === s.activeSpaceId ? previousTabs.scrollTop : 0;
   const inner = h('div', { class: 'tabs-window' });
-  inner.style.height = spaceTabs.length * TAB_ROW_H + 'px';
-  const tabsEl = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Tabs', dataset: { spaceId: s.activeSpaceId }, onScroll: queuePaintTabs }, inner);
+  inner.style.height = s.sidebar.length * TAB_ROW_H + 'px';
+  const tabsEl = h('div', { class: 'tabs', role: 'tree', 'aria-label': 'Tabs', dataset: { spaceId: s.activeSpaceId }, onScroll: queuePaintTabs }, inner);
 
   const servers = h('section', { class: 'servers', 'aria-label': 'Local servers' }, h('h3', {}, h('span', {}, 'Local servers'), h('button', { class: 'icon-btn', disabled: !s.settings.devServerScan, title: 'Rescan now', 'aria-label': 'Rescan local servers', dataset: { focusKey: 'rescan' }, onClick: () => call('devserver:refresh') }, '↻')));
   if (!s.settings.devServerScan) servers.append(h('div', { class: 'empty' }, 'Scanning is off (Settings).'));
@@ -391,12 +531,12 @@ function renderSidebar(s: ShellState): void {
     ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderRecovery(s),
     ...(s.localServerStatus ? [renderLocalServerStatus(s.localServerStatus)] : []), tabsEl, servers);
   tabsEl.scrollTop = previousScroll;
-  tabList = { scroller: tabsEl, inner, tabs: spaceTabs, activeId: s.activeTabId };
+  tabList = { scroller: tabsEl, inner, rows: s.sidebar, meta: rowMeta(s.sidebar), tabs: new Map(spaceTabs.map((t) => [t.id, t])), activeId: s.activeTabId };
   const reveal = s.activeSpaceId + ':' + s.activeTabId;
   if (reveal !== revealedTab) {
     revealedTab = reveal;
-    const index = spaceTabs.findIndex((t) => t.id === s.activeTabId);
-    if (index >= 0) revealTab(index);
+    const index = s.sidebar.findIndex((r) => r.kind === 'tab' && r.tabId === s.activeTabId);
+    if (index >= 0) revealRow(index);
   }
   paintTabs();
 }
@@ -502,6 +642,14 @@ quiver.on('state', (s: ShellState) => {
   state = s;
   if (!typing) render();
   else renderToolbar(s);
+});
+quiver.on('folder:rename-start', (id: string) => {
+  renamingFolder = id;
+  render();
+  const index = tabList?.rows.findIndex((r) => r.kind === 'folder' && r.id === id) ?? -1;
+  if (index >= 0) revealRow(index);
+  paintTabs();
+  focusShellControl('rename-folder:' + id);
 });
 quiver.on('space:rename-start', (id: string) => {
   renamingSpace = id;

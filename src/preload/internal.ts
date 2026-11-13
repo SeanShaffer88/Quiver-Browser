@@ -3,9 +3,10 @@ import { contextBridge, ipcRenderer } from 'electron';
 // The main process checks the page role and sender for every invocation.
 const INVOKE = new Set([
   'state:get',
-  'tab:close', 'tab:activate', 'tab:move', 'tab:back', 'tab:forward', 'tab:reload',
+  'tab:close', 'tab:activate', 'tab:place', 'tab:menu', 'tab:back', 'tab:forward', 'tab:reload',
   'tab:reopen', 'tab:retry-crash', 'recovery:dismiss',
   'space:create', 'space:menu', 'space:rename', 'space:activate',
+  'folder:toggle', 'folder:rename', 'folder:move', 'folder:menu',
   'sidebar:toggle', 'preview:toggle', 'env:switch',
   'cmd:open', 'cmd:close', 'cmd:suggest', 'cmd:commit', 'cmd:run',
   'settings:get', 'settings:set',
@@ -14,7 +15,7 @@ const INVOKE = new Set([
   'boost:list', 'boost:read', 'boost:save', 'boost:create', 'boost:delete', 'boost:dir',
   'devserver:open', 'devserver:refresh', 'devserver:retry',
 ]);
-const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start']);
+const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'folder:rename-start']);
 
 contextBridge.exposeInMainWorld('quiver', {
   invoke: (channel: string, ...args: unknown[]): Promise<unknown> =>
