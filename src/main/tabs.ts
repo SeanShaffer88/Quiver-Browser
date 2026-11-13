@@ -37,6 +37,8 @@ import {
 import { moveInGroup } from './tab-order';
 import type { MediaPermissions } from './site-permissions';
 import { addArchived, tabsToArchive, type ArchivedTab } from './archive';
+import { isPrivateSpace, newPrivateSpace, privatePartition, publicSpaces } from './private-spaces';
+import { siteAllowed, toggleSite } from './content-blocking';
 import { normalizeSyncedSpaces, type SyncedSpace } from './sync';
 import { canNest, deleteFolder, displayOrder, folderName, normalizeFolders, placeRelative, sidebarRows } from './tab-tree';
 import type { Downloads } from './downloads';
@@ -150,6 +152,8 @@ export class TabManager {
   onVisit?: (spaceId: string, url: string, title: string, kind: 'navigate' | 'title') => void;
   /** Tracks downloads from web Spaces. */
   downloads?: Downloads;
+  /** Requests blocked by ad and tracker blocking on a page since it navigated. */
+  blockedCount?: (webContentsId: number) => number;
   /** A page asked to open an ftp:// address. */
   onFtpLink?: (url: string, partition: string) => void;
 
@@ -272,6 +276,7 @@ export class TabManager {
       zoom: this.activeZoom(),
       research: this.researchStatus?.(this.activeSpaceId),
       permissionPrompt: this.activePrompt(),
+      adBlock: this.adBlockState(),
       downloads: this.downloads?.summary(),
       devServers: this.devServers,
       preview: this.preview,
@@ -279,6 +284,37 @@ export class TabManager {
       localServerStatus: this.getLocalServerStatus(),
       settings: this.settings,
     };
+  }
+
+  private adBlockState(): ShellState['adBlock'] {
+    const t = this.activeTab;
+    if (!t || t.internal || t.view.webContents.isDestroyed()) return undefined;
+    const url = this.tabUrl(t);
+    const parsed = URL.parse(url);
+    if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) return undefined;
+    const p = this.settings.privacy;
+    return {
+      tabId: t.id,
+      host: parsed.hostname,
+      blocked: this.blockedCount?.(t.view.webContents.id) ?? 0,
+      enabled: p.blockTrackers,
+      allowed: siteAllowed(url, p.adAllowList),
+    };
+  }
+
+  /** Allow or block ads again on a tab's site, then reload it so the change shows. */
+  toggleSiteAds(id: number): boolean {
+    const t = this.tabs.get(id);
+    if (!t || t.internal || t.view.webContents.isDestroyed()) return false;
+    const url = this.tabUrl(t);
+    const privacy = this.settings.privacy;
+    const next = toggleSite(url, privacy.adAllowList);
+    if (next.length === privacy.adAllowList.length && next.every((site, i) => site === privacy.adAllowList[i])) return false;
+    privacy.adAllowList = next;
+    this.store.save();
+    t.view.webContents.reload();
+    this.emit();
+    return true;
   }
 
   showSessionRecovery(session: NonNullable<RecoveryNotice['session']>): void {
@@ -308,7 +344,13 @@ export class TabManager {
   private partitionFor(spaceId: string, internal: boolean): string {
     if (internal) return INTERNAL_PARTITION;
     const space = this.spaces.find((s) => s.id === spaceId);
+    if (space?.private) return privatePartition(spaceId);
     return space?.isolated ? `persist:quiver-space-${spaceId}` : SHARED_PARTITION;
+  }
+
+  /** Private Spaces keep no history, research trail, archive or saved session. */
+  isPrivate(spaceId: string): boolean {
+    return isPrivateSpace(this.spaces, spaceId);
   }
 
   private prepareSession(partition: string): void {
@@ -440,7 +482,7 @@ export class TabManager {
     this.attachShortcuts(wc);
     const touch = () => this.emit();
     const visit = (kind: 'navigate' | 'title' = 'navigate') => {
-      if (!tab.internal && !wc.isDestroyed()) this.onVisit?.(tab.spaceId, wc.getURL(), tab.titleIsExplicit ? tab.title : '', kind);
+      if (!tab.internal && !wc.isDestroyed() && !this.isPrivate(tab.spaceId)) this.onVisit?.(tab.spaceId, wc.getURL(), tab.titleIsExplicit ? tab.title : '', kind);
     };
     wc.on('page-title-updated', (_e, title, explicitSet) => {
       tab.title = title;
@@ -629,7 +671,8 @@ export class TabManager {
   archiveStale(now = Date.now()): void {
     const hours = this.settings.archiveAfterHours;
     const active = new Set(this.spaces.map((sp) => this.lastActive[sp.id]));
-    const candidates = [...this.tabs.values()].map((t) => ({
+    // Archiving would write a private tab's address to disk, so private Spaces are left out.
+    const candidates = [...this.tabs.values()].filter((t) => !this.isPrivate(t.spaceId)).map((t) => ({
       id: t.id, pinned: t.pinned, active: t.id === this.activeTabId || active.has(t.id),
       // Playing sound or in a call (camera, microphone or screen) keeps a tab.
       audible: !t.view.webContents.isDestroyed() && (t.view.webContents.isCurrentlyAudible() || !!this.media?.isLive(t.view.webContents.id)),
@@ -1046,7 +1089,7 @@ export class TabManager {
   // ───────── sync ─────────
   /** Spaces with their folders and pinned tabs, as published to other devices. */
   syncedSpaces(): SyncedSpace[] {
-    return this.spaces.map((sp) => ({
+    return publicSpaces(this.spaces).map((sp) => ({
       id: sp.id, name: sp.name, color: sp.color, isolated: sp.isolated, folders: this.folders(sp.id),
       pinned: this.spaceTabs(sp.id).filter((t) => t.pinned).flatMap((t) => {
         const url = t.pinnedUrl ?? this.tabUrl(t);
@@ -1064,6 +1107,7 @@ export class TabManager {
   applySyncedSpaces(raw: unknown): void {
     for (const remote of normalizeSyncedSpaces(raw, restorableUrl)) {
       let space = this.spaces.find((sp) => sp.id === remote.id);
+      if (space?.private) continue;
       if (!space) {
         space = { id: remote.id, name: remote.name, color: remote.color, isolated: remote.isolated };
         this.store.state.spaces.push(space);
@@ -1120,6 +1164,19 @@ export class TabManager {
     return space;
   }
 
+  /** Open a new private Space: in-memory storage, never saved, synced or recorded in history. */
+  createPrivateSpace(): Space {
+    const space = newPrivateSpace();
+    this.store.state.spaces.push(space);
+    this.activateSpace(space.id);
+    return space;
+  }
+
+  /** Whether a Space can be deleted: at least one regular Space must remain, as private ones are never saved. */
+  canDeleteSpace(id: string): boolean {
+    return this.spaces.some((s) => s.id === id) && this.spaces.some((s) => s.id !== id && !s.private);
+  }
+
   renameSpace(id: string, name: string): void {
     const s = this.spaces.find((x) => x.id === id);
     const n = name.trim().slice(0, 40);
@@ -1130,7 +1187,7 @@ export class TabManager {
   }
 
   async deleteSpace(id: string): Promise<void> {
-    if (this.spaces.length < 2) return;
+    if (!this.canDeleteSpace(id)) return;
     const space = this.spaces.find((s) => s.id === id);
     if (!space) return;
     for (const t of [...this.tabs.values()].filter((t) => t.spaceId === id)) this.discardTab(t);
@@ -1144,7 +1201,8 @@ export class TabManager {
     this.emit();
     if (space.isolated) {
       try {
-        await session.fromPartition(`persist:quiver-space-${id}`).clearStorageData();
+        // A private Space's storage is in memory, but clear it now rather than holding it until Quiver quits.
+        await session.fromPartition(space.private ? privatePartition(id) : `persist:quiver-space-${id}`).clearStorageData();
       } catch {
         /* best effort */
       }
@@ -1542,6 +1600,7 @@ export class TabManager {
     st.activeIndexBySpace = {};
     const soleNewTabs = new Map<string, number>();
     for (const space of this.spaces) {
+      if (space.private) continue;
       const list = [...this.tabs.values()]
         .filter((tab) => tab.spaceId === space.id)
         .map((tab) => ({ id: tab.id, url: this.tabUrl(tab), title: tab.titleIsExplicit ? tab.title : undefined, pinned: tab.pinned, folderId: tab.folderId, pinnedUrl: tab.pinnedUrl, lastActiveAt: tab.lastActiveAt }));
@@ -1550,7 +1609,7 @@ export class TabManager {
       st.tabsBySpace[space.id] = tabs;
       st.activeIndexBySpace[space.id] = activeIndex;
     }
-    st.recentlyClosed = snapshotRecentlyClosed(this.recentlyClosed, new Set(this.spaces.map(({ id }) => id)), soleNewTabs);
+    st.recentlyClosed = snapshotRecentlyClosed(this.recentlyClosed, new Set(this.spaces.filter((sp) => !sp.private).map(({ id }) => id)), soleNewTabs);
     for (const entry of st.recentlyClosed) {
       if (entry.replacePlaceholder) st.tabsBySpace[entry.spaceId][0].automaticPlaceholder = true;
     }

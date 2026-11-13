@@ -6,6 +6,8 @@ export interface Space {
   color: string;
   /** true = own cookie jar / storage partition; false = shared default partition */
   isolated: boolean;
+  /** A private Space: in-memory storage, no history, never saved or synced. Gone when closed or when Quiver quits. */
+  private?: true;
   /** Pinned-tab folders, nested by parentId. */
   folders?: Folder[];
 }
@@ -56,6 +58,10 @@ export interface PrivacySettings {
   spellcheck: boolean;
   /** Clear cookies, site storage and cache for web Spaces when Quiver closes. */
   clearOnExit: boolean;
+  /** Block third-party requests to well-known ad and tracker hosts. */
+  blockTrackers: boolean;
+  /** Sites (hostnames) where ads and trackers are allowed. */
+  adAllowList: string[];
 }
 
 export interface Bookmark {
@@ -144,6 +150,8 @@ export interface ShellState {
   research?: { id: string; name: string; count: number };
   /** A camera / microphone / screen request waiting on the active tab. */
   permissionPrompt?: { id: number; host: string; kinds: ('camera' | 'microphone' | 'screen')[] };
+  /** Ad and tracker blocking on the active web tab; absent for Quiver's own pages. */
+  adBlock?: { tabId: number; host: string; blocked: number; enabled: boolean; allowed: boolean };
   /** Downloads in progress, for the toolbar. Progress is null when a size is unknown. */
   downloads?: { active: number; progress: number | null };
   devServers: DevServer[];
@@ -185,7 +193,7 @@ export type BrowserCommand =
   | 'command-new' | 'close-tab' | 'reopen-tab' | 'reload' | 'back' | 'forward' | 'next-tab' | 'prev-tab'
   | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings' | 'downloads'
   | 'find' | 'zoom-in' | 'zoom-out' | 'zoom-reset'
-  | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space';
+  | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space' | 'private-space';
 
 export interface Suggestion {
   kind: string;
