@@ -1,4 +1,5 @@
 import type { LocalServerStatus, PhoneStatus, ShellState, TabInfo, Space } from '../shared/types';
+import { scrollToReveal, visibleRows } from './virtual-list.js';
 
 type Child = Node | string | null | undefined | false;
 
@@ -155,7 +156,78 @@ function dropIndex(from: number, over: number, after: boolean): number {
   return after ? over + 1 : over;
 }
 
-function renderTab(t: TabInfo, active: boolean, index: number): HTMLElement {
+// The tab list is windowed: only rows near the viewport (plus the active, focused and dragged rows) are in the DOM,
+// so Spaces with hundreds of tabs stay cheap to re-render on every state update and to scroll.
+const TAB_ROW_H = 32;
+const TAB_OVERSCAN = 8;
+let tabList: { scroller: HTMLElement; inner: HTMLElement; tabs: TabInfo[]; activeId: number | null } | null = null;
+let revealedTab = '';
+let paintQueued = false;
+
+function focusedTabId(): number | undefined {
+  const m = lastShellFocus?.match(/^(?:close-)?tab-(\d+)$/);
+  return m ? Number(m[1]) : undefined;
+}
+
+function paintTabs(): void {
+  if (!tabList) return;
+  const { scroller, inner, tabs, activeId } = tabList;
+  const indexOf = (id: number | null | undefined) => (id == null ? -1 : tabs.findIndex((t) => t.id === id));
+  const rows = visibleRows({
+    count: tabs.length, rowHeight: TAB_ROW_H, scrollTop: scroller.scrollTop, viewport: scroller.clientHeight || window.innerHeight,
+    overscan: TAB_OVERSCAN, keep: [indexOf(activeId), indexOf(focusedTabId()), draggingTab?.from ?? -1],
+  });
+  const existing = new Map<string, HTMLElement>();
+  for (const el of [...inner.children] as HTMLElement[]) existing.set(el.dataset.tabId ?? '', el);
+  const wanted = new Set(rows.map((i) => String(tabs[i].id)));
+  for (const [id, el] of existing) if (!wanted.has(id)) el.remove();
+  // Kept rows never move in the DOM (moving a node would drop its focus); new rows are inserted around them.
+  let previous: HTMLElement | null = null;
+  for (const i of rows) {
+    const t = tabs[i];
+    let el = existing.get(String(t.id));
+    if (!el || !el.isConnected) {
+      el = renderTab(t, t.id === activeId, i, tabs.length);
+      if (previous) previous.after(el);
+      else inner.prepend(el);
+    }
+    el.style.top = i * TAB_ROW_H + 'px';
+    previous = el;
+  }
+}
+
+window.addEventListener('resize', () => queuePaintTabs());
+
+function queuePaintTabs(): void {
+  if (paintQueued) return;
+  paintQueued = true;
+  requestAnimationFrame(() => {
+    paintQueued = false;
+    paintTabs();
+  });
+}
+
+function revealTab(index: number): void {
+  if (!tabList) return;
+  const { scroller } = tabList;
+  const top = scrollToReveal(index, TAB_ROW_H, scroller.scrollTop, scroller.clientHeight);
+  if (top !== scroller.scrollTop) scroller.scrollTop = top;
+}
+
+function moveTabFocus(e: KeyboardEvent, index: number): void {
+  if (!tabList || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  const last = tabList.tabs.length - 1;
+  const next = e.key === 'ArrowDown' ? Math.min(index + 1, last) : e.key === 'ArrowUp' ? Math.max(index - 1, 0)
+    : e.key === 'Home' ? 0 : e.key === 'End' ? last : -1;
+  if (next < 0) return;
+  e.preventDefault();
+  revealTab(next);
+  lastShellFocus = 'tab-' + tabList.tabs[next].id;
+  paintTabs();
+  focusShellControl(lastShellFocus);
+}
+
+function renderTab(t: TabInfo, active: boolean, index: number, total: number): HTMLElement {
   const fav = t.favicon ? h('img', { class: 'fav', src: t.favicon, alt: '' }) : h('span', { class: 'fav' });
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
@@ -165,7 +237,10 @@ function renderTab(t: TabInfo, active: boolean, index: number): HTMLElement {
     role: 'tab',
     'aria-label': t.title,
     'aria-selected': String(active),
+    'aria-setsize': String(total),
+    'aria-posinset': String(index + 1),
     dataset: { focusKey: 'tab-' + t.id },
+    onKeydown: (e: KeyboardEvent) => moveTabFocus(e, index),
     title: t.title + '\n' + t.url + '\nDrag or press Ctrl+Shift+PageUp/PageDown to move',
     onClick: () => call('tab:activate', t.id),
   }, ...kids);
@@ -182,6 +257,7 @@ function renderTab(t: TabInfo, active: boolean, index: number): HTMLElement {
   };
   return h('div', {
     class: 'tab' + (active ? ' active' : '') + (t.loading ? ' loading' : ''),
+    dataset: { tabId: String(t.id) },
     draggable: true,
     onAuxclick: (e: MouseEvent) => {
       if (e.button === 1) void call('tab:close', t.id);
@@ -290,8 +366,9 @@ function renderSidebar(s: ShellState): void {
 
   const previousTabs = sidebar.querySelector<HTMLElement>('.tabs');
   const previousScroll = previousTabs?.dataset.spaceId === s.activeSpaceId ? previousTabs.scrollTop : 0;
-  const tabsEl = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Tabs', dataset: { spaceId: s.activeSpaceId } },
-    ...spaceTabs.map((t, i) => renderTab(t, t.id === s.activeTabId, i)));
+  const inner = h('div', { class: 'tabs-window' });
+  inner.style.height = spaceTabs.length * TAB_ROW_H + 'px';
+  const tabsEl = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Tabs', dataset: { spaceId: s.activeSpaceId }, onScroll: queuePaintTabs }, inner);
 
   const servers = h('section', { class: 'servers', 'aria-label': 'Local servers' }, h('h3', {}, h('span', {}, 'Local servers'), h('button', { class: 'icon-btn', disabled: !s.settings.devServerScan, title: 'Rescan now', 'aria-label': 'Rescan local servers', dataset: { focusKey: 'rescan' }, onClick: () => call('devserver:refresh') }, '↻')));
   if (!s.settings.devServerScan) servers.append(h('div', { class: 'empty' }, 'Scanning is off (Settings).'));
@@ -314,6 +391,14 @@ function renderSidebar(s: ShellState): void {
     ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderRecovery(s),
     ...(s.localServerStatus ? [renderLocalServerStatus(s.localServerStatus)] : []), tabsEl, servers);
   tabsEl.scrollTop = previousScroll;
+  tabList = { scroller: tabsEl, inner, tabs: spaceTabs, activeId: s.activeTabId };
+  const reveal = s.activeSpaceId + ':' + s.activeTabId;
+  if (reveal !== revealedTab) {
+    revealedTab = reveal;
+    const index = spaceTabs.findIndex((t) => t.id === s.activeTabId);
+    if (index >= 0) revealTab(index);
+  }
+  paintTabs();
 }
 
 function activeTab(s: ShellState): TabInfo | undefined {
