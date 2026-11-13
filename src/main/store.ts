@@ -6,11 +6,14 @@ import { DEFAULT_SEARCH } from '../shared/constants';
 import type { Bookmark, Settings, Space } from '../shared/types';
 import { validBookmarkUndo, type BookmarkUndo } from './bookmark-import';
 import { normalizeBookmarks } from './bookmarks';
+import { normalizeFolders } from './tab-tree';
 import { hasSavedNewTabPlaceholder, normalizeRecentlyClosed, type PersistedClosedTab } from './session-recovery';
 
 export interface PersistedTab {
   url: string;
   title?: string;
+  pinned?: true;
+  folderId?: string;
   automaticPlaceholder?: true;
 }
 
@@ -104,6 +107,7 @@ export class Store {
           sidebarCollapsed: raw.settings?.sidebarCollapsed ?? base.settings.sidebarCollapsed,
         },
       } as PersistedState;
+      state.spaces = state.spaces.map((space) => ({ ...space, folders: normalizeFolders(space.folders) }));
       state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);
       const spaceIds = new Set(state.spaces.map(({ id }) => id));
       const soleNewTabSpaces = new Set([...spaceIds].filter((id) => hasSavedNewTabPlaceholder(state.tabsBySpace?.[id])));

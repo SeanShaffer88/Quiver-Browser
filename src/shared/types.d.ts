@@ -6,7 +6,21 @@ export interface Space {
   color: string;
   /** true = own cookie jar / storage partition; false = shared default partition */
   isolated: boolean;
+  /** Pinned-tab folders, nested by parentId. */
+  folders?: Folder[];
 }
+
+export interface Folder {
+  id: string;
+  name: string;
+  parentId: string | null;
+  collapsed: boolean;
+}
+
+export type SidebarRow =
+  | { kind: 'folder'; id: string; name: string; depth: number; collapsed: boolean; count: number }
+  | { kind: 'tab'; tabId: number; depth: number; pinned: boolean; folderId: string | null }
+  | { kind: 'divider' };
 
 export interface EnvGroup {
   name: string;
@@ -52,6 +66,8 @@ export interface BookmarkLibraryView {
 export interface TabInfo {
   id: number;
   spaceId: string;
+  pinned: boolean;
+  folderId: string | null;
   url: string;
   title: string;
   favicon: string;
@@ -91,6 +107,8 @@ export interface ShellState {
   spaces: Space[];
   activeSpaceId: string;
   tabs: TabInfo[];
+  /** Sidebar rows for the active Space. */
+  sidebar: SidebarRow[];
   activeTabId: number | null;
   devServers: DevServer[];
   preview: boolean;
