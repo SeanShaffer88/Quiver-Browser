@@ -609,12 +609,21 @@ function renderToolbar(s: ShellState): void {
     dataset: { focusKey: 'research' },
     onClick: () => call('cmd:run', { type: 'internal', page: 'research', topic: s.research!.id }),
   }, h('span', { class: 'dot', 'aria-hidden': 'true' }), h('span', { class: 'research-name' }, s.research.name), h('span', { class: 'tool-count', 'aria-hidden': 'true' }, String(s.research.count)));
+  const dl = s.downloads;
+  const downloadsButton = dl && dl.active > 0 && h('button', {
+    class: 'downloads-chip',
+    title: `${dl.active} download${dl.active === 1 ? '' : 's'} in progress (Ctrl+J)`,
+    'aria-label': `${dl.active} download${dl.active === 1 ? '' : 's'} in progress${dl.progress === null ? '' : `, ${Math.floor(dl.progress * 100)} percent`}. Open downloads`,
+    dataset: { focusKey: 'downloads' },
+    onClick: () => call('cmd:run', { type: 'internal', page: 'downloads' }),
+  }, h('span', { 'aria-hidden': 'true' }, '↓'), h('span', {}, dl.progress === null ? String(dl.active) : `${Math.floor(dl.progress * 100)}%`));
   toolbar.replaceChildren(
     icon(ICON.back, 'Back (Alt+←)', () => call('tab:back'), { disabled: !t?.canGoBack }),
     icon(ICON.forward, 'Forward (Alt+→)', () => call('tab:forward'), { disabled: !t?.canGoForward }),
     icon(ICON.reload, 'Reload (Ctrl+R)', () => call('tab:reload')),
     addr,
     ...(research ? [research] : []),
+    ...(downloadsButton ? [downloadsButton] : []),
     icon(ICON.env, 'Switch environment: local → staging → prod (Ctrl+Alt+E)', () => call('env:switch'), { disabled: !t?.env }),
     phone,
     boost,

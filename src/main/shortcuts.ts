@@ -17,6 +17,7 @@ export type ShortcutAction =
   | 'forward'
   | 'devtools'
   | 'boosts'
+  | 'downloads'
   | `tab-${number}`;
 
 /** Map a key event to a browser shortcut. Uses physical key codes so keyboard layouts (incl. AltGr) don't matter. */
@@ -57,6 +58,8 @@ export function shortcutFor(input: Input): ShortcutAction | null {
       return 'reload';
     case 'KeyB':
       return 'toggle-sidebar';
+    case 'KeyJ':
+      return 'downloads';
     default:
       break;
   }

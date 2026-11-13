@@ -34,6 +34,8 @@ export interface Settings {
   searchEngine: string;
   devServerScan: boolean;
   sidebarCollapsed: boolean;
+  /** Show Save As for each download instead of saving straight to the downloads folder. */
+  askWhereToSave: boolean;
   privacy: PrivacySettings;
 }
 
@@ -126,6 +128,8 @@ export interface ShellState {
   activeTabId: number | null;
   /** The research topic recording in the active Space. */
   research?: { id: string; name: string; count: number };
+  /** Downloads in progress, for the toolbar. Progress is null when a size is unknown. */
+  downloads?: { active: number; progress: number | null };
   devServers: DevServer[];
   preview: boolean;
   phoneStatus: PhoneStatus;
@@ -149,7 +153,7 @@ export type SuggestionAction =
   | { type: 'copy'; text: string }
   | { type: 'boost'; name: string }
   | { type: 'env'; target: EnvBadge; url: string }
-  | { type: 'internal'; page: 'boosts' | 'settings' | 'research' }
+  | { type: 'internal'; page: 'boosts' | 'settings' | 'research' | 'downloads' }
   | { type: 'activate-tab'; target: TabCommandTarget }
   | { type: 'browser'; command: BrowserCommand }
   | { type: 'research'; op: 'start'; name: string }
@@ -160,7 +164,7 @@ export type SuggestionAction =
 
 export type BrowserCommand =
   | 'command-new' | 'close-tab' | 'reopen-tab' | 'reload' | 'back' | 'forward' | 'next-tab' | 'prev-tab'
-  | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings';
+  | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings' | 'downloads';
 
 export interface Suggestion {
   kind: string;
@@ -221,4 +225,27 @@ export interface ParseContext {
   searchEngine: string;
   envGroups: EnvGroup[];
   currentUrl?: string;
+}
+
+export type DownloadState = 'progressing' | 'completed' | 'cancelled' | 'interrupted';
+
+export interface DownloadInfo {
+  id: string;
+  url: string;
+  filename: string;
+  savePath: string;
+  state: DownloadState;
+  paused: boolean;
+  received: number;
+  total: number;
+  /** Bytes per second, smoothed. */
+  speed: number;
+  startedAt: number;
+  endedAt: number;
+  mime: string;
+  canResume: boolean;
+  /** Opening it can run code (executables, scripts, shortcuts, disk images). */
+  risky: boolean;
+  /** A finished file that is no longer on disk. */
+  missing?: boolean;
 }

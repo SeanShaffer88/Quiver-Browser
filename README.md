@@ -86,6 +86,7 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `Ctrl+R` / `F5` | Reload |
 | `Alt+←` / `Alt+→` | Back / forward |
 | `F12` / `Ctrl+Shift+I` | DevTools for the active tab |
+| `Ctrl+J` | Downloads |
 
 ### Command bar
 
@@ -142,6 +143,10 @@ Quiver sends no telemetry, has no account and does not check for updates; crash 
 - **Spell check**: on Windows it uses the Windows spell checker and downloads nothing. On other systems it is off by default because Chromium would download dictionaries from Google.
 - **Clear on exit**: deletes cookies, site storage and cache in every Space when Quiver closes; tabs, bookmarks and notes stay.
 
+### Downloads
+
+`Ctrl+J` (or **Open downloads** in the command bar) opens `quiver://downloads`, which lists downloads from every Space with progress, speed and time left. You can pause, resume, cancel, retry, open, show in folder or remove each one. A download that failed partway can resume, even after a restart, when the server supports it. Opening executables, scripts, shortcuts or disk images asks for confirmation first. While files download, the toolbar shows their combined progress. Quiver asks where to save each file by default; turn off **Settings → Downloads → Ask where to save** to save straight to the Downloads folder (the Data folder in Quiver Portable), where a repeated name gets a number such as `report (1).pdf`.
+
 ### Where data lives
 - Installed: `%APPDATA%\Quiver\`
 - PortableApps: `Data\` in the QuiverPortable folder. In addition to the profile, it holds `Cache\`, `Temp\`, `Logs\`, `CrashDumps\` and the default `Downloads\` directory.
@@ -187,7 +192,7 @@ Quiver currently covers these Flecha workflows. Archives and general split view 
 | 8 | Coding-agent browser automation | Omitted from the Windows build | Unavailable |
 | 9 | Local-first / no telemetry | No analytics, no accounts, atomic local JSON | Included |
 | 10 | Windows installer / build script | Branded Windows setup, offline PortableApps.com installer, optional MSI | Build targets configured |
-| – | Other browser features | Chrome Web Store extensions, sync, bookmark editing, history UI, downloads UI, permission prompts, third-party cookie blocking, password manager, auto-update | Unavailable |
+| – | Other browser features | Chrome Web Store extensions, sync, bookmark editing, history UI, permission prompts, third-party cookie blocking, password manager, auto-update | Unavailable |
 
 ## Verification
 

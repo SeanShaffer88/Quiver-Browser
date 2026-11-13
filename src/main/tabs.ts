@@ -34,6 +34,7 @@ import {
   type ClosedTab,
 } from './session-recovery';
 import { moveInGroup } from './tab-order';
+import type { Downloads } from './downloads';
 import { canNest, deleteFolder, displayOrder, folderName, placeRelative, sidebarRows } from './tab-tree';
 
 interface Tab {
@@ -127,6 +128,8 @@ export class TabManager {
   devServers: DevServer[] = [];
   /** Called for each main-frame page a web tab shows (research recording). */
   onVisit?: (spaceId: string, url: string, title: string) => void;
+  /** Tracks downloads from web Spaces. */
+  downloads?: Downloads;
   /** The research topic recording in a Space, for the toolbar. */
   researchStatus?: (spaceId: string) => ShellState['research'];
   private readonly endpointStatus = new EndpointStatus();
@@ -237,6 +240,7 @@ export class TabManager {
       sidebar: sidebarRows(this.spaceTabs(this.activeSpaceId), this.folders(this.activeSpaceId)),
       activeTabId: this.activeTabId,
       research: this.researchStatus?.(this.activeSpaceId),
+      downloads: this.downloads?.summary(),
       devServers: this.devServers,
       preview: this.preview,
       phoneStatus: this.getPhoneStatus(),
@@ -279,16 +283,8 @@ export class TabManager {
     if (this.preparedPartitions.has(partition)) return;
     this.preparedPartitions.add(partition);
     const ses = session.fromPartition(partition);
-    const downloadPath = this.portableDownloadPath;
-    if (downloadPath) {
-      ses.setDownloadPath(downloadPath);
-      ses.on('will-download', (_event, item) => {
-        // Chromium otherwise prefers the last folder selected in Save As.
-        const name = path.basename(item.getFilename());
-        const safeName = name && name !== '.' && name !== '..' && !/[<>:"/\\|?*\u0000-\u001f]/u.test(name);
-        item.setSaveDialogOptions({ ...item.getSaveDialogOptions(), defaultPath: safeName ? path.join(downloadPath, name) : downloadPath });
-      });
-    }
+    if (this.portableDownloadPath) ses.setDownloadPath(this.portableDownloadPath);
+    if (partition !== INTERNAL_PARTITION) this.downloads?.attach(ses, partition);
     if (partition !== INTERNAL_PARTITION) configureSitePermissions(ses, true);
   }
 

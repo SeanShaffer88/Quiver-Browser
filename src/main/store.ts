@@ -30,6 +30,7 @@ export interface PersistedState {
   bookmarks: Bookmark[];
   bookmarkUndo?: BookmarkUndo;
   sessionOpen?: boolean;
+  downloads?: unknown[];
   topics?: Topic[];
   activeTopicBySpace?: Record<string, string>;
   bounds?: { x?: number; y?: number; width: number; height: number; maximized: boolean };
@@ -41,6 +42,7 @@ export function defaultSettings(): Settings {
     searchEngine: DEFAULT_SEARCH,
     devServerScan: true,
     sidebarCollapsed: false,
+    askWhereToSave: true,
     privacy: normalizePrivacy(undefined, process.platform),
   };
 }
@@ -110,6 +112,7 @@ export class Store {
           searchEngine: raw.settings?.searchEngine ?? base.settings.searchEngine,
           devServerScan: raw.settings?.devServerScan ?? base.settings.devServerScan,
           sidebarCollapsed: raw.settings?.sidebarCollapsed ?? base.settings.sidebarCollapsed,
+          askWhereToSave: typeof raw.settings?.askWhereToSave === 'boolean' ? raw.settings.askWhereToSave : true,
           privacy: normalizePrivacy(raw.settings?.privacy, process.platform),
         },
       } as PersistedState;

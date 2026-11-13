@@ -18,6 +18,7 @@ export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string
   { command: 'devtools', label: 'Toggle DevTools', keys: 'F12', keywords: 'inspect developer console' },
   { command: 'boosts', label: 'Open Boosts', keys: 'Ctrl+Shift+B', keywords: 'css script' },
   { command: 'settings', label: 'Open Settings', keys: '', keywords: 'preferences options' },
+  { command: 'downloads', label: 'Open downloads', keys: 'Ctrl+J', keywords: 'files saved' },
 ];
 
 const PER_KIND = 8;

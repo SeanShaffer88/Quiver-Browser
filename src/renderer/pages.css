@@ -57,3 +57,12 @@ kbd, code { font: 12px var(--mono); background: var(--panel-2); border: 1px soli
 .trail-item.search .k { color: var(--local); }
 .item-note { width: 100%; resize: vertical; margin-top: 6px; font: inherit; font-size: 12px; line-height: 1.4; }
 @media (forced-colors: active) { .trail-item { border-color: CanvasText; } }
+/* downloads */
+.downloads { list-style: none; padding: 0; margin: 12px 0; display: flex; flex-direction: column; gap: 8px; }
+.download { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.download-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.download-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.download.cancelled .download-name, .download.interrupted .download-name { color: var(--muted); text-decoration: line-through; }
+.download progress { width: 100%; height: 6px; accent-color: var(--accent); }
+.download-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+@media (forced-colors: active) { .download { border-color: CanvasText; } }

@@ -110,3 +110,5 @@ body { display: grid; grid-template-columns: var(--sb, 264px) minmax(0, 1fr); gr
 .research-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--prod); flex: none; }
 .research-chip .research-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (forced-colors: active) { .research-chip .dot { background: CanvasText; } }
+
+.downloads-chip { display: flex; align-items: center; gap: 4px; padding: 3px 8px; border: 1px solid var(--accent); border-radius: 999px; color: var(--text); font-size: 12px; flex: none; font-variant-numeric: tabular-nums; }
