@@ -64,7 +64,7 @@ This section describes the current source. See the release notes for the feature
 
 ### Shortcuts
 
-Drag a tab in the sidebar to reorder it within its Space; the order is saved with the session.
+Drag a tab in the sidebar to reorder it within its Space; the order is saved with the session. In the tab list, `↑` / `↓` / `Home` / `End` move focus between tabs. The list only draws the rows in view, so Spaces with hundreds of tabs stay responsive.
 
 Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a title or hostname to narrow the results. Use the arrow keys and Enter to switch directly to a tab in its Space. Each result shows its Space and, when available, its environment.
 
