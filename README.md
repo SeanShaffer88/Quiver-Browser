@@ -64,6 +64,8 @@ This section describes the current source. See the release notes for the feature
 
 ### Shortcuts
 
+Drag a tab in the sidebar to reorder it within its Space; the order is saved with the session.
+
 Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a title or hostname to narrow the results. Use the arrow keys and Enter to switch directly to a tab in its Space. Each result shows its Space and, when available, its environment.
 
 | Keys | Action |
@@ -78,7 +80,8 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `Ctrl+Shift+B` | Boosts page |
 | `Ctrl+W` | Close tab |
 | `Ctrl+Shift+T` | Reopen the latest closed tab in its original Space |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab`, `Ctrl+PageDown` / `Ctrl+PageUp` | Next / previous tab |
+| `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown` | Move the active tab up / down in its Space |
 | `Ctrl+1…9` | Jump to tab |
 | `Ctrl+R` / `F5` | Reload |
 | `Alt+←` / `Alt+→` | Back / forward |
@@ -149,7 +152,7 @@ Quiver currently covers these Flecha workflows. Pinned tabs, tab folders, archiv
 | # | Flecha feature | Quiver (Windows) | Status |
 |---|---|---|---|
 | 1 | Chromium rendering | Electron 45.3.1 (Chromium) | Included |
-| 2 | Vertical sidebar | Collapsible sidebar, tab list, favicons, close, middle-click close | Included |
+| 2 | Vertical sidebar | Collapsible sidebar, tab list, favicons, close, middle-click close, drag and keyboard reorder | Included |
 | 2 | Spaces | Create / rename / delete, per-Space partition (cookies, storage) | Included |
 | 3 | Command bar | `Ctrl+K` / `Ctrl+L` / `Ctrl+T` overlay | Included |
 | 3 | `gh` `npm` `mdn` `caniuse` `so` | Offline parser → URL | Included |
@@ -163,7 +166,7 @@ Quiver currently covers these Flecha workflows. Pinned tabs, tab folders, archiv
 | 8 | Coding-agent browser automation | Omitted from the Windows build | Unavailable |
 | 9 | Local-first / no telemetry | No analytics, no accounts, atomic local JSON | Included |
 | 10 | Windows installer / build script | Branded Windows setup, offline PortableApps.com installer, optional MSI | Build targets configured |
-| – | Other browser features | Chrome Web Store extensions, sync, bookmark editing, history UI, downloads UI, permission prompts, password manager, tab drag-reorder, auto-update | Unavailable |
+| – | Other browser features | Chrome Web Store extensions, sync, bookmark editing, history UI, downloads UI, permission prompts, password manager, auto-update | Unavailable |
 
 ## Verification
 

@@ -2,6 +2,11 @@
 
 All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog.com), versioning: SemVer.
 
+## [Unreleased]
+
+- Reorder tabs within a Space by dragging them in the sidebar or with `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown`; the order is saved with the session.
+- `Ctrl+PageUp` / `Ctrl+PageDown` switch to the previous / next tab.
+
 ## [0.1.0-beta.2] - 2026-11-12
 
 - Use the Pierced Q icon in Quiver and its Windows installers.

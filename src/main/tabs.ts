@@ -33,6 +33,7 @@ import {
   snapshotSpace,
   type ClosedTab,
 } from './session-recovery';
+import { moveInGroup } from './tab-order';
 
 interface Tab {
   id: number;
@@ -552,6 +553,23 @@ export class TabManager {
     if (list.length < 2) return;
     const i = list.findIndex((t) => t.id === this.activeTabId);
     this.activateTab(list[(i + delta + list.length) % list.length].id);
+  }
+
+  /** Move a tab to `toIndex` within its Space. */
+  moveTab(id: number, toIndex: number): void {
+    const order = moveInGroup([...this.tabs.values()], id, toIndex, (t) => t.spaceId);
+    if (!order) return;
+    this.tabs.clear();
+    for (const t of order) this.tabs.set(t.id, t);
+    this.persist();
+    this.emit();
+  }
+
+  shiftActiveTab(delta: number): void {
+    const tab = this.activeTab;
+    if (!tab) return;
+    const list = [...this.tabs.values()].filter((t) => t.spaceId === tab.spaceId);
+    this.moveTab(tab.id, list.indexOf(tab) + delta);
   }
 
   tabByIndex(n: number): void {
