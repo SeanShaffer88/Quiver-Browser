@@ -20,7 +20,7 @@ import { shareTarget } from './native/share';
 import type { SyncService } from './sync-service';
 import type { History } from './history';
 import type { DownloadAction, Downloads } from './downloads';
-import { tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
+import { splitSearchQuery, splitSuggestions, tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
 
 export interface IpcDeps {
@@ -160,6 +160,8 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (downloadSuggestion) return downloadSuggestion;
     const archived = /^archive(?:\s+([\s\S]*))?$/i.exec(text.trim());
     if (archived) return archiveSuggestions((archived[1] ?? '').trim(), tabs.archive);
+    const splitQuery = splitSearchQuery(text);
+    if (splitQuery !== undefined) return splitSuggestions(splitQuery, context.spaceId, context.tabId, openTabTargets());
     const tabQuery = tabSearchQuery(text);
     if (tabQuery !== undefined) return tabSearchSuggestions(tabQuery, context.spaceId, openTabTargets());
     const palette = paletteQuery(text);
@@ -219,6 +221,10 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
           { label: 'New folder', click: () => newFolder(null) },
         ],
       },
+      { type: 'separator' },
+      tabs.inSplit(tab.id)
+        ? { label: 'Exit split view', click: () => tabs.exitSplit() }
+        : { label: 'Open in split view', enabled: tabs.activeTabId !== null && tabs.activeTab?.spaceId === tab.spaceId, click: () => tabs.startSplit(tab.id) },
       { type: 'separator' },
       { label: 'Copy link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(false); if (link) clipboard.writeText(link); } },
       { label: 'Copy Markdown link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(true); if (link) clipboard.writeText(link); } },
@@ -281,6 +287,13 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   });
   handle('shell', 'find:close', () => tabs.stopFind(true));
   handle('shell', 'zoom:reset', () => tabs.zoom(0));
+  // split view and Peek
+  handle('shell', 'split:ratio', (_e, ratio: unknown) => {
+    if (typeof ratio === 'number' && Number.isFinite(ratio)) tabs.setSplitRatio(ratio);
+  });
+  handle('shell', 'split:exit', () => tabs.exitSplit());
+  handle('shell', 'peek:close', () => tabs.closePeek());
+  handle('shell', 'peek:open-tab', () => tabs.peekToTab());
 
   // spaces
   handle('shell', 'space:create', (_e, name: string, isolated: boolean) => {
@@ -407,6 +420,14 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
         tabs.activateTab(tab.id);
         break;
       }
+      case 'split-with': {
+        const tab = tabs.tabs.get(action.target.id);
+        const space = tab && tabs.spaces.find(({ id }) => id === tab.spaceId);
+        if (!tab || !space || tab.view.webContents.isDestroyed() ||
+            !tabTargetMatches(action.target, commandTabTarget(tab, space.name))) return 'stale';
+        closeOverlay(true);
+        return tabs.startSplit(tab.id) ? 'done' : 'unavailable';
+      }
     }
     closeOverlay(false);
     return 'done';
@@ -474,6 +495,10 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (typeof patch.devServerScan === 'boolean') s.devServerScan = patch.devServerScan;
     if (typeof patch.rememberHistory === 'boolean') s.rememberHistory = patch.rememberHistory;
     if (typeof patch.askWhereToSave === 'boolean') s.askWhereToSave = patch.askWhereToSave;
+    if (typeof patch.peekPinnedLinks === 'boolean') {
+      s.peekPinnedLinks = patch.peekPinnedLinks;
+      if (!s.peekPinnedLinks) tabs.closePeek();
+    }
     if (patch.archiveAfterHours !== undefined) s.archiveAfterHours = normalizeArchiveHours(patch.archiveAfterHours);
     if (patch.privacy !== undefined && typeof patch.privacy === 'object') {
       s.privacy = normalizePrivacy({ ...s.privacy, ...patch.privacy }, process.platform);

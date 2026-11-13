@@ -54,6 +54,7 @@ export function defaultSettings(): Settings {
     rememberHistory: true,
     askWhereToSave: true,
     archiveAfterHours: DEFAULT_ARCHIVE_HOURS,
+    peekPinnedLinks: true,
     privacy: normalizePrivacy(undefined, process.platform),
   };
 }
@@ -127,6 +128,7 @@ export class Store {
           rememberHistory: typeof raw.settings?.rememberHistory === 'boolean' ? raw.settings.rememberHistory : true,
           askWhereToSave: typeof raw.settings?.askWhereToSave === 'boolean' ? raw.settings.askWhereToSave : true,
           archiveAfterHours: normalizeArchiveHours(raw.settings?.archiveAfterHours),
+          peekPinnedLinks: typeof raw.settings?.peekPinnedLinks === 'boolean' ? raw.settings.peekPinnedLinks : true,
           privacy: normalizePrivacy(raw.settings?.privacy, process.platform),
         },
       } as PersistedState;

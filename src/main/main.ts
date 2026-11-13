@@ -200,7 +200,15 @@ async function main(): Promise<void> {
         actions?.openCommandBar(undefined, 'current');
         break;
       case 'close-tab':
-        if (tabs.activeTabId !== null) tabs.closeTab(tabs.activeTabId);
+        // Ctrl+W in a Peek puts the Peek away rather than closing the pinned tab behind it.
+        if (tabs.peekOpen) tabs.closePeek();
+        else if (tabs.activeTabId !== null) tabs.closeTab(tabs.activeTabId);
+        break;
+      case 'split':
+        tabs.startSplit();
+        break;
+      case 'unsplit':
+        tabs.exitSplit();
         break;
       case 'reopen-tab':
         tabs.reopenClosedTab();

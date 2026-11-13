@@ -29,6 +29,8 @@ export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string
   { command: 'find', label: 'Find in page', keys: 'Ctrl+F', keywords: 'search text' },
   { command: 'zoom-in', label: 'Zoom in', keys: 'Ctrl+=', keywords: 'bigger larger text size' },
   { command: 'zoom-out', label: 'Zoom out', keys: 'Ctrl+-', keywords: 'smaller text size' },
+  { command: 'split', label: 'Split view with the next tab', keys: 'Ctrl+Shift+=', keywords: 'side by side two panes compare' },
+  { command: 'unsplit', label: 'Exit split view', keys: 'Ctrl+Shift+-', keywords: 'close side by side single pane unsplit' },
   { command: 'zoom-reset', label: 'Reset zoom', keys: 'Ctrl+0', keywords: '100 percent default size' },
 ];
 

@@ -300,6 +300,7 @@ function renderGroups(): void {
   void showHistoryCount();
   $<HTMLInputElement>('ask-save').checked = settings.askWhereToSave;
   $<HTMLSelectElement>('archive-after').value = String(settings.archiveAfterHours);
+  $<HTMLInputElement>('peek-pinned').checked = settings.peekPinnedLinks;
   renderPrivacy(settings.privacy);
 })();
 
@@ -431,5 +432,6 @@ $<HTMLSelectElement>('privacy-dns').addEventListener('change', (e) => {
 });
 $('privacy-doh-save').addEventListener('click', () => void savePrivacy({ secureDns: 'custom', dohTemplate: $<HTMLInputElement>('privacy-doh').value }));
 
+$<HTMLInputElement>('peek-pinned').addEventListener('change', (e) => void quiver.invoke('settings:set', { peekPinnedLinks: (e.target as HTMLInputElement).checked }));
 $<HTMLInputElement>('ask-save').addEventListener('change', (e) => void quiver.invoke('settings:set', { askWhereToSave: (e.target as HTMLInputElement).checked }));
 $<HTMLSelectElement>('archive-after').addEventListener('change', (e) => void quiver.invoke('settings:set', { archiveAfterHours: Number((e.target as HTMLSelectElement).value) }));
