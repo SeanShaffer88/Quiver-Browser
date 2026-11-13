@@ -48,6 +48,24 @@
     </div>
   </div>
 
+  <h2 id="arc-import-title" tabindex="-1">Import from Arc</h2>
+  <p class="note" id="arc-sidebar-help">Bring Arc’s Spaces, pinned tabs, folders and Favorites into Quiver from <code>StorableSidebar.json</code>. Arc for Windows keeps it in <code>%LOCALAPPDATA%\Packages\TheBrowserCompany.Arc_…\LocalCache\Local\Arc</code>. You review everything before Quiver changes anything.</p>
+  <div class="row">
+    <button type="button" class="btn" id="arc-sidebar-detected" hidden>Review Arc sidebar on this PC</button>
+    <button type="button" class="btn" id="arc-sidebar-choose" aria-describedby="arc-sidebar-help">Choose Arc sidebar file…</button>
+    <input id="arc-sidebar-file" type="file" accept=".json,application/json" hidden>
+    <button type="button" class="btn" id="arc-sidebar-clear" hidden>Cancel review</button>
+    <button type="button" class="btn" id="arc-sidebar-undo" hidden>Undo Arc import</button>
+  </div>
+  <p class="status" id="arc-sidebar-status" role="status"></p>
+  <section class="group arc-sidebar-review" id="arc-sidebar-review" aria-labelledby="arc-sidebar-heading" hidden>
+    <h3 id="arc-sidebar-heading" tabindex="-1">Review Arc sidebar</h3>
+    <p id="arc-sidebar-summary"></p>
+    <div id="arc-sidebar-content"></div>
+    <p class="note">Spaces with the same name are merged and tabs already in that Space are skipped. Imported tabs are pinned and load when you open them. Quiver has not changed anything yet.</p>
+    <div class="row"><button type="button" class="btn primary" id="arc-sidebar-import">Import</button></div>
+  </section>
+
   <h2>Environments</h2>
   <p class="note">Group the origins of one app once. Then <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>) cycles local → staging → production, keeping path, query and hash. Leave an origin empty to skip it.</p>
   <div id="groups"></div>

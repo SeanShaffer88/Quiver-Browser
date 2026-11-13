@@ -470,6 +470,25 @@ function renderRecovery(s: ShellState): HTMLElement[] {
       }, 'ⓘ'),
     ));
   }
+  if (s.arcImportOffer) {
+    cards.push(h('div', { class: 'recovery-card arc-offer' },
+      h('p', { class: 'recovery-copy' }, 'Bring your Arc Spaces, pins and folders into Quiver.'),
+      h('button', {
+        class: 'btn',
+        'aria-label': 'Review Arc import',
+        title: 'Review your Arc sidebar in Settings before importing it',
+        dataset: { focusKey: 'arc-offer-open' },
+        onClick: () => call('arc:offer-open'),
+      }, h('span', { class: 'recovery-expanded' }, 'Review import'), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, 'A')),
+      h('button', {
+        class: 'icon-btn recovery-expanded',
+        'aria-label': 'Dismiss Arc import',
+        title: 'Not now. Import from Arc stays available in Settings.',
+        dataset: { focusKey: 'arc-offer-dismiss' },
+        onClick: () => call('arc:offer-dismiss'),
+      }, '×'),
+    ));
+  }
   const closed = s.recentlyClosed;
   const original = closed && s.spaces.find(({ id }) => id === closed.spaceId);
   if (closed && original) {
@@ -512,7 +531,7 @@ function sidebarKey(s: ShellState): string {
   return JSON.stringify([
     s.tabs.filter((t) => t.spaceId === s.activeSpaceId),
     devServers,
-    rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.recentlyClosed, rest.recoveryNotice, rest.localServerStatus,
+    rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.recentlyClosed, rest.recoveryNotice, rest.arcImportOffer, rest.localServerStatus,
     rest.settings.sidebarCollapsed, rest.settings.devServerScan, addingSpace, renamingSpace, renamingFolder,
   ]);
 }

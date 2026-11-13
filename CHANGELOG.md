@@ -4,6 +4,7 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+- Import from Arc: Settings finds or opens Arc's `StorableSidebar.json`, reviews it, and imports Spaces, pinned tabs, nested folders and Favorites as lazy pinned tabs, merging same-named Spaces and skipping tabs already there, with undo. A first launch with Arc installed offers it once in the sidebar.
 - WebDAV downloads (`davs://…`): files or whole folders, passwords only over HTTPS, listings confined to the folder.
 - DASH downloads combine fragmented-MP4 video and audio into one `.mp4` with Quiver's own muxer.
 - Native downloaders: FTP/FTPS (resumable, encryption first, no FTP bounce), HLS with AES-128, on-demand MPEG-DASH, and Metalink with mirror failover and checksum checks; `download <address>` in the command bar; Windows shares open in File Explorer.
