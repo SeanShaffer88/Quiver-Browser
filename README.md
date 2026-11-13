@@ -206,7 +206,12 @@ Quiver-Browser/
 
 ## Feature-parity checklist
 
-Quiver currently covers these Flecha workflows. General split view is outside this build’s scope.
+Quiver currently covers these Flecha workflows, plus split view and Peek (below).
+
+### Split view and Peek
+
+- **Split view**: two tabs of the same Space side by side. Right-click a tab → *Open in split view* (pairs it with the active tab), type `split …` in the command bar (*Split view with …*), or press `Ctrl+Shift+=` to split the active tab with the next tab (a new tab when there is none). `Ctrl+Shift+-` or *Exit split view* ends it. Drag the divider (or focus it and use the arrow keys) to resize between 20% and 80%; double-click resets. The position is remembered per pair until Quiver closes. Clicking into a pane makes it the active tab, so the address bar, find bar, zoom and phone preview follow it. Both tabs are marked in the sidebar; closing either ends the split. `Ctrl+Shift+=` replaces the Shift variant of zoom in: `Ctrl+=` and `Ctrl+Numpad+` still zoom.
+- **Peek**: a link a pinned tab opens in a new tab or window (`target=_blank`, `window.open`) shows in a floating preview over the page, in the same storage partition and under the same navigation and site-permission rules. *Open as tab* keeps the page as a temporary tab, with its history. *Close*, `Esc`, `Ctrl+W` or a click on the dimmed page closes it. Turn it off in Settings → Tabs → *Open links from pinned tabs in Peek*.
 
 | # | Flecha feature | Quiver (Windows) | Status |
 |---|---|---|---|

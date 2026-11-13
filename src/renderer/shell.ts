@@ -1,4 +1,4 @@
-import type { LocalServerStatus, PhoneStatus, ShellState, SidebarRow, TabInfo, Space } from '../shared/types';
+import type { LocalServerStatus, PeekView, PhoneStatus, ShellState, SidebarRow, SplitView, TabInfo, Space } from '../shared/types';
 import { scrollToReveal, visibleRows } from './virtual-list.js';
 
 type Child = Node | string | null | undefined | false;
@@ -395,6 +395,7 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
   const fav = t.favicon ? h('img', { class: 'fav', src: t.favicon, alt: '' }) : h('span', { class: 'fav' });
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
+  if (t.split) kids.push(h('span', { class: 'split-mark', title: `In split view (${t.split} pane)`, 'aria-hidden': 'true' }, t.split === 'left' ? '◧' : '◨'));
   if (t.live) kids.push(h('span', { class: 'live', title: 'Using camera, microphone or screen sharing', 'aria-label': 'live' }, '●'));
   if (t.local && t.errors > 0) {
     kids.push(h('span', {
@@ -406,7 +407,7 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
   const select = h('button', {
     class: 'tab-select',
     role: 'treeitem',
-    'aria-label': t.title + (t.pinned ? ', pinned' : '') + (t.live ? ', using camera or microphone' : ''),
+    'aria-label': t.title + (t.pinned ? ', pinned' : '') + (t.split ? `, in split view, ${t.split} pane` : '') + (t.live ? ', using camera or microphone' : ''),
     'aria-selected': String(active),
     'aria-level': String(m.level), 'aria-setsize': String(m.setsize), 'aria-posinset': String(m.posinset),
     dataset: { focusKey: 'tab-' + t.id },
@@ -422,7 +423,7 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
     onClick: () => call('tab:close', t.id),
   }, '×');
   return h('div', {
-    class: 'tab' + (active ? ' active' : '') + (t.loading ? ' loading' : '') + (t.pinned ? ' pinned' : ''),
+    class: 'tab' + (active ? ' active' : '') + (t.loading ? ' loading' : '') + (t.pinned ? ' pinned' : '') + (t.split ? ' split' : ''),
     dataset: { tabId: String(t.id) },
     onAuxclick: (e: MouseEvent) => {
       if (e.button === 1) void call('tab:close', t.id);
@@ -708,6 +709,8 @@ function render(): void {
   document.title = `Quiver — ${sp?.name ?? ''}`;
   renderSidebar(state);
   renderToolbar(state);
+  renderSplit(state.split, state.activeTabId);
+  renderPeek(state.peek);
   const message = recoveryMessage(state);
   if (recoveryStatus.textContent !== message) recoveryStatus.textContent = message;
   const devMessage = state.localServerStatus?.state === 'recovered' ? 'Local server is back. Retry the failed page.' :
@@ -717,6 +720,133 @@ function render(): void {
     if (!focusShellControl('tab-' + state.activeTabId)) focusShellControl('address');
   }
 }
+
+// ───────── split view ─────────
+// The two panes are native views; the shell only draws in the gap between them (the divider) and in a thin strip
+// above them that marks the active pane. Dragging works because the shell view keeps pointer capture while the
+// button is held, even when the pointer is over a page.
+const content = document.getElementById('content')!;
+const splitLayer = h('div', { class: 'split-layer', hidden: true });
+const leftStrip = h('div', { class: 'split-strip' });
+const rightStrip = h('div', { class: 'split-strip' });
+const divider = h('div', {
+  class: 'split-divider', role: 'separator', tabindex: 0, 'aria-orientation': 'vertical',
+  'aria-label': 'Split view divider', 'aria-valuemin': '20', 'aria-valuemax': '80',
+  title: 'Drag to resize the split view · double-click to reset · Ctrl+Shift+- exits split view',
+});
+splitLayer.append(leftStrip, rightStrip, divider);
+content.append(splitLayer);
+let splitNow: SplitView | undefined;
+let pendingRatio: number | null = null;
+
+function sendRatio(ratio: number): void {
+  const first = pendingRatio === null;
+  pendingRatio = Math.min(0.8, Math.max(0.2, ratio));
+  // One update per frame keeps the main process from re-laying out the panes for every pointer event.
+  if (first) requestAnimationFrame(() => {
+    const value = pendingRatio;
+    pendingRatio = null;
+    if (value !== null) void call('split:ratio', value);
+  });
+}
+
+function ratioFor(clientX: number): number | null {
+  if (!splitNow) return null;
+  const usable = splitNow.area.width - splitNow.divider.width;
+  if (usable <= 0) return null;
+  const x = clientX - content.getBoundingClientRect().left - splitNow.area.x - splitNow.divider.width / 2;
+  return x / usable;
+}
+
+divider.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  divider.setPointerCapture(e.pointerId);
+  divider.classList.add('dragging');
+});
+divider.addEventListener('pointermove', (e) => {
+  if (!divider.hasPointerCapture(e.pointerId)) return;
+  const ratio = ratioFor(e.clientX);
+  if (ratio !== null) sendRatio(ratio);
+});
+const endDrag = (e: PointerEvent) => {
+  if (divider.hasPointerCapture(e.pointerId)) divider.releasePointerCapture(e.pointerId);
+  divider.classList.remove('dragging');
+};
+divider.addEventListener('pointerup', endDrag);
+divider.addEventListener('pointercancel', endDrag);
+divider.addEventListener('dblclick', () => sendRatio(0.5));
+divider.addEventListener('keydown', (e) => {
+  if (!splitNow) return;
+  const step = e.shiftKey ? 0.1 : 0.05;
+  const next = e.key === 'ArrowLeft' ? splitNow.ratio - step : e.key === 'ArrowRight' ? splitNow.ratio + step :
+    e.key === 'Home' ? 0.2 : e.key === 'End' ? 0.8 : null;
+  if (next === null) return;
+  e.preventDefault();
+  sendRatio(next);
+});
+
+function place(el: HTMLElement, r: { x: number; y: number; width: number; height: number }): void {
+  el.style.left = `${r.x}px`;
+  el.style.top = `${r.y}px`;
+  el.style.width = `${r.width}px`;
+  el.style.height = `${r.height}px`;
+}
+
+function renderSplit(split: SplitView | undefined, activeTabId: number | null): void {
+  splitNow = split;
+  splitLayer.hidden = !split;
+  if (!split) return;
+  place(divider, split.divider);
+  place(leftStrip, { x: split.leftPane.x, y: split.area.y, width: split.leftPane.width, height: split.leftPane.y - split.area.y });
+  place(rightStrip, { x: split.rightPane.x, y: split.area.y, width: split.rightPane.width, height: split.rightPane.y - split.area.y });
+  leftStrip.classList.toggle('active', activeTabId === split.left);
+  rightStrip.classList.toggle('active', activeTabId === split.right);
+  const percent = String(Math.round(split.ratio * 100));
+  divider.setAttribute('aria-valuenow', percent);
+  divider.setAttribute('aria-valuetext', `Left pane ${percent}%`);
+}
+
+// ───────── Peek ─────────
+// While a Peek is open the main process hides the page and sends a still image of it, so the shell can dim it and
+// draw the Peek's header bar (the live Peek page sits just below the header).
+const peekLayer = h('div', { class: 'peek-layer', hidden: true, onClick: (e: MouseEvent) => { if (e.target === peekLayer || (e.target as HTMLElement).closest('.peek-backdrop')) void call('peek:close'); } });
+const peekBackdrop = h('div', { class: 'peek-backdrop' });
+const peekHost = h('span', { class: 'peek-host' });
+const peekHeader = h('div', { class: 'peek-header', role: 'toolbar', 'aria-label': 'Peek' },
+  peekHost,
+  h('button', { class: 'peek-btn', title: 'Keep this page as a tab', onClick: () => call('peek:open-tab') }, 'Open as tab'),
+  h('button', { class: 'peek-btn', title: 'Close the Peek (Esc)', 'aria-label': 'Close Peek (Esc)', onClick: () => call('peek:close') }, 'Close'),
+);
+peekLayer.append(peekBackdrop, peekHeader);
+content.append(peekLayer);
+
+function renderPeek(peek: PeekView | undefined): void {
+  peekLayer.hidden = !peek;
+  if (!peek) {
+    peekBackdrop.replaceChildren();
+    return;
+  }
+  place(peekHeader, peek.header);
+  peekHost.textContent = peek.host || peek.url;
+  peekHost.title = peek.url;
+}
+
+quiver.on('peek:backdrop', (images: unknown) => {
+  const list = Array.isArray(images) ? images : [];
+  peekBackdrop.replaceChildren(...list.filter((i) => typeof i?.src === 'string' && i.src.startsWith('data:image/') && i.rect).map((i) => {
+    const img = h('img', { src: i.src, alt: '' });
+    place(img, i.rect);
+    return img;
+  }));
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state?.peek && !e.defaultPrevented) {
+    e.preventDefault();
+    void call('peek:close');
+  }
+});
 
 quiver.on('state', (s: ShellState) => {
   // Don't clobber an inline editor the user is typing in.

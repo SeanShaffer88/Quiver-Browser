@@ -42,6 +42,8 @@ export interface Settings {
   askWhereToSave: boolean;
   /** Archive temporary tabs unused for this many hours; 0 never. */
   archiveAfterHours: number;
+  /** Links a pinned tab opens in a new tab or window open in a floating Peek instead. */
+  peekPinnedLinks: boolean;
   privacy: PrivacySettings;
 }
 
@@ -106,6 +108,30 @@ export interface TabInfo {
   internal: boolean;
   env: EnvBadge | null;
   activeBoosts: string[];
+  /** Which side of the split view the tab is on, when it is in one. */
+  split: 'left' | 'right' | null;
+}
+
+/** Rectangles are relative to the shell's page area (below the toolbar, right of the sidebar). */
+interface ShellRect { x: number; y: number; width: number; height: number }
+
+export interface SplitView {
+  left: number;
+  right: number;
+  /** Share of the width the left pane takes (0.2–0.8). */
+  ratio: number;
+  /** The area both panes share, for turning a pointer position into a ratio. */
+  area: ShellRect;
+  divider: ShellRect;
+  leftPane: ShellRect;
+  rightPane: ShellRect;
+}
+
+export interface PeekView {
+  host: string;
+  url: string;
+  header: ShellRect;
+  frame: ShellRect;
 }
 
 export interface DevServer {
@@ -154,6 +180,10 @@ export interface ShellState {
   preview: boolean;
   phoneStatus: PhoneStatus;
   localServerStatus: LocalServerStatus | null;
+  /** The split view the active tab is part of, when it is shown. */
+  split?: SplitView;
+  /** The floating preview of a link opened from a pinned tab. */
+  peek?: PeekView;
   settings: Settings;
 }
 
@@ -175,6 +205,7 @@ export type SuggestionAction =
   | { type: 'env'; target: EnvBadge; url: string }
   | { type: 'internal'; page: 'boosts' | 'settings' | 'research' | 'downloads' }
   | { type: 'activate-tab'; target: TabCommandTarget }
+  | { type: 'split-with'; target: TabCommandTarget }
   | { type: 'browser'; command: BrowserCommand }
   | { type: 'download'; url: string }
   | { type: 'open-share'; path: string }
@@ -189,7 +220,8 @@ export type BrowserCommand =
   | 'command-new' | 'close-tab' | 'reopen-tab' | 'reload' | 'back' | 'forward' | 'next-tab' | 'prev-tab'
   | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings' | 'downloads'
   | 'find' | 'zoom-in' | 'zoom-out' | 'zoom-reset'
-  | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space';
+  | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space'
+  | 'split' | 'unsplit';
 
 export interface Suggestion {
   kind: string;

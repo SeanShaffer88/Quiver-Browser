@@ -55,3 +55,23 @@ export function tabTargetMatches(before: TabCommandTarget, after: TabCommandTarg
     before.revision === after.revision && before.url === after.url && before.title === after.title &&
     before.host === after.host && before.environment === after.environment;
 }
+
+/** `split …` in the command bar: "Split view with …" for each other tab of the current Space. */
+export function splitSearchQuery(text: string): string | undefined {
+  const match = /^split(?:\s+(?:view\s+)?(?:with\s+)?(.*))?$/is.exec(text.trim());
+  return match ? (match[1] ?? '').trim().toLowerCase() : undefined;
+}
+
+export function splitSuggestions(query: string, activeSpaceId: string, activeTabId: number | null, targets: Iterable<TabCommandTarget>): Suggestion[] {
+  const found: { score: number; order: number; target: TabCommandTarget }[] = [];
+  let order = 0;
+  for (const target of targets) {
+    // Split view pairs tabs of one Space: both panes share the Space's storage and sidebar.
+    if (target.spaceId !== activeSpaceId || target.id === activeTabId) continue;
+    const score = query ? Math.max(fuzzyScore(query, target.title), fuzzyScore(query, target.host) - 5) : 0;
+    if (score >= 0) found.push({ score, order: order++, target });
+  }
+  const results = found.sort((a, b) => b.score - a.score || a.order - b.order).slice(0, RESULT_LIMIT)
+    .map(({ target }): Suggestion => ({ kind: 'split', label: `Split view with ${target.title}`, detail: target.host || undefined, action: { type: 'split-with', target } }));
+  return results.length ? results : [{ kind: 'split', label: query ? 'No matching tab in this Space' : 'No other tab in this Space', action: { type: 'noop' } }];
+}

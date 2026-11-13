@@ -12,7 +12,7 @@ import {
   TOOLBAR_H,
 } from '../shared/constants';
 import { badgeFor, isLocalHost, switchEnv } from '../shared/env';
-import type { DevServer, EnvBadge, Folder, LocalServerStatus, PhoneStatus, RecoveryNotice, ShellState, Space, TabInfo } from '../shared/types';
+import type { DevServer, EnvBadge, Folder, LocalServerStatus, PeekView, PhoneStatus, RecoveryNotice, ShellState, Space, SplitView, TabInfo } from '../shared/types';
 import { boostKind, boostMatchesHost, transpileBoost, wrapScript, type Boosts } from './boosts';
 import {
   allowsInternalNavigation, allowsWebNavigation, configureSitePermissions, internalTabUrl, isInternalTabPage, type InternalTabPage,
@@ -42,6 +42,16 @@ import { canNest, deleteFolder, displayOrder, folderName, normalizeFolders, plac
 import type { Downloads } from './downloads';
 import { nextZoom } from './browsing';
 import { markdownLink, recentOrder } from './keyboard-workflows';
+import { clampSplitRatio, opensInPeek, peekRects, relativeTo, splitPairKey, splitPartner, splitRects } from './split';
+
+interface Peek {
+  view: WebContentsView;
+  sourceTabId: number;
+  spaceId: string;
+  partition: string;
+  /** Removes the listeners that only make sense while the page is a Peek (Esc, header updates). */
+  detach: () => void;
+}
 
 interface Tab {
   id: number;
@@ -255,6 +265,7 @@ export class TabManager {
       live: !t.view.webContents.isDestroyed() && !!this.media?.isLive(t.view.webContents.id),
       env: t.internal ? null : badgeFor(url, this.settings.envGroups),
       activeBoosts: [...t.cssKeys.keys(), ...t.tsBoosts].sort(),
+      split: this.split?.left === t.id ? 'left' : this.split?.right === t.id ? 'right' : null,
     };
   }
 
@@ -277,6 +288,8 @@ export class TabManager {
       preview: this.preview,
       phoneStatus: this.getPhoneStatus(),
       localServerStatus: this.getLocalServerStatus(),
+      split: this.splitView(),
+      peek: this.peekView(),
       settings: this.settings,
     };
   }
@@ -356,14 +369,19 @@ export class TabManager {
   }
 
   // ───────── tabs ─────────
-  openTab(rawUrl: string, opts: { spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null; pinnedUrl?: string | null; lastActiveAt?: number } = {}): Tab {
+  openTab(rawUrl: string, opts: {
+    spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null; pinnedUrl?: string | null; lastActiveAt?: number;
+    /** An already loaded web view (a Peek) that becomes this tab, keeping its page, history and scroll position. */
+    adopt?: WebContentsView;
+  } = {}): Tab {
     const spaceId = opts.spaceId ?? this.activeSpaceId;
     const internal = rawUrl.startsWith('quiver://') || rawUrl === '';
     const url = internal ? toInternalUrl(rawUrl || 'quiver://newtab') : rawUrl;
     const parsedPage = internal ? internalPage(url) : undefined;
     const page = isInternalTabPage(parsedPage) ? parsedPage : undefined;
     const partition = this.partitionFor(spaceId, internal);
-    const view = this.createView(partition, page);
+    const adopted = !internal && opts.adopt && !opts.adopt.webContents.isDestroyed() ? opts.adopt : undefined;
+    const view = adopted ?? this.createView(partition, page);
     const tab: Tab = {
       id: this.nextId++,
       spaceId,
@@ -398,7 +416,10 @@ export class TabManager {
     this.bringOverlayToTop();
     view.setVisible(false);
     this.wire(tab);
-    if (opts.lazy) tab.pendingUrl = url;
+    if (adopted) {
+      tab.title = adopted.webContents.getTitle();
+      tab.loading = adopted.webContents.isLoading();
+    } else if (opts.lazy) tab.pendingUrl = url;
     else this.load(tab, url);
     if (opts.activate !== false) this.activateTab(tab.id);
     else this.layout();
@@ -523,8 +544,15 @@ export class TabManager {
       }
     });
     wc.setWindowOpenHandler(({ url }) => {
-      if (/^https?:/i.test(url)) this.openTab(url, { spaceId: tab.spaceId });
+      // Pinned tabs are long-lived apps (mail, chat, docs); links they spawn are usually a quick look, so they
+      // open in a Peek over the page instead of piling up temporary tabs.
+      if (opensInPeek(tab, this.settings.peekPinnedLinks, url)) this.openPeek(tab, url);
+      else if (/^https?:/i.test(url)) this.openTab(url, { spaceId: tab.spaceId });
       return { action: 'deny' };
+    });
+    // Clicking into the other pane of a split view makes it the active tab, so the address bar follows.
+    wc.on('focus', () => {
+      if (this.tabs.get(tab.id) === tab && tab.id !== this.activeTabId && this.inSplit(tab.id) && !this.peek) this.activateTab(tab.id);
     });
     wc.on('render-process-gone', (_e, details) => {
       if (this.tabs.get(tab.id) !== tab) return;
@@ -546,6 +574,8 @@ export class TabManager {
     const tab = this.tabs.get(id);
     if (!tab) return;
     if (this.findState && this.findState.tabId !== id) this.stopFind();
+    // A Peek belongs to the page it was opened over; going to another tab puts it away.
+    if (this.peek && this.peek.sourceTabId !== id) this.closePeek();
     if (tab.spaceId !== this.activeSpaceId) {
       this.store.state.activeSpaceId = tab.spaceId;
       this.store.save();
@@ -570,6 +600,7 @@ export class TabManager {
   closeTab(id: number, opts: { remove?: boolean } = {}): void {
     const tab = this.tabs.get(id);
     if (!tab) return;
+    if (this.inSplit(id)) this.exitSplit();
     if (tab.pinned && !opts.remove) {
       this.resetPinned(tab);
       return;
@@ -667,6 +698,8 @@ export class TabManager {
   }
 
   private discardTab(tab: Tab): void {
+    if (this.inSplit(tab.id)) this.exitSplit();
+    if (this.peek?.sourceTabId === tab.id) this.closePeek();
     if (!tab.view.webContents.isDestroyed()) this.media?.reset(tab.view.webContents.id);
     this.tabs.delete(tab.id);
     this.win.contentView.removeChildView(tab.view);
@@ -1182,7 +1215,7 @@ export class TabManager {
     }
     const origin = this.commandFocus;
     this.commandFocus = null;
-    const current = this.activeTab?.view.webContents;
+    const current = this.peek?.ready ? this.peek.view.webContents : this.activeTab?.view.webContents;
     if (restoreFocus && origin && !origin.contents.isDestroyed()) {
       if (origin.contents === this.shell.webContents) {
         origin.contents.focus();
@@ -1203,12 +1236,21 @@ export class TabManager {
     const sb = this.sidebarWidth();
     this.shell.setBounds({ x: 0, y: 0, width: W, height: H });
     this.overlay.setBounds({ x: 0, y: 0, width: W, height: H });
-    const reserve = this.phone ? PHONE_W + PHONE_MARGIN * 2 : 0;
-    const desktopW = Math.max(240, W - sb - reserve);
-    const rect: Rectangle = { x: sb, y: TOOLBAR_H, width: desktopW, height: Math.max(100, H - TOOLBAR_H) };
+    const rect = this.pageArea();
+    const desktopW = rect.width;
+    const split = this.shownSplit();
+    const panes = split && splitRects(rect, this.splitRatio(split));
+    const peek = this.peek?.ready && this.peek.spaceId === this.activeSpaceId ? this.peek : null;
     for (const t of this.tabs.values()) {
-      t.view.setBounds(rect);
-      t.view.setVisible(t.id === this.activeTabId && t.spaceId === this.activeSpaceId);
+      const pane = panes && (t.id === split.left ? panes.left : t.id === split.right ? panes.right : null);
+      t.view.setBounds(pane ?? rect);
+      // While a Peek is open the page behind it is shown as a still image drawn by the shell, so the shell can
+      // draw the Peek header and backdrop where the page would otherwise cover them.
+      t.view.setVisible(!peek && t.spaceId === this.activeSpaceId && (pane ? true : t.id === this.activeTabId));
+    }
+    if (this.peek) {
+      this.peek.view.setVisible(!!peek);
+      if (peek) this.peek.view.setBounds(peekRects(rect).view);
     }
     if (this.phone) {
       const pr: Rectangle = {
@@ -1229,8 +1271,216 @@ export class TabManager {
     this.emit();
   }
 
+  // ───────── split view ─────────
+  /** The pair of tabs shown side by side whenever one of them is active. Kept in memory only. */
+  private split: { left: number; right: number } | null = null;
+  /** Divider positions by pair, so re-splitting the same two tabs restores where the divider was. */
+  private readonly splitRatios = new Map<string, number>();
+
+  inSplit(id: number): boolean {
+    return !!this.split && (this.split.left === id || this.split.right === id);
+  }
+
+  /** The split, when the active tab is part of it and both halves are still in the active Space. */
+  private shownSplit(): { left: number; right: number } | null {
+    const split = this.split;
+    if (!split || this.activeTabId === null || !this.inSplit(this.activeTabId)) return null;
+    const left = this.tabs.get(split.left);
+    const right = this.tabs.get(split.right);
+    return left && right && left.spaceId === this.activeSpaceId && right.spaceId === this.activeSpaceId ? split : null;
+  }
+
+  private splitRatio(split: { left: number; right: number }): number {
+    return clampSplitRatio(this.splitRatios.get(splitPairKey(split.left, split.right)) ?? 0.5);
+  }
+
+  private pageArea(): Rectangle {
+    const [W, H] = this.win.getContentSize();
+    const sb = this.sidebarWidth();
+    const reserve = this.phone ? PHONE_W + PHONE_MARGIN * 2 : 0;
+    return { x: sb, y: TOOLBAR_H, width: Math.max(240, W - sb - reserve), height: Math.max(100, H - TOOLBAR_H) };
+  }
+
+  private splitView(): SplitView | undefined {
+    const split = this.shownSplit();
+    if (!split || this.win.isDestroyed()) return undefined;
+    const area = this.pageArea();
+    const origin = { x: area.x, y: area.y };
+    const ratio = this.splitRatio(split);
+    const r = splitRects(area, ratio);
+    return {
+      left: split.left, right: split.right, ratio,
+      area: relativeTo(area, origin), divider: relativeTo(r.divider, origin),
+      leftPane: relativeTo(r.left, origin), rightPane: relativeTo(r.right, origin),
+    };
+  }
+
+  /**
+   * Show the active tab next to another tab of the same Space. Without a partner, the next tab in the sidebar is
+   * used, else a new tab opens beside it. The active tab goes on the left.
+   */
+  startSplit(withId?: number): boolean {
+    const active = this.activeTab;
+    if (!active) return false;
+    let otherId = withId !== undefined && withId !== active.id ? withId : splitPartner(this.orderedSpaceTabs(), active.id);
+    const other = otherId === null ? undefined : this.tabs.get(otherId);
+    if (otherId !== null && (!other || other.spaceId !== active.spaceId)) return false;
+    if (this.peek) this.closePeek();
+    if (otherId === null) {
+      otherId = this.openTab('quiver://newtab', { spaceId: active.spaceId, activate: false }).id;
+    }
+    this.split = { left: active.id, right: otherId };
+    if (other?.pendingUrl) this.load(other, other.pendingUrl);
+    // A brand-new tab is where the person will type next; an existing partner keeps focus on the current page.
+    if (!other) this.activateTab(otherId);
+    else this.layout();
+    this.syncPhone();
+    this.emit();
+    return true;
+  }
+
+  exitSplit(): void {
+    if (!this.split) return;
+    this.split = null;
+    this.layout();
+    this.emit();
+  }
+
+  /** Move the divider of the split the active tab is in. The renderer sends this while dragging. */
+  setSplitRatio(ratio: number): void {
+    const split = this.shownSplit();
+    if (!split || !Number.isFinite(ratio)) return;
+    this.splitRatios.set(splitPairKey(split.left, split.right), clampSplitRatio(ratio));
+    this.layout();
+    this.emit();
+  }
+
+  // ───────── peek ─────────
+  private peek: (Peek & { url: string; ready: boolean }) | null = null;
+  private peekToken = 0;
+
+  get peekOpen(): boolean {
+    return !!this.peek;
+  }
+
+  private peekView(): PeekView | undefined {
+    const peek = this.peek;
+    if (!peek?.ready || peek.spaceId !== this.activeSpaceId || this.win.isDestroyed()) return undefined;
+    const area = this.pageArea();
+    const r = peekRects(area);
+    const url = peek.view.webContents.isDestroyed() ? peek.url : peek.view.webContents.getURL() || peek.url;
+    const origin = { x: area.x, y: area.y };
+    return { host: URL.parse(url)?.host ?? '', url, header: relativeTo(r.header, origin), frame: relativeTo(r.frame, origin) };
+  }
+
+  /** Open a link from a pinned tab in a floating preview over the page, in the same storage partition. */
+  openPeek(source: Tab, url: string): void {
+    this.closePeek();
+    // createView applies the web navigation guard; the partition already has the site-permission handlers.
+    const view = this.createView(source.partition);
+    const wc = view.webContents;
+    const onInput = (event: Electron.Event, input: Electron.Input) => {
+      if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.alt && !input.meta && !input.shift) {
+        event.preventDefault();
+        this.closePeek();
+        return;
+      }
+      const action = shortcutFor(input);
+      if (action) {
+        event.preventDefault();
+        this.onShortcut(action);
+      }
+    };
+    const onChange = () => this.emit();
+    const onGone = () => {
+      if (this.peek?.view === view) this.closePeek();
+    };
+    wc.on('before-input-event', onInput);
+    wc.on('did-navigate', onChange);
+    wc.on('did-navigate-in-page', onChange);
+    wc.on('render-process-gone', onGone);
+    // Further new-window links stay inside the Peek rather than stacking more previews.
+    wc.setWindowOpenHandler(({ url: next }) => {
+      if (/^https?:\/\//i.test(next)) void wc.loadURL(next).catch(() => undefined);
+      return { action: 'deny' };
+    });
+    const detach = () => {
+      wc.removeListener('before-input-event', onInput);
+      wc.removeListener('did-navigate', onChange);
+      wc.removeListener('did-navigate-in-page', onChange);
+      wc.removeListener('render-process-gone', onGone);
+    };
+    const token = ++this.peekToken;
+    this.peek = { view, sourceTabId: source.id, spaceId: source.spaceId, partition: source.partition, detach, url, ready: false };
+    view.setVisible(false);
+    this.win.contentView.addChildView(view);
+    this.bringOverlayToTop();
+    void wc.loadURL(url).catch(() => undefined);
+    void this.captureBackdrop().then((images) => {
+      const peek = this.peek;
+      if (!peek || this.peekToken !== token) return;
+      peek.ready = true;
+      if (!this.shell.webContents.isDestroyed()) this.shell.webContents.send('peek:backdrop', images);
+      this.layout();
+      if (!this.overlayOpen && !wc.isDestroyed()) wc.focus();
+      this.emit();
+    });
+  }
+
+  /** Still images of the visible page(s), drawn dimmed behind the Peek while the live views are hidden. */
+  private async captureBackdrop(): Promise<{ rect: Rectangle; src: string }[]> {
+    const area = this.pageArea();
+    const origin = { x: area.x, y: area.y };
+    const shown = [...this.tabs.values()].filter((t) => t.view.getVisible() && !t.view.webContents.isDestroyed());
+    const images = await Promise.all(shown.map(async (t) => {
+      try {
+        const image = await t.view.webContents.capturePage();
+        if (image.isEmpty()) return null;
+        // JPEG keeps a full-window still to a few hundred KB over IPC.
+        return { rect: relativeTo(t.view.getBounds(), origin), src: 'data:image/jpeg;base64,' + image.toJPEG(75).toString('base64') };
+      } catch {
+        return null;
+      }
+    }));
+    return images.filter((x): x is { rect: Rectangle; src: string } => x !== null);
+  }
+
+  closePeek(): void {
+    const peek = this.peek;
+    if (!peek) return;
+    this.peek = null;
+    peek.detach();
+    this.win.contentView.removeChildView(peek.view);
+    if (!peek.view.webContents.isDestroyed()) {
+      this.media?.reset(peek.view.webContents.id);
+      peek.view.webContents.close();
+    }
+    this.layout();
+    const current = this.activeTab?.view.webContents;
+    if (!this.overlayOpen && current && !current.isDestroyed()) current.focus();
+    this.emit();
+  }
+
+  /** Turn the Peek into an ordinary temporary tab, keeping the loaded page when the partition still matches. */
+  peekToTab(): void {
+    const peek = this.peek;
+    if (!peek) return;
+    const wc = peek.view.webContents;
+    const url = (!wc.isDestroyed() && wc.getURL()) || peek.url;
+    if (wc.isDestroyed() || this.partitionFor(peek.spaceId, false) !== peek.partition || !/^https?:/i.test(url)) {
+      this.closePeek();
+      this.openTab(peek.url, { spaceId: peek.spaceId });
+      return;
+    }
+    this.peek = null;
+    peek.detach();
+    peek.view.setVisible(false);
+    this.openTab(url, { spaceId: peek.spaceId, adopt: peek.view });
+  }
+
   dispose(): void {
     if (this.emitTimer) clearTimeout(this.emitTimer);
+    if (this.peek && !this.peek.view.webContents.isDestroyed()) this.peek.view.webContents.close();
     if (this.phone && !this.phone.webContents.isDestroyed()) this.phone.webContents.close();
     for (const tab of this.tabs.values()) {
       if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
