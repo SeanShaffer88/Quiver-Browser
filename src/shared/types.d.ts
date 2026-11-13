@@ -36,6 +36,20 @@ export interface Settings {
   sidebarCollapsed: boolean;
   /** Keep a local browsing history for command-bar search. */
   rememberHistory: boolean;
+  privacy: PrivacySettings;
+}
+
+export interface PrivacySettings {
+  /** Send Global Privacy Control (Sec-GPC) and Do Not Track headers. */
+  gpc: boolean;
+  /** Keep WebRTC from exposing local network addresses. */
+  hideLocalIp: boolean;
+  secureDns: 'automatic' | 'off' | 'custom';
+  /** DNS-over-HTTPS template used when secureDns is 'custom'. */
+  dohTemplate: string;
+  spellcheck: boolean;
+  /** Clear cookies, site storage and cache for web Spaces when Quiver closes. */
+  clearOnExit: boolean;
 }
 
 export interface Bookmark {

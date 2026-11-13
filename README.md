@@ -133,6 +133,16 @@ The sidebar lists IPv4 and IPv6 HTTP servers reachable over loopback. Quiver use
 ### Boosts
 `Ctrl+Shift+B` or `boost` in the command bar. Files are named after a hostname (`github.com.css`, `github.com.ts`, `localhost.css`) or `all.css` / `all.ts`; `www.` is ignored; subdomains need their own file. CSS is injected on load and updated live on save. TypeScript is transpiled on this device and run in the page; saving reloads matching tabs. Files are stored in the profile folder under `boosts\`. External edits to those files are picked up too. The toolbar counts Boosts applied to the current page and names them in the button tooltip.
 
+### Privacy
+
+Quiver sends no telemetry, has no account and does not check for updates; crash reports stay on the device. **Settings → Privacy** controls what pages and Chromium can send:
+
+- **Global Privacy Control** (on by default): sends `Sec-GPC: 1` and `DNT: 1` with page requests.
+- **Hide local IP** (on by default): WebRTC uses only the public interface, so sites can't read local network addresses.
+- **Secure DNS**: automatic (default), off, or a custom DNS-over-HTTPS server.
+- **Spell check**: on Windows it uses the Windows spell checker and downloads nothing. On other systems it is off by default because Chromium would download dictionaries from Google.
+- **Clear on exit**: deletes cookies, site storage and cache in every Space when Quiver closes; tabs, bookmarks and notes stay.
+
 ### Where data lives
 - Installed: `%APPDATA%\Quiver\`
 - PortableApps: `Data\` in the QuiverPortable folder. In addition to the profile, it holds `Cache\`, `Temp\`, `Logs\`, `CrashDumps\` and the default `Downloads\` directory.
@@ -178,7 +188,7 @@ Quiver currently covers these Flecha workflows. Archives and general split view 
 | 8 | Coding-agent browser automation | Omitted from the Windows build | Unavailable |
 | 9 | Local-first / no telemetry | No analytics, no accounts, atomic local JSON | Included |
 | 10 | Windows installer / build script | Branded Windows setup, offline PortableApps.com installer, optional MSI | Build targets configured |
-| – | Other browser features | Chrome Web Store extensions, sync, bookmark editing, full history page, downloads UI, permission prompts, password manager, auto-update | Unavailable |
+| – | Other browser features | Chrome Web Store extensions, sync, bookmark editing, full history page, downloads UI, permission prompts, third-party cookie blocking, password manager, auto-update | Unavailable |
 
 ## Verification
 
