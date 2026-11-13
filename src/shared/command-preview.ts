@@ -83,6 +83,13 @@ export function commandChoice(suggestion: Suggestion, context: CommandContext): 
       accessibleLabel = [`Switch to ${title}`, host, `Space: ${spaceName}`, environment].filter(Boolean).join(', ');
       break;
     }
+    case 'split-with': {
+      const { title, host } = action.target;
+      detail = host || undefined;
+      preview = { title: 'Split view', destination: [title, host].filter(Boolean).join(' · '), space: action.target.spaceName, tab: 'existing', canRun: true };
+      accessibleLabel = ['Split view with ' + title, host].filter(Boolean).join(', ');
+      break;
+    }
     case 'research':
       preview = { title: label, destination: detail, space: context.spaceName, canRun: true };
       break;
