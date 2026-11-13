@@ -89,6 +89,12 @@ export function commandChoice(suggestion: Suggestion, context: CommandContext): 
     case 'unarchive':
       preview = { title: 'Reopen archived tab', destination: detail, space: context.spaceName, tab: 'new', canRun: true };
       break;
+    case 'download':
+      preview = { title: label, destination: displayDestination(action.url), space: context.spaceName, canRun: true };
+      break;
+    case 'open-share':
+      preview = { title: 'Open in File Explorer', destination: action.path, canRun: true };
+      break;
     case 'browser':
       preview = { title: label, destination: detail ? `Shortcut: ${detail}` : undefined, canRun: true };
       accessibleLabel = detail ? `${label}, ${detail}` : label;

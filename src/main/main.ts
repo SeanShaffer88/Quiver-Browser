@@ -1,4 +1,4 @@
-import { app, BaseWindow, clipboard, crashReporter, desktopCapturer, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
+import { app, BaseWindow, clipboard, crashReporter, dialog, desktopCapturer, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME, SHARED_PARTITION } from '../shared/constants';
@@ -350,6 +350,14 @@ async function main(): Promise<void> {
     },
   });
   tabs.downloads = downloads;
+  tabs.onFtpLink = (url, partition) => {
+    // A page can navigate to ftp:// on its own, so the person confirms before anything downloads.
+    const shown = url.replace(/\/\/[^/@]*@/, '//');
+    void dialog.showMessageBox(win, {
+      type: 'question', buttons: ['Download', 'Cancel'], defaultId: 0, cancelId: 1, noLink: true,
+      message: 'Download this file over FTP?', detail: shown,
+    }).then(({ response }) => { if (response === 0) downloads.startNative('ftp', url, partition); });
+  };
 
   const research = new Research(store.state, () => store.save(), () => {
     tabs.emit();

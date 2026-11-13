@@ -4,6 +4,7 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+- Native downloaders: FTP/FTPS (resumable, encryption first, no FTP bounce), HLS with AES-128, on-demand MPEG-DASH, and Metalink with mirror failover and checksum checks; `download <address>` in the command bar; Windows shares open in File Explorer.
 - Meetings: camera, microphone and screen-share prompts (allow once, always or block per site), a screen/window picker, a live indicator on tabs, `meet` commands to start or join Meet, Zoom (web client), Teams, Webex, Jitsi and Whereby, and saved choices in Settings.
 - Auto-archive: temporary tabs unused for 12 hours (configurable, or never) move to a searchable archive (`archive` in the command bar). Pinned, current and audible tabs stay.
 - Closing a pinned tab returns it to its pinned page instead of removing it; the tab menu can update the pinned page or remove the tab.

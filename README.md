@@ -112,6 +112,7 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `bm react` · `bookmarks` | Bookmarks |
 | `meet` · `meet abc-defg-hij` · `meet https://zoom.us/j/123456789` | Start or join a meeting |
 | `h rust book` · `history` | Browsing history, ranked by match, visit count and recency |
+| `download <address>` · `download` · `ftp://…` · `\\server\share` | Download a web, FTP, HLS, DASH or Metalink address; save the stream that's open; open a Windows share |
 | `archive` · `archive react` | Tabs archived after going unused; Enter reopens one in its Space |
 | `research webgpu` · `research` · `note read later` | Start or continue a research topic · list topics · note on this page |
 
@@ -168,6 +169,16 @@ Quiver sends no telemetry, has no account and does not check for updates; crash 
 ### Downloads
 
 `Ctrl+J` (or **Open downloads** in the command bar) opens `quiver://downloads`, which lists downloads from every Space with progress, speed and time left. You can pause, resume, cancel, retry, open, show in folder or remove each one. A download that failed partway can resume, even after a restart, when the server supports it. Opening executables, scripts, shortcuts or disk images asks for confirmation first. While files download, the toolbar shows their combined progress. Quiver asks where to save each file by default; turn off **Settings → Downloads → Ask where to save** to save straight to the Downloads folder (the Data folder in Quiver Portable), where a repeated name gets a number such as `report (1).pdf`.
+
+#### Beyond web downloads
+
+Quiver has its own downloaders for addresses Chromium can't save, with no extra software. They show in the same downloads page and save to the Downloads folder.
+
+- **FTP and FTPS.** Type an `ftp://` or `ftps://` address, or `download ftp://…`. Pages' FTP links ask first. Downloads resume after a pause. Quiver tries encryption first and never sends a password to a server without it. Data connections always go back to the same server.
+- **HLS (`.m3u8`).** Chromium plays HLS streams itself. To save one, type `download` while it's open, or `download <address>`. Quiver picks the best stream with audio included and decrypts AES-128 segments. Live and DRM-protected streams are refused.
+- **MPEG-DASH (`.mpd`).** Links and `download <address>` save the best video and audio as separate files. Quiver doesn't combine them.
+- **Metalink (`.meta4`, `.metalink`).** Quiver downloads the listed files, trying mirrors best first. A mirror whose size or checksum (SHA-256 and others) doesn't match is skipped.
+- **Windows file shares.** Type `\\server\share` or `smb://server/share` to open it in File Explorer. Links in pages never do this, because Windows may sign in to the server with your account.
 
 ### Where data lives
 - Installed: `%APPDATA%\Quiver\`

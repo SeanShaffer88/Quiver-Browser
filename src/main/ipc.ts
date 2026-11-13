@@ -1,4 +1,4 @@
-import { clipboard, dialog, ipcMain, Menu, type IpcMainInvokeEvent, type WebContentsView, type WebFrameMain } from 'electron';
+import { clipboard, dialog, ipcMain, Menu, session, shell as electronShell, type IpcMainInvokeEvent, type WebContentsView, type WebFrameMain } from 'electron';
 import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
 import { detectEnv } from '../shared/env';
 import { parseCommand } from '../shared/parser';
@@ -15,6 +15,8 @@ import { topicMarkdown, type Research } from './research';
 import { researchSuggestions } from './research-commands';
 import { meetSuggestions } from './meetings';
 import { archiveSuggestions, normalizeArchiveHours } from './archive';
+import { nativeKind } from './native/runners';
+import { shareTarget } from './native/share';
 import type { SyncService } from './sync-service';
 import type { History } from './history';
 import type { DownloadAction, Downloads } from './downloads';
@@ -39,6 +41,33 @@ export interface IpcDeps {
 }
 
 const MAX_COMMAND_LENGTH = 65536;
+
+const KIND_LABEL = { ftp: 'FTP', hls: 'HLS stream', dash: 'DASH stream', metalink: 'Metalink' } as const;
+
+/** `download <url>`, a typed ftp:// address, or a typed Windows share (\\server\share, smb://server/share). */
+export function downloadSuggestions(text: string, currentUrl = ''): Suggestion[] | undefined {
+  const trimmed = text.trim();
+  const share = shareTarget(trimmed);
+  if (share) {
+    return [{ kind: 'share', label: 'Open in File Explorer', detail: `${share} · Windows may sign in to this server with your account`, action: { type: 'open-share', path: share } }];
+  }
+  const m = /^download(?:\s+(\S+))?$/i.exec(trimmed) ?? (/^ftps?:\/\/\S+$/i.test(trimmed) ? [trimmed, trimmed] : null);
+  if (!m) return undefined;
+  const raw = m[1];
+  if (!raw) {
+    // Chromium plays HLS itself, so a stream open in the tab is offered for saving.
+    const here = nativeKind(currentUrl);
+    if (here === 'hls' || here === 'dash') return [{ kind: 'download', label: `Download this ${KIND_LABEL[here]}`, detail: URL.parse(currentUrl)?.host, action: { type: 'download', url: currentUrl } }];
+    return [{ kind: 'download', label: 'Type an address to download: web, FTP, HLS (.m3u8), DASH (.mpd) or Metalink', action: { type: 'noop' } }];
+  }
+  const url = URL.parse(/^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
+  if (!url || !['http:', 'https:', 'ftp:', 'ftps:'].includes(url.protocol)) {
+    return [{ kind: 'download', label: 'Quiver downloads web, FTP, HLS, DASH and Metalink addresses', action: { type: 'noop' } }];
+  }
+  const kind = nativeKind(url.href);
+  const leaf = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() ?? url.host);
+  return [{ kind: 'download', label: kind ? `Download ${KIND_LABEL[kind]}: ${leaf}` : `Download ${leaf}`, detail: url.host, action: { type: 'download', url: url.href } }];
+}
 type AuthorizedInvokeEvent = IpcMainInvokeEvent & { senderFrame: WebFrameMain };
 
 export function sanitizeEnvGroups(input: unknown): EnvGroup[] {
@@ -127,6 +156,8 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (meet) return meet;
     const topics = researchSuggestions(text, research.inSpace(context.spaceId), research.active(context.spaceId), context.internal ? '' : context.url);
     if (topics) return topics;
+    const downloadSuggestion = downloadSuggestions(text, context.internal ? '' : context.url);
+    if (downloadSuggestion) return downloadSuggestion;
     const archived = /^archive(?:\s+([\s\S]*))?$/i.exec(text.trim());
     if (archived) return archiveSuggestions((archived[1] ?? '').trim(), tabs.archive);
     const tabQuery = tabSearchQuery(text);
@@ -345,6 +376,22 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       case 'internal':
         tabs.navigate(`quiver://${action.page}`);
         break;
+      case 'download': {
+        const kind = nativeKind(action.url);
+        const partition = tabs.webPartition(context.spaceId);
+        if (kind) d.downloads.startNative(kind, action.url, partition);
+        else session.fromPartition(partition).downloadURL(action.url);
+        closeOverlay(true);
+        return 'done';
+      }
+      case 'open-share': {
+        if (process.platform !== 'win32') return 'unavailable';
+        const target = shareTarget(action.path);
+        if (!target) return 'unavailable';
+        closeOverlay(true);
+        void electronShell.openPath(target);
+        return 'done';
+      }
       case 'unarchive':
         if (!tabs.unarchive(action.url, action.archivedAt)) return 'stale';
         break;

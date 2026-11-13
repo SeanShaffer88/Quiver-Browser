@@ -172,6 +172,8 @@ export type SuggestionAction =
   | { type: 'internal'; page: 'boosts' | 'settings' | 'research' | 'downloads' }
   | { type: 'activate-tab'; target: TabCommandTarget }
   | { type: 'browser'; command: BrowserCommand }
+  | { type: 'download'; url: string }
+  | { type: 'open-share'; path: string }
   | { type: 'unarchive'; url: string; archivedAt: number }
   | { type: 'research'; op: 'start'; name: string }
   | { type: 'research'; op: 'resume' | 'open'; topicId: string }
@@ -267,4 +269,12 @@ export interface DownloadInfo {
   risky: boolean;
   /** A finished file that is no longer on disk. */
   missing?: boolean;
+  /** Which downloader handles it: Chromium, or Quiver's own FTP / HLS / DASH / Metalink support. */
+  kind?: NativeKind | 'chromium';
+  /** Extra progress or result text, such as "12 of 340 segments". */
+  detail?: string;
+  /** Why it failed, when it did. */
+  error?: string;
 }
+
+export type NativeKind = 'ftp' | 'hls' | 'dash' | 'metalink';

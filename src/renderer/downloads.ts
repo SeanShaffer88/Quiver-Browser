@@ -25,11 +25,11 @@ function describe(d: DownloadInfo): string {
   switch (d.state) {
     case 'progressing': {
       const of = d.total ? `${size(d.received)} of ${size(d.total)}` : size(d.received);
-      return [d.paused ? 'Paused' : '', of, d.paused ? '' : d.speed ? `${size(d.speed)}/s` : '', remaining(d), host].filter(Boolean).join(' · ');
+      return [d.paused ? 'Paused' : '', of, d.paused ? '' : d.speed ? `${size(d.speed)}/s` : '', remaining(d), d.detail ?? '', host].filter(Boolean).join(' · ');
     }
-    case 'completed': return [d.missing ? 'Deleted' : size(d.total || d.received), host].filter(Boolean).join(' · ');
+    case 'completed': return [d.missing ? 'Deleted' : size(d.total || d.received), d.detail ?? '', host].filter(Boolean).join(' · ');
     case 'cancelled': return ['Cancelled', host].join(' · ');
-    default: return ['Failed', d.canResume ? 'can resume' : '', host].filter(Boolean).join(' · ');
+    default: return [d.error ? `Failed: ${d.error}` : 'Failed', d.canResume ? 'can resume' : '', host].filter(Boolean).join(' · ');
   }
 }
 
