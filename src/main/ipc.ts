@@ -219,6 +219,13 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   });
   handle('shell', 'recovery:dismiss', () => tabs.dismissRecovery());
 
+  // find in page and zoom
+  handle('shell', 'find:query', (_e, text: unknown, forward: unknown, findNext: unknown) => {
+    if (typeof text === 'string') tabs.find(text, forward !== false, findNext === true);
+  });
+  handle('shell', 'find:close', () => tabs.stopFind(true));
+  handle('shell', 'zoom:reset', () => tabs.zoom(0));
+
   // spaces
   handle('shell', 'space:create', (_e, name: string, isolated: boolean) => {
     tabs.createSpace(String(name ?? ''), !!isolated);

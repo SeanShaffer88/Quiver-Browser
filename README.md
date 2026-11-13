@@ -86,6 +86,8 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `Ctrl+R` / `F5` | Reload |
 | `Alt+←` / `Alt+→` | Back / forward |
 | `F12` / `Ctrl+Shift+I` | DevTools for the active tab |
+| `Ctrl+F`, `F3` / `Shift+F3` | Find in page, next / previous match |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom in / out / reset (per site; the toolbar shows the level when it isn't 100%) |
 
 ### Command bar
 

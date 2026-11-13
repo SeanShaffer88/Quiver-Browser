@@ -579,8 +579,38 @@ function renderLocalServerStatus(status: LocalServerStatus): HTMLElement {
   return card;
 }
 
+function findCount(f: NonNullable<ShellState['find']>): string {
+  if (!f.text) return '';
+  return f.matches ? `${f.active} of ${f.matches}` : 'No matches';
+}
+
+function renderFindBar(f: NonNullable<ShellState['find']>): HTMLElement {
+  const input = h('input', {
+    type: 'search', value: f.text, placeholder: 'Find in page', 'aria-label': 'Find in page', spellcheck: false,
+    dataset: { focusKey: 'find-input' },
+    onInput: () => call('find:query', input.value, true, false),
+    onKeydown: (e: KeyboardEvent) => {
+      if (e.key === 'Enter') { e.preventDefault(); void call('find:query', input.value, !e.shiftKey, true); }
+      if (e.key === 'Escape') { e.preventDefault(); void call('find:close'); }
+    },
+  });
+  const count = h('span', { class: 'find-count', role: 'status', 'aria-live': 'polite' }, findCount(f));
+  return h('div', { class: 'find-bar' },
+    input, count,
+    h('button', { class: 'icon-btn', title: 'Previous match (Shift+Enter, Shift+F3)', 'aria-label': 'Previous match', onClick: () => call('find:query', input.value, false, true) }, '↑'),
+    h('button', { class: 'icon-btn', title: 'Next match (Enter, F3)', 'aria-label': 'Next match', onClick: () => call('find:query', input.value, true, true) }, '↓'),
+    h('button', { class: 'icon-btn', title: 'Close (Esc)', 'aria-label': 'Close find', onClick: () => call('find:close') }, '×'));
+}
+
 function renderToolbar(s: ShellState): void {
   const t = activeTab(s);
+  // Typing in the find box must not rebuild it (that would drop the caret); only its count changes.
+  const findInput = toolbar.querySelector<HTMLInputElement>('.find-bar input');
+  if (s.find && findInput && document.activeElement === findInput) {
+    const count = toolbar.querySelector('.find-count');
+    if (count) count.textContent = findCount(s.find);
+    return;
+  }
   const addr = h('button', { id: 'address', title: 'Search or enter a command (Ctrl+K / Ctrl+L)', 'aria-label': 'Address and command bar', dataset: { focusKey: 'address' }, onClick: () => call('cmd:open', undefined, 'current', 'address') });
   if (t?.env) addr.append(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env));
   addr.append(h('span', { class: 'url' + (t?.url ? '' : ' placeholder') }, t?.url || 'Search, paste a URL, JWT, or type gh / npm / mdn / env / boost…'), h('span', { class: 'hint' }, 'Ctrl+K'));
@@ -613,13 +643,15 @@ function renderToolbar(s: ShellState): void {
     icon(ICON.back, 'Back (Alt+←)', () => call('tab:back'), { disabled: !t?.canGoBack }),
     icon(ICON.forward, 'Forward (Alt+→)', () => call('tab:forward'), { disabled: !t?.canGoForward }),
     icon(ICON.reload, 'Reload (Ctrl+R)', () => call('tab:reload')),
-    addr,
+    (s.find ? renderFindBar(s.find) : null) || addr,
+    ...(s.zoom !== 1 && Number.isFinite(s.zoom) ? [h('button', { class: 'zoom-chip', title: 'Reset zoom (Ctrl+0)', 'aria-label': `Zoom ${Math.round(s.zoom * 100)} percent. Reset zoom`, dataset: { focusKey: 'zoom' }, onClick: () => call('zoom:reset') }, `${Math.round(s.zoom * 100)}%`)] : []),
     ...(research ? [research] : []),
     icon(ICON.env, 'Switch environment: local → staging → prod (Ctrl+Alt+E)', () => call('env:switch'), { disabled: !t?.env }),
     phone,
     boost,
     icon(ICON.gear, 'Settings', () => call('cmd:run', { type: 'internal', page: 'settings' })),
   );
+  if (focusFindPending && s.find) focusFindPending = !focusFind();
 }
 
 function render(): void {
@@ -658,6 +690,18 @@ quiver.on('folder:rename-start', (id: string) => {
   if (index >= 0) revealRow(index);
   paintTabs();
   focusShellControl('rename-folder:' + id);
+});
+let focusFindPending = false;
+function focusFind(): boolean {
+  const input = toolbar.querySelector<HTMLInputElement>('.find-bar input');
+  if (!input) return false;
+  input.focus();
+  input.select();
+  return true;
+}
+// The bar may not exist yet: the state that opens it can arrive just after this message.
+quiver.on('find:focus', () => {
+  focusFindPending = !focusFind();
 });
 quiver.on('space:rename-start', (id: string) => {
   renamingSpace = id;
