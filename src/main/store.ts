@@ -16,6 +16,7 @@ import { normalizeShortcutOverrides } from './shortcuts';
 import { normalizeUpdateState, type UpdateState } from './updates';
 import { normalizeFolders } from './tab-tree';
 import { normalizeTopics, type Topic } from './research';
+import { persistableState } from './private-spaces';
 import { hasSavedNewTabPlaceholder, normalizeRecentlyClosed, type PersistedClosedTab } from './session-recovery';
 
 export interface PersistedTab {
@@ -147,7 +148,9 @@ export class Store {
           checkForUpdates: raw.settings?.checkForUpdates === true,
         },
       } as PersistedState;
-      state.spaces = state.spaces.map((space) => ({ ...space, folders: normalizeFolders(space.folders) }));
+      // Private Spaces are never written, but a hand-edited file must not bring one back as a regular Space.
+      state.spaces = state.spaces.filter((space) => !space.private).map((space) => ({ ...space, folders: normalizeFolders(space.folders) }));
+      if (!state.spaces.length) throw new Error('bad shape');
       const knownSpaces = new Set(state.spaces.map(({ id }) => id));
       state.topics = normalizeTopics(raw.topics, knownSpaces);
       state.activeTopicBySpace = Object.fromEntries(Object.entries(raw.activeTopicBySpace ?? {})
@@ -219,7 +222,7 @@ export class Store {
 
   private writeState(): void {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    writeFileAtomic(this.file, JSON.stringify(this.state, null, 2));
+    writeFileAtomic(this.file, JSON.stringify(persistableState(this.state), null, 2));
   }
 
   private reportSaveError(error: unknown): void {

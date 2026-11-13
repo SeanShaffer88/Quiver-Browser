@@ -209,6 +209,10 @@
   <div class="row"><label>Saved pages</label><span id="history-count" class="note">…</span><button class="btn danger" id="history-clear">Clear history</button></div>
   <h2>Privacy</h2>
   <p class="note">Quiver sends no telemetry, has no account and checks for updates only if you turn that on under Updates. Crash reports stay on this device. These settings apply to all Spaces.</p>
+  <p class="note">Quiver sends no telemetry, has no account and does not check for updates. Crash reports stay on this device. These settings apply to all Spaces.</p>
+  <div class="row"><label for="privacy-block">Block ads and trackers</label><input id="privacy-block" type="checkbox"><span class="note">Cancel requests from other sites to a built-in list of well-known ad and tracker hosts. The list ships with Quiver and is never downloaded. The shield in the toolbar shows how many were blocked on the page; click it to allow ads on that site.</span></div>
+  <p class="note" id="privacy-allow-heading">Sites where ads are allowed:</p>
+  <ul class="site-permissions" id="privacy-allow-list" aria-labelledby="privacy-allow-heading"></ul>
   <div class="row"><label for="privacy-gpc">Global Privacy Control</label><input id="privacy-gpc" type="checkbox"><span class="note">Tell sites not to sell or share your data (<code>Sec-GPC</code> and <code>DNT</code> headers).</span></div>
   <div class="row"><label for="privacy-webrtc">Hide local IP</label><input id="privacy-webrtc" type="checkbox"><span class="note">Keep WebRTC calls from revealing addresses on your local network.</span></div>
   <div class="row">

@@ -16,6 +16,7 @@ import { internalRole, type InternalPage, type InternalRole } from './internal-a
 import type { Store } from './store';
 import { paletteQuery, paletteSuggestions } from './palette';
 import { normalizePrivacy } from './privacy';
+import { siteAllowed } from './content-blocking';
 import { topicMarkdown, type Research } from './research';
 import { researchSuggestions } from './research-commands';
 import { meetSuggestions } from './meetings';
@@ -248,6 +249,12 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       { label: 'Copy link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(false); if (link) clipboard.writeText(link); } },
       { label: 'Copy Markdown link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(true); if (link) clipboard.writeText(link); } },
       { label: 'Open the console', enabled: !tab.internal, click: () => tabs.openConsole(tab.id) },
+      ...(!tab.internal && store.state.settings.privacy.blockTrackers ? [{
+        label: 'Allow ads on this site',
+        type: 'checkbox' as const,
+        checked: siteAllowed(tabs.tabUrl(tab), store.state.settings.privacy.adAllowList),
+        click: () => tabs.toggleSiteAds(tab.id),
+      }] : []),
       { type: 'separator' },
       ...(tab.pinned ? [
         { label: 'Make this page the pinned page', enabled: !tab.internal, click: () => tabs.setPinnedPage(tab.id) },
@@ -318,13 +325,21 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('shell', 'space:create', (_e, name: string, isolated: boolean) => {
     tabs.createSpace(String(name ?? ''), !!isolated);
   });
+  handle('shell', 'space:create-private', () => {
+    tabs.createPrivateSpace();
+  });
+  handle('shell', 'adblock:toggle-site', (_e, id: unknown) => {
+    if (!Number.isSafeInteger(id)) throw new Error('invalid tab');
+    return tabs.toggleSiteAds(id as number);
+  });
   handle('shell', 'space:rename', (_e, id: string, name: string) => tabs.renameSpace(String(id), String(name)));
   handle('shell', 'space:activate', (_e, id: string) => tabs.activateSpace(String(id)));
   handle('shell', 'space:menu', (_e, id: string) => {
     const menu = Menu.buildFromTemplate([
       { label: 'Rename Space', click: () => shell.webContents.send('space:rename-start', id) },
+      { label: 'New private Space', accelerator: 'Ctrl+Shift+N', click: () => tabs.createPrivateSpace() },
       { type: 'separator' },
-      { label: 'Delete Space and its tabs', enabled: tabs.spaces.length > 1, click: () => void tabs.deleteSpace(String(id)).then(() => research.prune(new Set(tabs.spaces.map((sp) => sp.id)))) },
+      { label: tabs.isPrivate(String(id)) ? 'Close private Space and discard everything' : 'Delete Space and its tabs', enabled: tabs.canDeleteSpace(String(id)), click: () => void tabs.deleteSpace(String(id)).then(() => research.prune(new Set(tabs.spaces.map((sp) => sp.id)))) },
     ]);
     menu.popup();
   });

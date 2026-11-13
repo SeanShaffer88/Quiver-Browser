@@ -144,6 +144,12 @@ async function main(): Promise<void> {
   const store = new Store();
   setShortcutOverrides(store.state.settings.shortcuts);
   const privacy = new PrivacyController(() => store.state.settings.privacy, (options) => app.configureHostResolver(options));
+  // Quiver's own pages (settings, command bar) are not ad-blocked. Blocked counts reach the toolbar once tabs exist.
+  let onBlockedChanged = () => {};
+  const privacy = new PrivacyController(() => store.state.settings.privacy, (options) => app.configureHostResolver(options), {
+    appliesTo: (ses) => ses !== session.fromPartition(INTERNAL_PARTITION),
+    changed: () => onBlockedChanged(),
+  });
   app.on('session-created', (ses) => privacy.configureSession(ses));
   app.on('web-contents-created', (_event, contents) => privacy.configureContents(contents));
   privacy.configureSession(session.defaultSession);
@@ -156,7 +162,7 @@ async function main(): Promise<void> {
     // Clear web Spaces only; Quiver's own pages and settings are kept.
     event.preventDefault();
     clearedOnExit = true;
-    const partitions = [SHARED_PARTITION, ...store.state.spaces.filter((sp) => sp.isolated).map((sp) => `persist:quiver-space-${sp.id}`)];
+    const partitions = [SHARED_PARTITION, ...store.state.spaces.filter((sp) => sp.isolated && !sp.private).map((sp) => `persist:quiver-space-${sp.id}`)];
     void clearSessions(partitions.map((partition) => session.fromPartition(partition))).finally(() => app.quit());
   });
   const boosts = new Boosts();
@@ -264,6 +270,9 @@ async function main(): Promise<void> {
       case 'prev-space':
         tabs.cycleSpace(-1);
         break;
+      case 'private-space':
+        tabs.createPrivateSpace();
+        break;
       case 'prev-tab':
         tabs.cycleTab(-1);
         break;
@@ -362,6 +371,7 @@ async function main(): Promise<void> {
     askWhereToSave: () => store.state.settings.askWhereToSave,
     fromPartition: (partition) => session.fromPartition(partition),
     persist: (records) => {
+      // Downloads from a private Space are listed while Quiver runs; private-spaces.ts keeps them out of the saved file.
       store.state.downloads = records;
       store.save();
     },
@@ -373,6 +383,8 @@ async function main(): Promise<void> {
     },
   });
   tabs.downloads = downloads;
+  tabs.blockedCount = (id) => privacy.blockedCount(id);
+  onBlockedChanged = () => tabs.emit();
   tabs.onFtpLink = (url, partition) => {
     // A page can navigate to ftp:// on its own, so the person confirms before anything downloads.
     const shown = url.replace(/\/\/[^/@]*@/, '//');

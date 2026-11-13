@@ -16,6 +16,8 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 - Shortcuts can be changed in Settings → Shortcuts (record a new combination, remove it, or reset to default), with conflict checks; tooltips and the command bar's action list follow your keys.
 - Web pages get the first chance at shortcuts Quiver doesn't reserve, as in Chrome: `Ctrl+B` is bold and `Ctrl+F` the editor's own find in Google Docs and GitHub editors. Tab and window keys (`Ctrl+T`, `Ctrl+W`, `Ctrl+L`, `Ctrl+Tab`, …) stay with Quiver.
 - Opt-in update notice (Settings → Updates, off by default): checks GitHub's latest release at most once a day and shows "Quiver X is available" with a link to the release page. Nothing is downloaded or installed.
+- Ad and tracker blocking (on by default): a built-in list of well-known ad and tracker hosts, third-party subresources only; a toolbar shield counts blocked requests on the page and toggles **Allow ads on this site** (also in the tab menu); allowed sites are listed in Settings → Privacy.
+- Private Spaces (`Ctrl+Shift+N`, command bar, Space menu): in-memory cookies and storage, no history or research recording, never saved or synced, discarded when closed or when Quiver quits; shown with a striped purple **Private** chip.
 - WebDAV downloads (`davs://…`): files or whole folders, passwords only over HTTPS, listings confined to the folder.
 - DASH downloads combine fragmented-MP4 video and audio into one `.mp4` with Quiver's own muxer.
 - Native downloaders: FTP/FTPS (resumable, encryption first, no FTP bounce), HLS with AES-128, on-demand MPEG-DASH, and Metalink with mirror failover and checksum checks; `download <address>` in the command bar; Windows shares open in File Explorer.
