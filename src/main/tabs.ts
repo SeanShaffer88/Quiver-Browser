@@ -20,7 +20,8 @@ import {
 } from './browser-policy';
 import { EndpointStatus, type EndpointFailure } from './endpoint-status';
 import { internalPage, type InternalPage } from './internal-access';
-import { shortcutFor, type ShortcutAction } from './shortcuts';
+import { isPageFirst, REBINDABLE, shortcutFor, shortcutLabel, type ShortcutAction } from './shortcuts';
+import { PageKeys } from './page-keys';
 import type { Store } from './store';
 import {
   CANONICAL_NEW_TAB_URL,
@@ -159,6 +160,8 @@ export class TabManager {
   }
   /** The research topic recording in a Space, for the toolbar. */
   researchStatus?: (spaceId: string) => ShellState['research'];
+  /** The opt-in "new version available" notice, if any. */
+  updateNotice?: () => ShellState['update'];
   private readonly endpointStatus = new EndpointStatus();
 
   private phone: WebContentsView | null = null;
@@ -278,6 +281,8 @@ export class TabManager {
       phoneStatus: this.getPhoneStatus(),
       localServerStatus: this.getLocalServerStatus(),
       settings: this.settings,
+      keys: Object.fromEntries(REBINDABLE.map(({ action }) => [action, shortcutLabel(action)])),
+      update: this.updateNotice?.(),
     };
   }
 
@@ -320,17 +325,35 @@ export class TabManager {
     if (partition !== INTERNAL_PARTITION) configureSitePermissions(ses, true, this.mediaDelegate());
   }
 
-  attachShortcuts(wc: WebContents): void {
+  /**
+   * Handle Quiver's shortcuts in a webContents. `webPage` says whether it currently shows a web page: there,
+   * page-first shortcuts go to the page first (see page-keys.ts). Quiver's own pages and the shell keep every key.
+   */
+  attachShortcuts(wc: WebContents, webPage?: () => boolean): void {
+    const pageKeys = webPage ? new PageKeys(wc, webPage, (action) => this.onShortcut(action)) : null;
     wc.on('before-input-event', (event, input) => {
       // A Ctrl+Tab walk ends when Ctrl is no longer held. Switching tabs moves focus, and Chromium can drop
       // the Ctrl release in the newly focused page, so any key event without Ctrl ends it too (plus a timeout).
       if (this.recentWalk && (!input.control && !input.meta || input.key === 'Control' && input.type === 'keyUp')) this.endRecentWalk();
+      // Settings is recording a new key combination: every key goes to the page.
+      if (this.recordingKeysIn === wc) return;
       const action = shortcutFor(input);
-      if (action) {
-        event.preventDefault();
-        this.onShortcut(action);
-      }
+      if (!action) return;
+      if (pageKeys && isPageFirst(action) && pageKeys.offer(action, input.code)) return;
+      event.preventDefault();
+      this.onShortcut(action);
     });
+  }
+
+  /** The Settings page while it records a shortcut; Quiver handles no keys there meanwhile. */
+  private recordingKeysIn: WebContents | null = null;
+  private recordingTimer: NodeJS.Timeout | null = null;
+  setRecordingKeys(wc: WebContents, on: boolean): void {
+    if (this.recordingTimer) clearTimeout(this.recordingTimer);
+    this.recordingTimer = null;
+    this.recordingKeysIn = on ? wc : null;
+    // Never leave Quiver's shortcuts off if the page forgets to stop recording.
+    if (on) this.recordingTimer = setTimeout(() => { this.recordingKeysIn = null; }, 30_000);
   }
 
   private createView(partition: string, page?: InternalTabPage): WebContentsView {
@@ -437,7 +460,7 @@ export class TabManager {
 
   private wire(tab: Tab): void {
     const wc = tab.view.webContents;
-    this.attachShortcuts(wc);
+    this.attachShortcuts(wc, () => !tab.internal);
     const touch = () => this.emit();
     const visit = (kind: 'navigate' | 'title' = 'navigate') => {
       if (!tab.internal && !wc.isDestroyed()) this.onVisit?.(tab.spaceId, wc.getURL(), tab.titleIsExplicit ? tab.title : '', kind);

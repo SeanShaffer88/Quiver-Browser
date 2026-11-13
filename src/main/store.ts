@@ -11,6 +11,8 @@ import { normalizeSitePermissions } from './site-permissions';
 import { DEFAULT_ARCHIVE_HOURS, normalizeArchive, normalizeArchiveHours, type ArchivedTab } from './archive';
 import { normalizeSyncState, type SyncState } from './sync-service';
 import { normalizePrivacy } from './privacy';
+import { normalizeShortcutOverrides } from './shortcuts';
+import { normalizeUpdateState, type UpdateState } from './updates';
 import { normalizeFolders } from './tab-tree';
 import { normalizeTopics, type Topic } from './research';
 import { hasSavedNewTabPlaceholder, normalizeRecentlyClosed, type PersistedClosedTab } from './session-recovery';
@@ -41,6 +43,8 @@ export interface PersistedState {
   topics?: Topic[];
   sync?: SyncState;
   activeTopicBySpace?: Record<string, string>;
+  /** Opt-in release check bookkeeping (see updates.ts). */
+  updates?: UpdateState;
   bounds?: { x?: number; y?: number; width: number; height: number; maximized: boolean };
 }
 
@@ -55,6 +59,8 @@ export function defaultSettings(): Settings {
     askWhereToSave: true,
     archiveAfterHours: DEFAULT_ARCHIVE_HOURS,
     privacy: normalizePrivacy(undefined, process.platform),
+    shortcuts: {},
+    checkForUpdates: false,
   };
 }
 
@@ -128,6 +134,8 @@ export class Store {
           askWhereToSave: typeof raw.settings?.askWhereToSave === 'boolean' ? raw.settings.askWhereToSave : true,
           archiveAfterHours: normalizeArchiveHours(raw.settings?.archiveAfterHours),
           privacy: normalizePrivacy(raw.settings?.privacy, process.platform),
+          shortcuts: normalizeShortcutOverrides(raw.settings?.shortcuts) as Record<string, string>,
+          checkForUpdates: raw.settings?.checkForUpdates === true,
         },
       } as PersistedState;
       state.spaces = state.spaces.map((space) => ({ ...space, folders: normalizeFolders(space.folders) }));
@@ -135,6 +143,7 @@ export class Store {
       state.topics = normalizeTopics(raw.topics, knownSpaces);
       state.activeTopicBySpace = Object.fromEntries(Object.entries(raw.activeTopicBySpace ?? {})
         .filter(([space, topic]) => knownSpaces.has(space) && state.topics!.some((t) => t.id === topic && t.spaceId === space)));
+      state.updates = normalizeUpdateState(raw.updates);
       state.sync = normalizeSyncState(raw.sync, os.hostname());
       state.archive = normalizeArchive(raw.archive, new Set(state.spaces.map(({ id }) => id)));
       state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);
