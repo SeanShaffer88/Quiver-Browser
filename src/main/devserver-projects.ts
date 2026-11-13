@@ -162,4 +162,18 @@ export class ProjectNames {
     }
     return new Map(wanted.map((pid) => [pid, this.cache.get(pid) ?? null]));
   }
+
+  private pending: Promise<unknown> | null = null;
+
+  /**
+   * Names known now, without waiting. Unknown PIDs are looked up in the background (PowerShell can take
+   * seconds to start on Windows), so discovery never waits on naming; the next scan shows the names.
+   */
+  cached(pids: Iterable<number>): Map<number, string | null> {
+    const wanted = [...new Set(pids)];
+    if (wanted.some((pid) => !this.cache.has(pid)) && !this.pending) {
+      this.pending = this.lookup(wanted).catch(() => undefined).finally(() => { this.pending = null; });
+    }
+    return new Map(wanted.map((pid) => [pid, this.cache.get(pid) ?? null]));
+  }
 }

@@ -167,8 +167,8 @@ export async function scanDevServers(): Promise<DevServer[] | null> {
   if (!endpoints) return null;
   const res = await mapLimit(endpoints, 12, probe);
   const found = endpoints.flatMap((e, i) => { const r = res[i]; return r ? [{ ...r, pid: e.pid }] : []; });
-  // Only servers that answered HTTP are worth a process lookup.
-  const names = await projectNames.lookup(found.flatMap((s) => (s.pid ? [s.pid] : [])));
+  // Only servers that answered HTTP are worth a process lookup; it runs in the background so it never delays discovery.
+  const names = projectNames.cached(found.flatMap((s) => (s.pid ? [s.pid] : [])));
   return found.map(({ pid, ...s }) => {
     const project = (pid && names.get(pid)) || null;
     return { ...s, project, label: serverLabel({ ...s, project }) };
