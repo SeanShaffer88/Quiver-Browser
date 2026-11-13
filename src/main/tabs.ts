@@ -109,8 +109,14 @@ export function restrictInternalNavigation(wc: WebContents, fixedPage: InternalP
   wc.on('will-redirect', guard);
 }
 
-function restrictWebNavigation(wc: WebContents): void {
-  const guard = (event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>) => {
+function restrictWebNavigation(wc: WebContents, onFtp?: (url: string) => void): void {
+  const guard = (event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>, redirect = false) => {
+    // Chromium has no FTP; a main-frame FTP link (not a redirect) becomes a download Quiver asks about.
+    if (/^ftps?:/i.test(event.url)) {
+      event.preventDefault();
+      if (event.isMainFrame && !redirect) onFtp?.(event.url);
+      return;
+    }
     // Only a known local file initiator may follow a renderer-driven local file link.
     let initiator: string | undefined;
     if (/^file:/i.test(event.url)) {
@@ -122,8 +128,8 @@ function restrictWebNavigation(wc: WebContents): void {
     }
     if (!allowsWebNavigation(event.url, initiator)) event.preventDefault();
   };
-  wc.on('will-frame-navigate', guard);
-  wc.on('will-redirect', guard);
+  wc.on('will-frame-navigate', (event) => guard(event));
+  wc.on('will-redirect', (event) => guard(event, true));
 }
 
 export class TabManager {
@@ -144,6 +150,13 @@ export class TabManager {
   onVisit?: (spaceId: string, url: string, title: string, kind: 'navigate' | 'title') => void;
   /** Tracks downloads from web Spaces. */
   downloads?: Downloads;
+  /** A page asked to open an ftp:// address. */
+  onFtpLink?: (url: string, partition: string) => void;
+
+  /** The storage partition web tabs in a Space use (for downloads started from the command bar). */
+  webPartition(spaceId: string): string {
+    return this.partitionFor(spaceId, false);
+  }
   /** The research topic recording in a Space, for the toolbar. */
   researchStatus?: (spaceId: string) => ShellState['research'];
   private readonly endpointStatus = new EndpointStatus();
@@ -334,7 +347,7 @@ export class TabManager {
       },
     });
     if (page) restrictInternalNavigation(view.webContents, page);
-    else restrictWebNavigation(view.webContents);
+    else restrictWebNavigation(view.webContents, (url) => this.onFtpLink?.(url, partition));
     return view;
   }
 

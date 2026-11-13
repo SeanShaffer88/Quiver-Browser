@@ -1,7 +1,10 @@
 import { shell, type DownloadItem, type Session } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { DownloadInfo, DownloadState } from '../shared/types';
+import type { DownloadInfo, DownloadState, NativeKind } from '../shared/types';
+import { JobControl, type Fetcher } from './native/job';
+import { ftpDownload } from './native/ftp';
+import { nativeKind, runDash, runHls, runMetalink } from './native/runners';
 
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 const RISKY = new Set(['exe', 'msi', 'msix', 'appx', 'appxbundle', 'bat', 'cmd', 'com', 'scr', 'pif', 'ps1', 'psm1', 'vbs', 'vbe',
@@ -45,7 +48,7 @@ interface DownloadRecord extends DownloadInfo {
 }
 
 function webUrl(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= 8192 && /^(?:https?|ftp):\/\//i.test(value) && URL.canParse(value);
+  return typeof value === 'string' && value.length <= 8192 && /^(?:https?|ftps?):\/\//i.test(value) && URL.canParse(value);
 }
 
 export function normalizeDownloads(raw: unknown): DownloadRecord[] {
@@ -72,7 +75,12 @@ export function normalizeDownloads(raw: unknown): DownloadRecord[] {
       etag: typeof r.etag === 'string' ? r.etag.slice(0, 200) : '', lastModified: typeof r.lastModified === 'string' ? r.lastModified.slice(0, 100) : '',
       canResume: false, risky: false,
     };
-    record.canResume = state === 'interrupted' && record.received > 0 && !!(record.etag || record.lastModified);
+    const kinds = ['ftp', 'hls', 'dash', 'metalink'];
+    if (typeof r.kind === 'string' && kinds.includes(r.kind)) record.kind = r.kind as NativeKind;
+    if (typeof r.detail === 'string') record.detail = r.detail.slice(0, 200);
+    if (typeof r.error === 'string') record.error = r.error.slice(0, 300);
+    // Quiver's own downloaders restart with Retry; Chromium's can resume from a validator.
+    record.canResume = !record.kind && state === 'interrupted' && record.received > 0 && !!(record.etag || record.lastModified);
     record.risky = isRiskyFile(record.filename);
     out.push(record);
     if (out.length === DOWNLOAD_LIMIT) break;
@@ -86,6 +94,7 @@ export type DownloadAction = 'pause' | 'resume' | 'cancel' | 'retry' | 'open' | 
 export class Downloads {
   private readonly records: DownloadRecord[];
   private readonly live = new Map<string, DownloadItem>();
+  private readonly jobs = new Map<string, JobControl>();
   private readonly attached = new WeakSet<Session>();
   private readonly lastBytes = new Map<string, { at: number; bytes: number }>();
   private emitTimer: NodeJS.Timeout | null = null;
@@ -122,7 +131,101 @@ export class Downloads {
   attach(ses: Session, partition: string): void {
     if (this.attached.has(ses)) return;
     this.attached.add(ses);
-    ses.on('will-download', (_event, item) => this.track(item, partition));
+    ses.on('will-download', (event, item) => {
+      // A playlist, manifest or Metalink link means the media or files it describes, not the small text file itself.
+      const kind = nativeKind(item.getURL(), item.getMimeType());
+      if (kind && kind !== 'ftp') {
+        event.preventDefault();
+        this.startNative(kind, item.getURL(), partition);
+        return;
+      }
+      this.track(item, partition);
+    });
+  }
+
+  /** Start one of Quiver's own downloaders (FTP, HLS, DASH, Metalink). Files go to the downloads folder. */
+  startNative(kind: NativeKind, url: string, partition: string): string {
+    const parsed = new URL(url);
+    const leaf = safeFileName(decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() ?? parsed.host));
+    const base = kind === 'hls' || kind === 'dash' ? leaf.replace(/\.(m3u8|mpd)$/i, '') || parsed.host : leaf;
+    const id = `dl-${(this.nextId++).toString(36)}`;
+    const record: DownloadRecord = {
+      id, url: parsed.href.replace(/\/\/[^/@]*@/, '//'), filename: kind === 'metalink' ? base : kind === 'ftp' ? base : `${base} (${kind.toUpperCase()})`,
+      savePath: path.join(this.options.directory(), base), partition, state: 'progressing', paused: false, received: 0, total: 0, speed: 0,
+      startedAt: Date.now(), endedAt: 0, mime: '', urlChain: [], etag: '', lastModified: '', canResume: false, risky: isRiskyFile(base), kind, detail: 'Starting…',
+    };
+    this.records.unshift(record);
+    const control = new JobControl();
+    this.jobs.set(id, control);
+    const dir = this.options.directory();
+    const place = (name: string) => {
+      fs.mkdirSync(dir, { recursive: true });
+      const unique = uniqueName(safeFileName(name), (n) => fs.existsSync(path.join(dir, n)) || fs.existsSync(path.join(dir, `${n}.part`)));
+      return path.join(dir, unique);
+    };
+    const ses = this.options.fromPartition(partition);
+    const fetcher: Fetcher = (u, init) => ses.fetch(u, { ...init, credentials: 'include' } as RequestInit);
+    let lastAt = Date.now();
+    let lastBytes = 0;
+    const ctx = {
+      fetch: fetcher, control,
+      progress: (p: { received: number; total: number; detail: string }) => {
+        const now = Date.now();
+        if (now - lastAt >= 500) {
+          const instant = ((p.received - lastBytes) * 1000) / (now - lastAt);
+          record.speed = control.paused ? 0 : record.speed ? record.speed * 0.7 + instant * 0.3 : instant;
+          lastAt = now;
+          lastBytes = p.received;
+        }
+        record.received = p.received;
+        record.total = p.total;
+        if (p.detail) record.detail = p.detail;
+        this.queueEmit();
+      },
+    };
+    const run = async (): Promise<string[]> => {
+      if (kind === 'hls') return runHls(url, base, ctx, place);
+      if (kind === 'dash') return runDash(url, base, ctx, place);
+      if (kind === 'metalink') return runMetalink(url, ctx, place);
+      const final = place(base);
+      record.savePath = final;
+      // Pausing FTP closes the data connection; resuming reconnects and continues with REST.
+      for (;;) {
+        try {
+          await ftpDownload(url, `${final}.part`, ctx);
+          break;
+        } catch (error) {
+          if (!control.paused) throw error;
+          await control.ready();
+        }
+      }
+      fs.renameSync(`${final}.part`, final);
+      return [final];
+    };
+    void run().then((files) => {
+      record.state = 'completed';
+      record.savePath = files[0];
+      record.filename = path.basename(files[0]) + (files.length > 1 ? ` and ${files.length - 1} more` : '');
+      record.risky = files.some((f) => isRiskyFile(f));
+      if (record.total === 0 || record.received > record.total) record.total = record.received;
+      record.detail = kind === 'dash' && files.length > 1 ? 'Video and audio saved as separate files' : record.detail?.replace(/^\d+ of \d+ (segments|parts)/, '').replace(/^ · /, '') || '';
+    }, (error: unknown) => {
+      if (control.cancelled) {
+        record.state = 'cancelled';
+        if (kind === 'ftp') fs.rmSync(`${record.savePath}.part`, { force: true });
+      } else {
+        record.state = 'interrupted';
+        record.error = error instanceof Error ? error.message : String(error);
+      }
+    }).finally(() => {
+      this.jobs.delete(id);
+      record.speed = 0;
+      record.paused = false;
+      record.endedAt = Date.now();
+      this.save();
+    });
+    this.save();
+    return id;
   }
 
   private track(item: DownloadItem, partition: string): void {
@@ -214,6 +317,27 @@ export class Downloads {
   async act(id: string, action: DownloadAction, confirmedRisky = false): Promise<string> {
     const record = this.records.find((r) => r.id === id);
     if (!record) return 'This download is no longer listed.';
+    const job = this.jobs.get(id);
+    if (record.kind && record.kind !== 'chromium') {
+      const kind = record.kind;
+      switch (action) {
+        case 'pause': job?.pause(); record.paused = !!job; record.speed = 0; break;
+        case 'resume': job?.resume(); record.paused = false; break;
+        case 'cancel': job?.cancel(); break;
+        case 'retry':
+          if (job) return '';
+          this.records.splice(this.records.indexOf(record), 1);
+          this.startNative(kind, record.url, record.partition);
+          return '';
+        case 'remove':
+          if (job) return 'Cancel the download first.';
+          this.records.splice(this.records.indexOf(record), 1);
+          break;
+        default:
+          break;
+      }
+      if (action === 'pause' || action === 'resume' || action === 'cancel' || action === 'remove') { this.save(); return ''; }
+    }
     const item = this.live.get(id);
     switch (action) {
       case 'pause':
@@ -262,7 +386,7 @@ export class Downloads {
   }
 
   clearFinished(): void {
-    for (let i = this.records.length - 1; i >= 0; i--) if (!this.live.has(this.records[i].id)) this.records.splice(i, 1);
+    for (let i = this.records.length - 1; i >= 0; i--) if (!this.live.has(this.records[i].id) && !this.jobs.has(this.records[i].id)) this.records.splice(i, 1);
     this.save();
   }
 }
