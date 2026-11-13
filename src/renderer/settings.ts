@@ -305,3 +305,47 @@ $<HTMLInputElement>('engine').addEventListener('change', async (e) => {
   await quiver.invoke('settings:set', { searchEngine: (e.target as HTMLInputElement).value.trim() });
 });
 $<HTMLInputElement>('scan').addEventListener('change', (e) => void quiver.invoke('settings:set', { devServerScan: (e.target as HTMLInputElement).checked }));
+
+interface SyncStatus {
+  folder: string | null;
+  deviceName: string;
+  include: Record<string, boolean>;
+  last?: { at: number; ok: boolean; message: string; devices: string[] };
+  syncing: boolean;
+}
+
+function renderSync(status: SyncStatus): void {
+  $('sync-folder').textContent = status.folder ?? 'Not syncing';
+  $('sync-choose').textContent = status.folder ? 'Change folder…' : 'Choose folder…';
+  $('sync-now').hidden = !status.folder;
+  $('sync-disconnect').hidden = !status.folder;
+  const device = $<HTMLInputElement>('sync-device');
+  if (document.activeElement !== device) device.value = status.deviceName;
+  for (const box of document.querySelectorAll<HTMLInputElement>('[data-sync]')) box.checked = !!status.include[box.dataset.sync!];
+  const el = $('sync-status');
+  if (status.syncing) el.textContent = 'Syncing…';
+  else if (!status.folder) el.textContent = '';
+  else if (status.last) {
+    const others = status.last.devices.length ? ` Other devices: ${status.last.devices.join(', ')}.` : ' No other devices yet.';
+    el.textContent = `${new Date(status.last.at).toLocaleTimeString()}: ${status.last.message}${others}`;
+  }
+  el.className = 'status' + (status.last && !status.last.ok ? ' err' : '');
+}
+
+async function syncCall(channel: string, ...args: unknown[]): Promise<void> {
+  try {
+    renderSync((await quiver.invoke(channel, ...args)) as SyncStatus);
+  } catch (e) {
+    flash($('sync-status'), (e as Error).message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''), 'err');
+  }
+}
+
+$('sync-choose').addEventListener('click', () => void syncCall('sync:choose'));
+$('sync-now').addEventListener('click', () => void syncCall('sync:now'));
+$('sync-disconnect').addEventListener('click', () => void syncCall('sync:disconnect'));
+$<HTMLInputElement>('sync-device').addEventListener('change', (e) => void syncCall('sync:options', {}, (e.target as HTMLInputElement).value));
+for (const box of document.querySelectorAll<HTMLInputElement>('[data-sync]')) {
+  box.addEventListener('change', () => void syncCall('sync:options', { [box.dataset.sync!]: box.checked }));
+}
+quiver.on('sync:changed', () => void syncCall('sync:status'));
+void syncCall('sync:status');
