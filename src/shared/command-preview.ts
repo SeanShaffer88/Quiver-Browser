@@ -68,7 +68,7 @@ export function commandChoice(suggestion: Suggestion, context: CommandContext): 
       if (kind === 'jwt') accessibleLabel = /^Copy (payload|header)$/.test(label) ? label : 'Copy JWT claim';
       break;
     case 'internal':
-      preview = { title: action.page === 'settings' ? 'Open Settings' : 'Open Boosts', space: context.spaceName, tab: 'new', canRun: true };
+      preview = { title: action.page === 'settings' ? 'Open Settings' : action.page === 'research' ? 'Open research notes' : 'Open Boosts', space: context.spaceName, tab: 'new', canRun: true };
       break;
     case 'boost':
       preview = { title: 'Edit Boost', destination: action.name, space: context.spaceName, tab: 'new', canRun: true };
@@ -83,6 +83,9 @@ export function commandChoice(suggestion: Suggestion, context: CommandContext): 
       accessibleLabel = [`Switch to ${title}`, host, `Space: ${spaceName}`, environment].filter(Boolean).join(', ');
       break;
     }
+    case 'research':
+      preview = { title: label, destination: detail, space: context.spaceName, canRun: true };
+      break;
     case 'browser':
       preview = { title: label, destination: detail ? `Shortcut: ${detail}` : undefined, canRun: true };
       accessibleLabel = detail ? `${label}, ${detail}` : label;

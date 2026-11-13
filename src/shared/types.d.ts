@@ -92,6 +92,8 @@ export interface ShellState {
   activeSpaceId: string;
   tabs: TabInfo[];
   activeTabId: number | null;
+  /** The research topic recording in the active Space. */
+  research?: { id: string; name: string; count: number };
   devServers: DevServer[];
   preview: boolean;
   phoneStatus: PhoneStatus;
@@ -115,9 +117,13 @@ export type SuggestionAction =
   | { type: 'copy'; text: string }
   | { type: 'boost'; name: string }
   | { type: 'env'; target: EnvBadge; url: string }
-  | { type: 'internal'; page: 'boosts' | 'settings' }
+  | { type: 'internal'; page: 'boosts' | 'settings' | 'research' }
   | { type: 'activate-tab'; target: TabCommandTarget }
   | { type: 'browser'; command: BrowserCommand }
+  | { type: 'research'; op: 'start'; name: string }
+  | { type: 'research'; op: 'resume' | 'open'; topicId: string }
+  | { type: 'research'; op: 'stop' }
+  | { type: 'research'; op: 'note'; text: string }
   | { type: 'noop' };
 
 export type BrowserCommand =

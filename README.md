@@ -103,10 +103,15 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `> reload` · `> phone` | Browser actions only (tab, navigation, sidebar, preview, environment, DevTools, Boosts, Settings) |
 | `tab orders` | Open tabs across Spaces |
 | `bm react` · `bookmarks` | Bookmarks |
+| `research webgpu` · `research` · `note read later` | Start or continue a research topic · list topics · note on this page |
 
 Matching is fuzzy: letters must start words (`rct` → *Reopen closed tab*) or follow each other (`dash` → *dashboard*), and all words must match in any order.
 
 The selected result shows the action before you confirm, including the destination, tab, and Space when relevant. Use the arrow keys to change the selection. If the page or destination changes before confirmation, Quiver refreshes the preview for you to review again. Parsing and decoding run locally. Network navigation starts when you confirm an action that opens a page.
+
+### Research
+
+Type `research <name>` in the command bar to start a topic for the current Space. While it records, web searches from the command bar and the web pages you open in that Space join its trail, with credentials and `#fragments` removed. `note <text>` attaches a note to the current page. The toolbar shows the recording topic; click it to open `quiver://research`, where you can write topic notes, annotate or remove trail items, reopen pages, stop or continue recording, and copy the topic as Markdown. `research` alone lists topics to continue or stop. Nothing is recorded unless a topic is recording, and topics stay in the local profile.
 
 ### Spaces
 `+` next to the Space chips creates a Space. Tick "Separate cookies & logins" for an isolated cookie jar and storage (a separate Chromium partition). Right-click or double-click a chip to rename; right-click to delete (deleting an isolated Space also clears its storage). Isolation is chosen at creation. The sidebar labels the active Space **Separate sign-in** or **Shared sign-in**.

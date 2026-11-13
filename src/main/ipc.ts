@@ -10,6 +10,8 @@ import type { DevServerWatcher } from './devservers';
 import { internalRole, type InternalPage, type InternalRole } from './internal-access';
 import type { Store } from './store';
 import { paletteQuery, paletteSuggestions } from './palette';
+import { topicMarkdown, type Research } from './research';
+import { researchSuggestions } from './research-commands';
 import { tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
 
@@ -22,6 +24,7 @@ export interface IpcDeps {
   shell: WebContentsView;
   /** Runs a browser action chosen in the command palette. */
   runCommand: (command: BrowserCommand) => void;
+  research: Research;
 }
 
 const MAX_COMMAND_LENGTH = 65536;
@@ -37,7 +40,7 @@ export function sanitizeEnvGroups(input: unknown): EnvGroup[] {
 }
 
 export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?: CommandMode) => void; toggleSidebar: () => void } {
-  const { tabs, store, boosts, devWatcher, overlay, shell } = d;
+  const { tabs, store, boosts, devWatcher, overlay, shell, research } = d;
 
   const handle = (role: InternalRole, channel: string, fn: (e: AuthorizedInvokeEvent, ...args: any[]) => unknown) => {
     ipcMain.handle(channel, (e, ...args) => {
@@ -109,6 +112,8 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
 
   /** Tab search (`tab …`), palette scopes (`> …`, `bm …`), else the parser with palette matches below its default result. */
   const suggestionsFor = (text: string, context: CommandContext): Suggestion[] => {
+    const topics = researchSuggestions(text, research.inSpace(context.spaceId), research.active(context.spaceId), context.internal ? '' : context.url);
+    if (topics) return topics;
     const tabQuery = tabSearchQuery(text);
     if (tabQuery !== undefined) return tabSearchSuggestions(tabQuery, context.spaceId, openTabTargets());
     const palette = paletteQuery(text);
@@ -149,7 +154,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     const menu = Menu.buildFromTemplate([
       { label: 'Rename Space', click: () => shell.webContents.send('space:rename-start', id) },
       { type: 'separator' },
-      { label: 'Delete Space and its tabs', enabled: tabs.spaces.length > 1, click: () => void tabs.deleteSpace(String(id)) },
+      { label: 'Delete Space and its tabs', enabled: tabs.spaces.length > 1, click: () => void tabs.deleteSpace(String(id)).then(() => research.prune(new Set(tabs.spaces.map((sp) => sp.id)))) },
     ]);
     menu.popup();
   });
@@ -195,8 +200,29 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     const preview = (alternate === true && choice.alternative) || choice.preview;
     switch (action.type) {
       case 'navigate':
+        if (suggestion.kind === 'search') research.recordSearch(context.spaceId, suggestion.label.replace(/^Search: /, ''), action.url);
         tabs.navigate(action.url, { newTab: preview.tab === 'new' });
         break;
+      case 'research': {
+        const topicInSpace = (id: string) => research.get(id)?.spaceId === context.spaceId;
+        if (action.op === 'start') {
+          if (!research.start(context.spaceId, action.name)) return 'unavailable';
+        } else if (action.op === 'resume') {
+          if (!topicInSpace(action.topicId)) return 'stale';
+          research.resume(action.topicId);
+        } else if (action.op === 'stop') {
+          research.stop(context.spaceId);
+        } else if (action.op === 'open') {
+          if (!topicInSpace(action.topicId)) return 'stale';
+          tabs.navigate(`quiver://research?topic=${encodeURIComponent(action.topicId)}`);
+          break;
+        } else if (action.op === 'note') {
+          const tab = tabs.activeTab;
+          if (!tab || tab.internal || !research.note(context.spaceId, tabs.tabUrl(tab), tab.titleIsExplicit ? tab.title : '', action.text)) return 'unavailable';
+        }
+        closeOverlay(true);
+        return 'done';
+      }
       case 'copy':
         clipboard.writeText(action.text);
         closeOverlay(true);
@@ -229,9 +255,48 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     return 'done';
   });
   handle('shell', 'cmd:run', (_e, action: unknown) => {
-    const choice = action as Partial<{ type: string; page: string }> | null;
-    if (choice?.type === 'internal' && (choice.page === 'boosts' || choice.page === 'settings')) tabs.navigate(`quiver://${choice.page}`);
+    const choice = action as Partial<{ type: string; page: string; topic: string }> | null;
+    if (choice?.type !== 'internal') return;
+    if (choice.page === 'boosts' || choice.page === 'settings') tabs.navigate(`quiver://${choice.page}`);
+    if (choice.page === 'research') {
+      const topic = typeof choice.topic === 'string' && research.get(choice.topic) ? `?topic=${encodeURIComponent(choice.topic)}` : '';
+      tabs.navigate(`quiver://research${topic}`);
+    }
   });
+  // research notes page
+  const topicId = (id: unknown) => (typeof id === 'string' ? id : '');
+  const text = (value: unknown) => (typeof value === 'string' ? value : '');
+  handle('research', 'research:list', () => {
+    const names = new Map(tabs.spaces.map((sp) => [sp.id, sp.name]));
+    return research.list().map((t) => ({ ...t, spaceName: names.get(t.spaceId) ?? '' }));
+  });
+  handle('research', 'research:get', (_e, id: string) => research.get(topicId(id)) ?? null);
+  handle('research', 'research:rename', (_e, id: string, name: string) => research.rename(topicId(id), text(name)));
+  handle('research', 'research:notes', (_e, id: string, notes: string) => research.setNotes(topicId(id), text(notes)));
+  handle('research', 'research:item-note', (_e, id: string, kind: string, url: string, note: string) =>
+    research.setItemNote(topicId(id), kind, url, text(note)));
+  handle('research', 'research:item-remove', (_e, id: string, kind: string, url: string) => research.removeItem(topicId(id), kind, url));
+  handle('research', 'research:delete', (_e, id: string) => research.delete(topicId(id)));
+  handle('research', 'research:resume', (_e, id: string) => research.resume(topicId(id)));
+  handle('research', 'research:stop', (_e, id: string) => {
+    const topic = research.get(topicId(id));
+    if (topic && research.active(topic.spaceId)?.id === topic.id) research.stop(topic.spaceId);
+  });
+  handle('research', 'research:open', (_e, id: string, url: string) => {
+    // Only URLs already on the topic's trail can be opened from the page, and only in the topic's Space.
+    const topic = research.get(topicId(id));
+    const item = topic?.items.find((i) => i.url === url);
+    if (!topic || !item || !tabs.spaces.some((sp) => sp.id === topic.spaceId)) return;
+    if (tabs.activeSpaceId !== topic.spaceId) tabs.activateSpace(topic.spaceId);
+    tabs.openTab(item.url, { spaceId: topic.spaceId });
+  });
+  handle('research', 'research:export', (_e, id: string) => {
+    const topic = research.get(topicId(id));
+    if (!topic) return false;
+    clipboard.writeText(topicMarkdown(topic));
+    return true;
+  });
+
   // settings
   handle('settings', 'settings:get', () => store.state.settings);
   handle('settings', 'settings:set', (_e, patch: Partial<Settings>) => {
