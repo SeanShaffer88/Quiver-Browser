@@ -503,7 +503,24 @@ function renderRecovery(s: ShellState): HTMLElement[] {
   return cards;
 }
 
+// The whole sidebar is rebuilt from state, so rebuilding it when nothing it shows changed only costs CPU, resets
+// hover and moves screen-reader and UI Automation elements out from under people and tests. Skip those rebuilds.
+let lastSidebarKey = '';
+
+function sidebarKey(s: ShellState): string {
+  const { tabs: _tabs, devServers, ...rest } = s;
+  return JSON.stringify([
+    s.tabs.filter((t) => t.spaceId === s.activeSpaceId),
+    devServers,
+    rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.recentlyClosed, rest.recoveryNotice, rest.localServerStatus,
+    rest.settings.sidebarCollapsed, rest.settings.devServerScan, addingSpace, renamingSpace, renamingFolder,
+  ]);
+}
+
 function renderSidebar(s: ShellState): void {
+  const key = sidebarKey(s);
+  if (key === lastSidebarKey && sidebar.childElementCount) return;
+  lastSidebarKey = key;
   const spaceTabs = s.tabs.filter((t) => t.spaceId === s.activeSpaceId);
   const brand = h('div', { class: 'brand' });
   const logo = h('img', { src: 'quiver-icon.png', width: 22, height: 22, alt: '' });
