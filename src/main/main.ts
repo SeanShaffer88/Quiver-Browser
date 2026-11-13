@@ -8,6 +8,7 @@ import { Boosts, isValidBoostName } from './boosts';
 import { configureSitePermissions } from './browser-policy';
 import { DevServerWatcher } from './devservers';
 import { History } from './history';
+import { Downloads } from './downloads';
 import { registerIpc } from './ipc';
 import { meetingProvider } from './meetings';
 import { MediaPermissions } from './site-permissions';
@@ -237,6 +238,9 @@ async function main(): Promise<void> {
       case 'boosts':
         tabs.navigate('quiver://boosts');
         break;
+      case 'downloads':
+        tabs.navigate('quiver://downloads');
+        break;
       default: {
         const m = a.match(/^tab-(\d)$/);
         if (m) tabs.tabByIndex(Number(m[1]));
@@ -288,6 +292,22 @@ async function main(): Promise<void> {
       menu.popup({ window: win });
     });
   };
+  const downloads = new Downloads(store.state.downloads, {
+    directory: () => portableDownloadPath ?? app.getPath('downloads'),
+    askWhereToSave: () => store.state.settings.askWhereToSave,
+    fromPartition: (partition) => session.fromPartition(partition),
+    persist: (records) => {
+      store.state.downloads = records;
+      store.save();
+    },
+    changed: () => {
+      tabs.emit();
+      for (const tab of tabs.tabs.values()) {
+        if (tab.internalPage === 'downloads' && !tab.view.webContents.isDestroyed()) tab.view.webContents.send('downloads:changed');
+      }
+    },
+  });
+  tabs.downloads = downloads;
 
   const research = new Research(store.state, () => store.save(), () => {
     tabs.emit();
@@ -341,7 +361,7 @@ async function main(): Promise<void> {
     }
   });
   actions = registerIpc({
-    tabs, store, boosts, devWatcher, overlay, shell, research, sync, history,
+    tabs, store, boosts, devWatcher, overlay, shell, research, sync, history, downloads,
     onPrivacyChanged: () => privacy.apply(),
     runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings') : onShortcut(command)),
   });

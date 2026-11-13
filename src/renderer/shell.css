@@ -116,3 +116,4 @@ body { display: grid; grid-template-columns: var(--sb, 264px) minmax(0, 1fr); gr
 .permission-bar .btn { flex: none; padding: 3px 10px; }
 .tab .live { color: var(--prod); font-size: 10px; flex: none; }
 @media (forced-colors: active) { .permission-bar { border-color: Highlight; } .tab .live { color: Highlight; } }
+.downloads-chip { display: flex; align-items: center; gap: 4px; padding: 3px 8px; border: 1px solid var(--accent); border-radius: 999px; color: var(--text); font-size: 12px; flex: none; font-variant-numeric: tabular-nums; }

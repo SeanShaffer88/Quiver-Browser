@@ -619,12 +619,21 @@ function renderToolbar(s: ShellState): void {
     h('button', { class: 'btn primary', dataset: { focusKey: 'permission-once' }, onClick: () => call('permission:decide', prompt.id, 'once') }, 'Allow this time'),
     h('button', { class: 'btn', dataset: { focusKey: 'permission-always' }, title: `Always allow on ${prompt.host} (change in Settings)`, onClick: () => call('permission:decide', prompt.id, 'always') }, 'Always allow'),
     h('button', { class: 'btn', dataset: { focusKey: 'permission-block' }, title: `Block on ${prompt.host} (change in Settings)`, onClick: () => call('permission:decide', prompt.id, 'block') }, 'Block'));
+  const dl = s.downloads;
+  const downloadsButton = dl && dl.active > 0 && h('button', {
+    class: 'downloads-chip',
+    title: `${dl.active} download${dl.active === 1 ? '' : 's'} in progress (Ctrl+J)`,
+    'aria-label': `${dl.active} download${dl.active === 1 ? '' : 's'} in progress${dl.progress === null ? '' : `, ${Math.floor(dl.progress * 100)} percent`}. Open downloads`,
+    dataset: { focusKey: 'downloads' },
+    onClick: () => call('cmd:run', { type: 'internal', page: 'downloads' }),
+  }, h('span', { 'aria-hidden': 'true' }, '↓'), h('span', {}, dl.progress === null ? String(dl.active) : `${Math.floor(dl.progress * 100)}%`));
   toolbar.replaceChildren(
     icon(ICON.back, 'Back (Alt+←)', () => call('tab:back'), { disabled: !t?.canGoBack }),
     icon(ICON.forward, 'Forward (Alt+→)', () => call('tab:forward'), { disabled: !t?.canGoForward }),
     icon(ICON.reload, 'Reload (Ctrl+R)', () => call('tab:reload')),
     permissionBar || addr,
     ...(research ? [research] : []),
+    ...(downloadsButton ? [downloadsButton] : []),
     icon(ICON.env, 'Switch environment: local → staging → prod (Ctrl+Alt+E)', () => call('env:switch'), { disabled: !t?.env }),
     phone,
     boost,

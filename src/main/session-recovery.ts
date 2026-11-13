@@ -7,8 +7,8 @@ export const CANONICAL_NEW_TAB_URL = 'quiver://app/newtab.html';
 const CLOSED_URL_LIMIT = 8192;
 const CLOSED_TITLE_LIMIT = 200;
 
-const INTERNAL_PAGES = new Set(['/newtab.html', '/settings.html', '/boosts.html', '/research.html']);
-const INTERNAL_HOSTS = new Set(['newtab', 'settings', 'boosts', 'research']);
+const INTERNAL_PAGES = new Set(['/newtab.html', '/settings.html', '/boosts.html', '/research.html', '/downloads.html']);
+const INTERNAL_HOSTS = new Set(['newtab', 'settings', 'boosts', 'research', 'downloads']);
 
 export function restorableUrl(value: unknown): value is string {
   if (typeof value !== 'string' || !value || /[\u0000-\u001f\u007f]/.test(value)) return false;

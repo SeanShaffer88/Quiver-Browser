@@ -33,6 +33,7 @@ export interface PersistedState {
   bookmarks: Bookmark[];
   bookmarkUndo?: BookmarkUndo;
   sessionOpen?: boolean;
+  downloads?: unknown[];
   topics?: Topic[];
   sync?: SyncState;
   activeTopicBySpace?: Record<string, string>;
@@ -47,6 +48,7 @@ export function defaultSettings(): Settings {
     sidebarCollapsed: false,
     sitePermissions: {},
     rememberHistory: true,
+    askWhereToSave: true,
     privacy: normalizePrivacy(undefined, process.platform),
   };
 }
@@ -118,6 +120,7 @@ export class Store {
           sidebarCollapsed: raw.settings?.sidebarCollapsed ?? base.settings.sidebarCollapsed,
           sitePermissions: normalizeSitePermissions(raw.settings?.sitePermissions),
           rememberHistory: typeof raw.settings?.rememberHistory === 'boolean' ? raw.settings.rememberHistory : true,
+          askWhereToSave: typeof raw.settings?.askWhereToSave === 'boolean' ? raw.settings.askWhereToSave : true,
           privacy: normalizePrivacy(raw.settings?.privacy, process.platform),
         },
       } as PersistedState;

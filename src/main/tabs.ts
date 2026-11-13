@@ -38,6 +38,7 @@ import { moveInGroup } from './tab-order';
 import type { MediaPermissions } from './site-permissions';
 import { normalizeSyncedSpaces, type SyncedSpace } from './sync';
 import { canNest, deleteFolder, displayOrder, folderName, normalizeFolders, placeRelative, sidebarRows } from './tab-tree';
+import type { Downloads } from './downloads';
 
 interface Tab {
   id: number;
@@ -134,6 +135,8 @@ export class TabManager {
   /** Ask which screen or window to share; resolves null when the person cancels. */
   pickScreen?: () => Promise<DesktopCapturerSource | null>;
   onVisit?: (spaceId: string, url: string, title: string, kind: 'navigate' | 'title') => void;
+  /** Tracks downloads from web Spaces. */
+  downloads?: Downloads;
   /** The research topic recording in a Space, for the toolbar. */
   researchStatus?: (spaceId: string) => ShellState['research'];
   private readonly endpointStatus = new EndpointStatus();
@@ -246,6 +249,7 @@ export class TabManager {
       activeTabId: this.activeTabId,
       research: this.researchStatus?.(this.activeSpaceId),
       permissionPrompt: this.activePrompt(),
+      downloads: this.downloads?.summary(),
       devServers: this.devServers,
       preview: this.preview,
       phoneStatus: this.getPhoneStatus(),
@@ -288,16 +292,8 @@ export class TabManager {
     if (this.preparedPartitions.has(partition)) return;
     this.preparedPartitions.add(partition);
     const ses = session.fromPartition(partition);
-    const downloadPath = this.portableDownloadPath;
-    if (downloadPath) {
-      ses.setDownloadPath(downloadPath);
-      ses.on('will-download', (_event, item) => {
-        // Chromium otherwise prefers the last folder selected in Save As.
-        const name = path.basename(item.getFilename());
-        const safeName = name && name !== '.' && name !== '..' && !/[<>:"/\\|?*\u0000-\u001f]/u.test(name);
-        item.setSaveDialogOptions({ ...item.getSaveDialogOptions(), defaultPath: safeName ? path.join(downloadPath, name) : downloadPath });
-      });
-    }
+    if (this.portableDownloadPath) ses.setDownloadPath(this.portableDownloadPath);
+    if (partition !== INTERNAL_PARTITION) this.downloads?.attach(ses, partition);
     if (partition !== INTERNAL_PARTITION) configureSitePermissions(ses, true, this.mediaDelegate());
   }
 

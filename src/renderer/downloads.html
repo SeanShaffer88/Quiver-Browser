@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+<title>Downloads</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="pages.css">
+</head>
+<body>
+<div class="page">
+  <div class="toolbar"><h1 class="name">Downloads</h1><button class="btn" id="clear">Clear finished</button></div>
+  <p class="sub">Files from every Space. <kbd>Ctrl+J</kbd> opens this page. Change where files go in Settings.</p>
+  <p class="status" id="status" role="status"></p>
+  <ol class="downloads" id="list" aria-label="Downloads"></ol>
+</div>
+<script type="module" src="downloads.js"></script>
+</body>
+</html>

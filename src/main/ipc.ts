@@ -16,6 +16,7 @@ import { researchSuggestions } from './research-commands';
 import { meetSuggestions } from './meetings';
 import type { SyncService } from './sync-service';
 import type { History } from './history';
+import type { DownloadAction, Downloads } from './downloads';
 import { tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
 
@@ -31,6 +32,7 @@ export interface IpcDeps {
   research: Research;
   sync: SyncService;
   history: History;
+  downloads: Downloads;
   /** Reapply privacy settings after they change. */
   onPrivacyChanged: () => void;
 }
@@ -344,12 +346,21 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('shell', 'cmd:run', (_e, action: unknown) => {
     const choice = action as Partial<{ type: string; page: string; topic: string }> | null;
     if (choice?.type !== 'internal') return;
-    if (choice.page === 'boosts' || choice.page === 'settings') tabs.navigate(`quiver://${choice.page}`);
+    if (choice.page === 'boosts' || choice.page === 'settings' || choice.page === 'downloads') tabs.navigate(`quiver://${choice.page}`);
     if (choice.page === 'research') {
       const topic = typeof choice.topic === 'string' && research.get(choice.topic) ? `?topic=${encodeURIComponent(choice.topic)}` : '';
       tabs.navigate(`quiver://research${topic}`);
     }
   });
+  // downloads page
+  const DOWNLOAD_ACTIONS = new Set<DownloadAction>(['pause', 'resume', 'cancel', 'retry', 'open', 'show', 'remove']);
+  handle('downloads', 'downloads:list', () => d.downloads.list());
+  handle('downloads', 'downloads:act', (_e, id: unknown, action: unknown, confirmedRisky: unknown) => {
+    if (typeof id !== 'string' || !DOWNLOAD_ACTIONS.has(action as DownloadAction)) return 'Unknown action.';
+    return d.downloads.act(id, action as DownloadAction, confirmedRisky === true);
+  });
+  handle('downloads', 'downloads:clear', () => d.downloads.clearFinished());
+
   // research notes page
   const topicId = (id: unknown) => (typeof id === 'string' ? id : '');
   const text = (value: unknown) => (typeof value === 'string' ? value : '');
@@ -394,6 +405,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (typeof patch.searchEngine === 'string' && /^https?:\/\/.+%s/.test(patch.searchEngine)) s.searchEngine = patch.searchEngine;
     if (typeof patch.devServerScan === 'boolean') s.devServerScan = patch.devServerScan;
     if (typeof patch.rememberHistory === 'boolean') s.rememberHistory = patch.rememberHistory;
+    if (typeof patch.askWhereToSave === 'boolean') s.askWhereToSave = patch.askWhereToSave;
     if (patch.privacy !== undefined && typeof patch.privacy === 'object') {
       s.privacy = normalizePrivacy({ ...s.privacy, ...patch.privacy }, process.platform);
       d.onPrivacyChanged();
