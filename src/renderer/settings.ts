@@ -1,5 +1,6 @@
 import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, Settings } from '../shared/types';
 import { readBookmarkExport } from './bookmark-file.js';
+import { currentSection, searchTerms, sectionMatches } from './settings-search.js';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let groups: EnvGroup[] = [];
@@ -301,6 +302,7 @@ function renderGroups(): void {
   $<HTMLInputElement>('ask-save').checked = settings.askWhereToSave;
   $<HTMLSelectElement>('archive-after').value = String(settings.archiveAfterHours);
   renderPrivacy(settings.privacy);
+  $<HTMLSelectElement>('theme').value = settings.theme;
 })();
 
 $('addgroup').addEventListener('click', () => {
@@ -433,3 +435,100 @@ $('privacy-doh-save').addEventListener('click', () => void savePrivacy({ secureD
 
 $<HTMLInputElement>('ask-save').addEventListener('change', (e) => void quiver.invoke('settings:set', { askWhereToSave: (e.target as HTMLInputElement).checked }));
 $<HTMLSelectElement>('archive-after').addEventListener('change', (e) => void quiver.invoke('settings:set', { archiveAfterHours: Number((e.target as HTMLSelectElement).value) }));
+$<HTMLSelectElement>('theme').addEventListener('change', (e) => void quiver.invoke('settings:set', { theme: (e.target as HTMLSelectElement).value }));
+
+// ───────── section list and search ─────────
+const sections = [...document.querySelectorAll<HTMLElement>('.settings-section')];
+const toc = $('settings-toc');
+const search = $<HTMLInputElement>('settings-search');
+const searchStatus = $('settings-search-status');
+const links = new Map<HTMLElement, HTMLAnchorElement>();
+for (const section of sections) {
+  const heading = section.querySelector<HTMLElement>('h2')!;
+  const link = document.createElement('a');
+  link.href = '#' + section.id;
+  link.textContent = heading.textContent;
+  link.addEventListener('click', (e) => {
+    // Move focus to the heading as well as scrolling, so keyboard and screen-reader users continue from there.
+    e.preventDefault();
+    heading.scrollIntoView({ block: 'start' });
+    heading.focus({ preventScroll: true });
+    jumped = section;
+    markCurrent(section);
+  });
+  const item = document.createElement('li');
+  item.append(link);
+  toc.append(item);
+  links.set(section, link);
+}
+
+function visibleSections(): HTMLElement[] {
+  return sections.filter((section) => !section.hidden);
+}
+
+function markCurrent(current: HTMLElement | undefined): void {
+  for (const [section, link] of links) {
+    if (section === current) link.setAttribute('aria-current', 'location');
+    else link.removeAttribute('aria-current');
+  }
+}
+
+// Reading line a little below the top, so the section whose heading just passed under the sticky list counts.
+const READING_LINE = 96;
+// The section a link jumped to stays current while it is still near the top. Otherwise jumping to a section near
+// the end, which can only scroll as far as the bottom of the page, would highlight the last section instead.
+let jumped: HTMLElement | undefined;
+function updateCurrent(): void {
+  const shown = visibleSections();
+  if (!shown.length) return markCurrent(undefined);
+  if (jumped && !jumped.hidden) {
+    const top = jumped.getBoundingClientRect().top;
+    if (top > -8 && top < window.innerHeight / 2) return markCurrent(jumped);
+  }
+  jumped = undefined;
+  const scrolled = document.body.scrollTop + document.documentElement.scrollTop > 0;
+  const atBottom = scrolled && shown[shown.length - 1].getBoundingClientRect().bottom <= window.innerHeight + 2;
+  // Near the end the last short sections can never reach the reading line; mark the last one at the bottom.
+  const index = atBottom ? shown.length - 1 : currentSection(shown.map((s) => s.getBoundingClientRect().top), READING_LINE);
+  markCurrent(shown[index]);
+}
+let scrollFrame = 0;
+// Capture: the page scrolls inside <body> (base.css fixes html and body to the window height), and element
+// scroll events do not reach window listeners.
+document.addEventListener('scroll', () => {
+  if (scrollFrame) return;
+  scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; updateCurrent(); });
+}, { passive: true, capture: true });
+window.addEventListener('resize', updateCurrent);
+
+function sectionText(section: HTMLElement): string {
+  // Placeholders and accessible names are part of what people search for, not only the visible text.
+  const extra = [...section.querySelectorAll<HTMLElement>('[placeholder], [aria-label]')]
+    .map((el) => `${el.getAttribute('placeholder') ?? ''} ${el.getAttribute('aria-label') ?? ''}`);
+  return `${section.textContent ?? ''} ${extra.join(' ')}`;
+}
+
+function applySearch(): void {
+  const terms = searchTerms(search.value);
+  let shown = 0;
+  for (const section of sections) {
+    const match = sectionMatches(sectionText(section), terms);
+    section.hidden = !match;
+    links.get(section)!.parentElement!.hidden = !match;
+    if (match) shown++;
+  }
+  searchStatus.textContent = !terms.length ? '' : shown ? `${shown} of ${sections.length} sections` : 'No settings match.';
+  updateCurrent();
+}
+search.addEventListener('input', applySearch);
+search.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && search.value) {
+    search.value = '';
+    applySearch();
+  } else if (e.key === 'Enter') {
+    // Enter jumps to the first matching section.
+    const first = visibleSections()[0];
+    if (first) links.get(first)!.click();
+  }
+});
+updateCurrent();
