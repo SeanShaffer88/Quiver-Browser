@@ -99,7 +99,12 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | a JWT (optionally with `Bearer `) | Header, payload, `exp`/`iat` relative times; copy any value. Signature is **not** verified |
 | 10 or 13 digit number | Unix seconds/ms → ISO UTC, local time |
 | `localhost:3000`, `:8080`, `example.com/x` | Navigate |
-| anything else | Web search (engine configurable) |
+| anything else | Web search (engine configurable), with fuzzy-matched browser actions, open tabs and bookmarks listed below it |
+| `> reload` · `> phone` | Browser actions only (tab, navigation, sidebar, preview, environment, DevTools, Boosts, Settings) |
+| `tab orders` | Open tabs across Spaces |
+| `bm react` · `bookmarks` | Bookmarks |
+
+Matching is fuzzy: letters must start words (`rct` → *Reopen closed tab*) or follow each other (`dash` → *dashboard*), and all words must match in any order.
 
 The selected result shows the action before you confirm, including the destination, tab, and Space when relevant. Use the arrow keys to change the selection. If the page or destination changes before confirmation, Quiver refreshes the preview for you to review again. Parsing and decoding run locally. Network navigation starts when you confirm an action that opens a page.
 

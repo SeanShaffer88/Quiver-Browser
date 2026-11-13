@@ -117,7 +117,12 @@ export type SuggestionAction =
   | { type: 'env'; target: EnvBadge; url: string }
   | { type: 'internal'; page: 'boosts' | 'settings' }
   | { type: 'activate-tab'; target: TabCommandTarget }
+  | { type: 'browser'; command: BrowserCommand }
   | { type: 'noop' };
+
+export type BrowserCommand =
+  | 'command-new' | 'close-tab' | 'reopen-tab' | 'reload' | 'back' | 'forward' | 'next-tab' | 'prev-tab'
+  | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings';
 
 export interface Suggestion {
   kind: string;

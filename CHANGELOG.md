@@ -4,6 +4,7 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+- Command palette: `Ctrl+K` fuzzy-matches browser actions, open tabs and bookmarks beneath the address result; `>` lists actions, `bm` lists bookmarks, and `tab` search is now fuzzy.
 - Reorder tabs within a Space by dragging them in the sidebar or with `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown`; the order is saved with the session.
 - `Ctrl+PageUp` / `Ctrl+PageDown` switch to the previous / next tab.
 

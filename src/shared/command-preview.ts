@@ -83,6 +83,10 @@ export function commandChoice(suggestion: Suggestion, context: CommandContext): 
       accessibleLabel = [`Switch to ${title}`, host, `Space: ${spaceName}`, environment].filter(Boolean).join(', ');
       break;
     }
+    case 'browser':
+      preview = { title: label, destination: detail ? `Shortcut: ${detail}` : undefined, canRun: true };
+      accessibleLabel = detail ? `${label}, ${detail}` : label;
+      break;
     case 'noop':
       preview = { title: kind === 'jwt' ? 'Decode locally' : label, destination: detail, canRun: false };
       if (kind === 'jwt') accessibleLabel = 'JWT decode result';
