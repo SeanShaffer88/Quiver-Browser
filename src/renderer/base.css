@@ -11,6 +11,35 @@
   --prod: #ff5d5d;
   --radius: 8px;
   --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  /* Text on accent / status fills (primary buttons, environment pills). */
+  --on-accent: #0b1020;
+  --on-status: #0b1020;
+  --shadow: rgba(0, 0, 0, .55);
+  --backdrop: rgba(8, 10, 14, .55);
+  color-scheme: dark;
+}
+/* Light palette. The main process sets nativeTheme.themeSource from Settings → Appearance, which is what
+   prefers-color-scheme reports in every Quiver page, so no page needs the setting itself. Colours are picked for
+   WCAG AA: --text and --muted reach 4.5:1 on --bg, --panel and --panel-2; status colours reach 4.5:1 as text on
+   white and with white text on them. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --panel-2: #e9ecf1;
+    --border: #c9ced8;
+    --text: #1b1e24;
+    --muted: #535b69;
+    --accent: #2f5fd6;
+    --local: #157347;
+    --staging: #8a5a00;
+    --prod: #c62828;
+    --on-accent: #ffffff;
+    --on-status: #ffffff;
+    --shadow: rgba(20, 30, 50, .18);
+    --backdrop: rgba(20, 24, 32, .28);
+    color-scheme: light;
+  }
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; overflow: hidden; user-select: none; }
@@ -23,9 +52,9 @@ input, textarea, select { font: inherit; color: var(--text); background: var(--b
 .icon-btn.on { color: var(--accent); background: var(--panel-2); }
 .btn { padding: 6px 12px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); }
 .btn:hover { border-color: var(--accent); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #0b1020; font-weight: 600; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 .btn.danger:hover { border-color: var(--prod); color: var(--prod); }
-.pill { font-size: 10px; font-weight: 700; letter-spacing: .06em; padding: 1px 6px; border-radius: 999px; color: #0b1020; }
+.pill { font-size: 10px; font-weight: 700; letter-spacing: .06em; padding: 1px 6px; border-radius: 999px; color: var(--on-status); }
 .pill.LOCAL { background: var(--local); }
 .pill.STAGING { background: var(--staging); }
 .pill.PROD { background: var(--prod); color: #fff; }

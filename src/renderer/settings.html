@@ -8,44 +8,151 @@
 <link rel="stylesheet" href="pages.css">
 </head>
 <body>
-<div class="page">
+<div class="page settings-page">
   <h1>Settings</h1>
   <p class="sub">Everything is stored on this device. Quiver has no telemetry and no account.</p>
-
-  <h2 id="bookmarks-heading" tabindex="-1">Bookmarks</h2>
-  <div class="row">
-    <label for="bookmark-profile">Browser profile</label>
-    <select id="bookmark-profile" aria-describedby="bookmark-profiles-note"><option value="">Finding browser profiles…</option></select>
-    <button class="btn" id="bookmark-import-profile" disabled>Review import</button>
-  </div>
-  <p class="note" id="bookmark-profiles-note">Import bookmarks from Chrome, Edge, Brave, or Vivaldi.</p>
-  <div class="row">
-    <button class="btn" id="bookmark-import-file">Choose HTML file</button>
-    <input id="bookmark-file" type="file" accept=".html,.htm,text/html" hidden>
-    <span class="note">Choose a bookmarks export from Firefox or another browser.</span>
-  </div>
-  <section class="bookmark-review" id="bookmark-review" aria-labelledby="bookmark-review-heading" hidden>
-    <h3 id="bookmark-review-heading" tabindex="-1">Review bookmarks</h3>
-    <p class="note" id="bookmark-review-source"></p>
-    <ul class="bookmark-counts" id="bookmark-review-counts" aria-label="Import totals"></ul>
-    <p class="note" id="bookmark-review-limit" hidden>Quiver reached the scan limit of 5,000 links or 100,000 source items. Totals cover the part it reviewed.</p>
-    <ul class="bookmark-sample" id="bookmark-review-sample" aria-label="Sample of bookmarks to add"></ul>
+  <nav class="settings-nav" aria-label="Settings sections">
+    <label class="sr-only" for="settings-search">Search settings</label>
+    <input id="settings-search" type="search" placeholder="Search settings" spellcheck="false" autocomplete="off" aria-controls="settings-sections" aria-describedby="settings-search-status">
+    <ul id="settings-toc"></ul>
+    <p class="note" id="settings-search-status" role="status"></p>
+  </nav>
+  <div class="settings-sections" id="settings-sections">
+  <section class="settings-section" id="section-appearance" aria-labelledby="appearance-heading">
+    <h2 id="appearance-heading" tabindex="-1">Appearance</h2>
     <div class="row">
-      <button class="btn primary" id="bookmark-confirm" disabled>Add bookmarks</button>
-      <button class="btn" id="bookmark-cancel">Cancel</button>
+      <label for="theme">Theme</label>
+      <select id="theme">
+        <option value="system">System: follow Windows</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </div>
+    <p class="note">Applies to Quiver, its menus and dialogs, and websites that offer a light and dark look.</p>
+  </section>
+  <section class="settings-section" id="section-bookmarks" aria-labelledby="bookmarks-heading">
+    <h2 id="bookmarks-heading" tabindex="-1">Bookmarks</h2>
+    <div class="row">
+      <label for="bookmark-profile">Browser profile</label>
+      <select id="bookmark-profile" aria-describedby="bookmark-profiles-note"><option value="">Finding browser profiles…</option></select>
+      <button class="btn" id="bookmark-import-profile" disabled>Review import</button>
+    </div>
+    <p class="note" id="bookmark-profiles-note">Import bookmarks from Chrome, Edge, Brave, or Vivaldi.</p>
+    <div class="row">
+      <button class="btn" id="bookmark-import-file">Choose HTML file</button>
+      <input id="bookmark-file" type="file" accept=".html,.htm,text/html" hidden>
+      <span class="note">Choose a bookmarks export from Firefox or another browser.</span>
+    </div>
+    <section class="bookmark-review" id="bookmark-review" aria-labelledby="bookmark-review-heading" hidden>
+      <h3 id="bookmark-review-heading" tabindex="-1">Review bookmarks</h3>
+      <p class="note" id="bookmark-review-source"></p>
+      <ul class="bookmark-counts" id="bookmark-review-counts" aria-label="Import totals"></ul>
+      <p class="note" id="bookmark-review-limit" hidden>Quiver reached the scan limit of 5,000 links or 100,000 source items. Totals cover the part it reviewed.</p>
+      <ul class="bookmark-sample" id="bookmark-review-sample" aria-label="Sample of bookmarks to add"></ul>
+      <div class="row">
+        <button class="btn primary" id="bookmark-confirm" disabled>Add bookmarks</button>
+        <button class="btn" id="bookmark-cancel">Cancel</button>
+      </div>
+    </section>
+    <div class="row bookmark-result">
+      <p class="status" id="bookmark-status" role="status" tabindex="-1"></p>
+      <button class="btn" id="bookmark-undo" hidden>Undo this import</button>
+    </div>
+    <ul id="bookmark-list" aria-label="Imported bookmarks"></ul>
+    <div id="bookmark-pages" hidden>
+      <div class="row">
+        <button class="btn" id="bookmark-prev">Previous bookmarks</button>
+        <span class="note" id="bookmark-page"></span>
+        <button class="btn" id="bookmark-next">Next bookmarks</button>
+      </div>
     </div>
   </section>
-  <div class="row bookmark-result">
-    <p class="status" id="bookmark-status" role="status" tabindex="-1"></p>
-    <button class="btn" id="bookmark-undo" hidden>Undo this import</button>
-  </div>
-  <ul id="bookmark-list" aria-label="Imported bookmarks"></ul>
-  <div id="bookmark-pages" hidden>
+  <section class="settings-section" id="section-environments" aria-labelledby="environments-heading">
+    <h2 id="environments-heading" tabindex="-1">Environments</h2>
+    <p class="note">Group the origins of one app once. Then <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>) cycles local → staging → production, keeping path, query and hash. Leave an origin empty to skip it.</p>
+    <div id="groups"></div>
+    <div class="row"><button class="btn" id="addgroup">Add environment group</button><span class="status" id="envstatus" role="status"></span></div>
+  </section>
+  <section class="settings-section" id="section-search" aria-labelledby="search-heading">
+    <h2 id="search-heading" tabindex="-1">Command bar</h2>
+    <div class="row"><label for="engine">Search engine</label><input id="engine" type="text" spellcheck="false" placeholder="https://duckduckgo.com/?q=%s"></div>
+    <p class="note">Must start with http(s):// and contain <code>%s</code> for the query. Search text is only sent when you press Enter on a search result.</p>
+  </section>
+  <section class="settings-section" id="section-camera" aria-labelledby="camera-heading">
+    <h2 id="camera-heading" tabindex="-1">Camera, microphone and screen sharing</h2>
+    <p class="note">Sites ask before using your camera, microphone or screen; Quiver shows the question in the toolbar. Known meeting sites (Google Meet, Zoom, Microsoft Teams, Webex, Jitsi, Whereby) can ask; other sites are denied until they ask and you agree. Choices you saved:</p>
+    <ul class="site-permissions" id="site-permissions" aria-label="Saved site permissions"></ul>
+  </section>
+  <section class="settings-section" id="section-sync" aria-labelledby="sync-heading">
+    <h2 id="sync-heading" tabindex="-1">Sync</h2>
+    <p class="note">Sync through a folder you already sync, such as OneDrive, Dropbox or Syncthing. Each device writes only its own file in <code>Quiver Sync</code>; no Quiver server is involved. For each part, the most recent change on any device wins. Sync never deletes Spaces or closes tabs.</p>
     <div class="row">
-      <button class="btn" id="bookmark-prev">Previous bookmarks</button>
-      <span class="note" id="bookmark-page"></span>
-      <button class="btn" id="bookmark-next">Next bookmarks</button>
+      <label>Folder</label>
+      <span class="mono" id="sync-folder">Not syncing</span>
+      <button class="btn primary" id="sync-choose">Choose folder…</button>
+      <button class="btn" id="sync-now" hidden>Sync now</button>
+      <button class="btn danger" id="sync-disconnect" hidden>Stop syncing</button>
     </div>
+    <div class="row"><label for="sync-device">This device</label><input id="sync-device" type="text" maxlength="60"></div>
+    <fieldset class="sync-parts">
+      <legend>Sync</legend>
+      <label><input type="checkbox" data-sync="settings"> Settings (environments, search engine, local servers)</label>
+      <label><input type="checkbox" data-sync="bookmarks"> Bookmarks</label>
+      <label><input type="checkbox" data-sync="spaces"> Spaces, folders and pinned tabs</label>
+      <label><input type="checkbox" data-sync="research"> Research topics and notes</label>
+      <label><input type="checkbox" data-sync="boosts"> Boosts. Off by default: Boosts run code on websites, so only turn this on if no one else can write to the sync folder.</label>
+    </fieldset>
+    <p class="status" id="sync-status" role="status"></p>
+  </section>
+  <section class="settings-section" id="section-history" aria-labelledby="history-heading">
+    <h2 id="history-heading" tabindex="-1">History</h2>
+    <div class="row"><label for="history-on">Remember history</label><input id="history-on" type="checkbox"><span class="note">Keeps up to 5,000 visited web pages on this device so <kbd>Ctrl+K</kbd> can find them (<code>h</code> <i>words</i> searches only history).</span></div>
+    <div class="row"><label>Saved pages</label><span id="history-count" class="note">…</span><button class="btn danger" id="history-clear">Clear history</button></div>
+  </section>
+  <section class="settings-section" id="section-privacy" aria-labelledby="privacy-heading">
+    <h2 id="privacy-heading" tabindex="-1">Privacy</h2>
+    <p class="note">Quiver sends no telemetry, has no account and does not check for updates. Crash reports stay on this device. These settings apply to all Spaces.</p>
+    <div class="row"><label for="privacy-gpc">Global Privacy Control</label><input id="privacy-gpc" type="checkbox"><span class="note">Tell sites not to sell or share your data (<code>Sec-GPC</code> and <code>DNT</code> headers).</span></div>
+    <div class="row"><label for="privacy-webrtc">Hide local IP</label><input id="privacy-webrtc" type="checkbox"><span class="note">Keep WebRTC calls from revealing addresses on your local network.</span></div>
+    <div class="row">
+      <label for="privacy-dns">Secure DNS</label>
+      <select id="privacy-dns">
+        <option value="automatic">Automatic: encrypt when your DNS provider supports it</option>
+        <option value="off">Off: use your system DNS</option>
+        <option value="custom">Custom DNS-over-HTTPS server</option>
+      </select>
+    </div>
+    <div class="row" id="privacy-doh-row" hidden>
+      <label for="privacy-doh">DoH server</label>
+      <input id="privacy-doh" type="text" spellcheck="false" placeholder="https://dns.example/dns-query{?dns}">
+      <button class="btn" id="privacy-doh-save">Save</button>
+    </div>
+    <div class="row"><label for="privacy-spell">Spell check</label><input id="privacy-spell" type="checkbox"><span class="note" id="privacy-spell-note">Uses the Windows spell checker; nothing is downloaded.</span></div>
+    <div class="row"><label for="privacy-clear">Clear on exit</label><input id="privacy-clear" type="checkbox"><span class="note">Delete cookies, site storage and cache in every Space when Quiver closes. You will be signed out of sites; tabs, bookmarks and notes are kept.</span></div>
+    <p class="status" id="privacy-status" role="status"></p>
+  </section>
+  <section class="settings-section" id="section-downloads" aria-labelledby="downloads-heading">
+    <h2 id="downloads-heading" tabindex="-1">Downloads</h2>
+    <div class="row"><label for="ask-save">Ask where to save</label><input id="ask-save" type="checkbox"><span class="note">Show Save As for every download. When off, files go straight to your Downloads folder (the Data folder in Quiver Portable) and get a number if the name is taken.</span></div>
+  </section>
+  <section class="settings-section" id="section-tabs" aria-labelledby="tabs-heading">
+    <h2 id="tabs-heading" tabindex="-1">Tabs</h2>
+    <div class="row">
+      <label for="archive-after">Archive unused tabs</label>
+      <select id="archive-after">
+        <option value="0">Never</option>
+        <option value="12">After 12 hours</option>
+        <option value="24">After 1 day</option>
+        <option value="168">After 7 days</option>
+        <option value="720">After 30 days</option>
+      </select>
+    </div>
+    <p class="note">Tabs below the divider that you haven't looked at for this long move to the archive. Pinned tabs, the tab you're on in each Space and tabs playing sound stay. Type <kbd>archive</kbd> in the command bar to search and reopen them. Closing a pinned tab takes it back to its pinned page instead of removing it.</p>
+  </section>
+  <section class="settings-section" id="section-local-servers" aria-labelledby="local-servers-heading">
+    <h2 id="local-servers-heading" tabindex="-1">Local servers</h2>
+    <div class="row"><label for="scan">Detect servers</label><input id="scan" type="checkbox"><span class="note">Lists HTTP servers listening on this machine (netstat + a local request for the page title). Pauses while the window is in the background.</span></div>
+  </section>
   </div>
 
   <h2>Environments</h2>

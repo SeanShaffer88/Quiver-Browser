@@ -45,6 +45,8 @@ export interface Settings {
   /** Links a pinned tab opens in a new tab or window open in a floating Peek instead. */
   peekPinnedLinks: boolean;
   privacy: PrivacySettings;
+  /** Light, dark, or follow Windows. Applied through nativeTheme so every page's prefers-color-scheme follows. */
+  theme: 'system' | 'light' | 'dark';
 }
 
 export interface PrivacySettings {

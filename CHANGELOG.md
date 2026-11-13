@@ -9,6 +9,9 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 - Split view: two tabs of a Space side by side (tab menu, `split …` in the command bar, `Ctrl+Shift+=` / `Ctrl+Shift+-`), with a draggable divider (20–80%, remembered per pair), the active pane followed by the address bar, find, zoom and phone preview, and both tabs marked in the sidebar.
 - Peek: links pinned tabs open in a new tab or window show in a floating preview with *Open as tab* and *Close* (Esc). Setting in Settings → Tabs, on by default.
 - `Ctrl+Shift+=` now starts split view instead of zooming in; `Ctrl+=` still zooms.
+- Light and dark themes: **Settings → Appearance** chooses System (follows Windows, the default), Light or Dark for every Quiver page, native menus and dialogs, and websites' `prefers-color-scheme`. Both palettes meet WCAG AA for text; high-contrast mode is unchanged.
+- Settings has a section list (beside the page on wide windows, above it on narrow ones) that highlights the section you are reading, and a search box that filters sections.
+- Collapsed sidebar opens over the page while you hover it and closes when the pointer leaves; the page does not resize. `Ctrl+B` still pins it open or closed.
 - WebDAV downloads (`davs://…`): files or whole folders, passwords only over HTTPS, listings confined to the folder.
 - DASH downloads combine fragmented-MP4 video and audio into one `.mp4` with Quiver's own muxer.
 - Native downloaders: FTP/FTPS (resumable, encryption first, no FTP bounce), HLS with AES-128, on-demand MPEG-DASH, and Metalink with mirror failover and checksum checks; `download <address>` in the command bar; Windows shares open in File Explorer.

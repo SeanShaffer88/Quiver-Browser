@@ -185,6 +185,7 @@ export class TabManager {
   private readonly preparedPartitions = new Set<string>();
   private emitTimer: NodeJS.Timeout | null = null;
   private overlayOpen = false;
+  private sidebarPeek = false;
   private commandFocus: { contents: WebContents; invoker?: 'address' | 'new-tab' } | null = null;
 
   constructor(
@@ -365,7 +366,23 @@ export class TabManager {
   }
 
   private bringOverlayToTop(): void {
+    // A view added later (a new tab, the phone) lands on top; keep a peeking sidebar above it.
+    if (this.sidebarPeek) this.win.contentView.addChildView(this.shell);
     this.win.contentView.addChildView(this.overlay);
+  }
+
+  /**
+   * Show the collapsed sidebar over the page. The shell view already spans the window, so raising it above the tab
+   * views is enough: page views keep their bounds (no reflow) and show through the shell's transparent content area.
+   * The command bar overlay stays on top.
+   */
+  setSidebarPeek(on: boolean): void {
+    const peek = on && this.settings.sidebarCollapsed && !this.win.isDestroyed();
+    if (peek === this.sidebarPeek) return;
+    this.sidebarPeek = peek;
+    if (this.win.isDestroyed()) return;
+    if (peek) this.bringOverlayToTop();
+    else this.win.contentView.addChildView(this.shell, 0);
   }
 
   // ───────── tabs ─────────
