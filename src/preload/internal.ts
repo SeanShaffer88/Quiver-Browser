@@ -5,7 +5,7 @@ const INVOKE = new Set([
   'state:get',
   'tab:close', 'tab:activate', 'tab:place', 'tab:menu', 'tab:console', 'tab:back', 'tab:forward', 'tab:reload',
   'tab:reopen', 'tab:retry-crash', 'recovery:dismiss',
-  'space:create', 'space:menu', 'space:rename', 'space:activate',
+  'space:create', 'space:create-private', 'adblock:toggle-site', 'space:menu', 'space:rename', 'space:activate',
   'folder:toggle', 'folder:rename', 'folder:move', 'folder:menu',
   'permission:decide', 'sitepermissions:forget',
   'find:query', 'find:close', 'zoom:reset',

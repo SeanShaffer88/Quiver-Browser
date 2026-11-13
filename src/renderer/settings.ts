@@ -400,6 +400,8 @@ function renderPrivacy(p: Settings['privacy']): void {
   $('privacy-doh-row').hidden = p.secureDns !== 'custom';
   $<HTMLInputElement>('privacy-spell').checked = p.spellcheck;
   $<HTMLInputElement>('privacy-clear').checked = p.clearOnExit;
+  $<HTMLInputElement>('privacy-block').checked = p.blockTrackers;
+  renderAllowList(p.adAllowList);
   if (!navigator.userAgent.includes('Windows')) {
     $('privacy-spell-note').textContent = 'On this system Chromium downloads spelling dictionaries from Google when spell check is on.';
   }
@@ -410,19 +412,44 @@ async function savePrivacy(patch: Partial<Settings['privacy']>, message = 'Saved
     await quiver.invoke('settings:set', { privacy: patch });
     const settings = (await quiver.invoke('settings:get')) as Settings;
     renderPrivacy(settings.privacy);
-    const rejected = Object.entries(patch).some(([key, value]) => settings.privacy[key as keyof Settings['privacy']] !== value);
+    const rejected = Object.entries(patch).some(([key, value]) => JSON.stringify(settings.privacy[key as keyof Settings['privacy']]) !== JSON.stringify(value));
     flash($('privacy-status'), rejected ? 'Not saved: enter an https:// DNS-over-HTTPS address.' : message, rejected ? 'err' : undefined);
   } catch (e) {
     flash($('privacy-status'), (e as Error).message, 'err');
   }
 }
 
-const checkbox = (id: string, key: 'gpc' | 'hideLocalIp' | 'spellcheck' | 'clearOnExit') =>
+function renderAllowList(sites: string[]): void {
+  const list = $('privacy-allow-list');
+  if (!sites.length) {
+    const empty = document.createElement('li');
+    empty.className = 'note';
+    empty.textContent = 'None. Ads are blocked on every site.';
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...sites.map((site) => {
+    const item = document.createElement('li');
+    const label = document.createElement('span');
+    label.className = 'mono';
+    label.textContent = site;
+    const remove = document.createElement('button');
+    remove.className = 'btn';
+    remove.textContent = 'Block ads again';
+    remove.setAttribute('aria-label', `Block ads again on ${site}`);
+    remove.addEventListener('click', () => void savePrivacy({ adAllowList: sites.filter((s) => s !== site) }));
+    item.append(label, remove);
+    return item;
+  }));
+}
+
+const checkbox = (id: string, key: 'gpc' | 'hideLocalIp' | 'spellcheck' | 'clearOnExit' | 'blockTrackers') =>
   $<HTMLInputElement>(id).addEventListener('change', (e) => void savePrivacy({ [key]: (e.target as HTMLInputElement).checked }));
 checkbox('privacy-gpc', 'gpc');
 checkbox('privacy-webrtc', 'hideLocalIp');
 checkbox('privacy-spell', 'spellcheck');
 checkbox('privacy-clear', 'clearOnExit');
+checkbox('privacy-block', 'blockTrackers');
 $<HTMLSelectElement>('privacy-dns').addEventListener('change', (e) => {
   const mode = (e.target as HTMLSelectElement).value as Settings['privacy']['secureDns'];
   $('privacy-doh-row').hidden = mode !== 'custom';

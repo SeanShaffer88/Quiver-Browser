@@ -80,6 +80,7 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `Ctrl+Shift+P` | Toggle phone preview |
 | `Ctrl+B` | Collapse / expand sidebar |
 | `Ctrl+Shift+B` | Boosts page |
+| `Ctrl+Shift+N` | New private Space |
 | `Ctrl+W` | Close tab |
 | `Ctrl+Shift+T` | Reopen the latest closed tab in its original Space |
 | `Ctrl+Tab` | Back to the tab you used last; keep holding `Ctrl` and press `Tab` again to go further back |
@@ -127,6 +128,8 @@ Type `research <name>` in the command bar to start a topic for the current Space
 ### Spaces
 `+` next to the Space chips creates a Space. Tick "Separate cookies & logins" for an isolated cookie jar and storage (a separate Chromium partition). Right-click or double-click a chip to rename; right-click to delete (deleting an isolated Space also clears its storage). Isolation is chosen at creation. The sidebar labels the active Space **Separate sign-in** or **Shared sign-in**.
 
+**Private Spaces** (`Ctrl+Shift+N`, **New private Space** in the command bar, the `+` form or a Space's right-click menu) are temporary. Their cookies, storage and cache live in memory only (an Electron partition without `persist:`); their pages are not added to history or research topics, are never auto-archived, and the Space is not saved to `quiver-state.json` or synced. Downloads from them are saved to disk as usual but drop out of the downloads list after a restart. A private Space has a striped purple chip labelled **Private**; right-click it and choose **Close private Space and discard everything**, or quit Quiver, to throw it all away. You can open more than one; each is separate from the others. The last regular Space can't be deleted while a private one is open.
+
 ### Tab and window recovery
 
 The sidebar's **Reopen in …** action and `Ctrl+Shift+T` restore the latest closed tab at its original position in the same Space, even after a restart. Quiver keeps up to 20 recently closed tabs in the local profile and skips saving addresses with embedded sign-in credentials. Quiver reloads saved tab URLs after restart and shows a notice when it recovers a prior session that was left open. Use **Retry page** if a tab's renderer stops. Quiver fits a saved window to an available display if its old position is offscreen.
@@ -160,6 +163,7 @@ In **Settings → Sync**, choose a folder you already sync with OneDrive, Dropbo
 
 Quiver sends no telemetry, has no account and does not check for updates; crash reports stay on the device. **Settings → Privacy** controls what pages and Chromium can send:
 
+- **Block ads and trackers** (on by default): requests from a page to a built-in list of a few hundred well-known ad, analytics and tracking hosts (`src/main/blocklist.ts`; a listed host also covers its subdomains) are cancelled. Only third-party subresources are blocked: opening a listed site, or that site loading its own files, still works. The list ships with Quiver and is never downloaded. The shield in the toolbar shows how many requests were blocked on the current page (counted per tab, reset on navigation); click it, or use **Allow ads on this site** in the tab menu, to allow ads on that site (the tab reloads). Settings lists the allowed sites. This is a domain list, not a filter-list engine: it does not hide empty ad slots or block first-party ads.
 - **Global Privacy Control** (on by default): sends `Sec-GPC: 1` and `DNT: 1` with page requests.
 - **Hide local IP** (on by default): WebRTC uses only the public interface, so sites can't read local network addresses.
 - **Secure DNS**: automatic (default), off, or a custom DNS-over-HTTPS server.
@@ -213,7 +217,8 @@ Quiver currently covers these Flecha workflows. General split view is outside th
 | 1 | Chromium rendering | Electron 45.3.1 (Chromium) | Included |
 | 2 | Vertical sidebar | Collapsible sidebar, tab list, favicons, close, middle-click close, drag and keyboard reorder | Included |
 | 2 | Pinned tabs and folders | Pin, nested folders, collapse, drag between pinned and temporary, saved per Space | Included |
-| 2 | Spaces | Create / rename / delete, per-Space partition (cookies, storage) | Included |
+| 2 | Spaces | Create / rename / delete, per-Space partition (cookies, storage), private Spaces | Included |
+| – | Ad and tracker blocking | Built-in domain list, per-page count, per-site exceptions | Included |
 | 3 | Command bar | `Ctrl+K` / `Ctrl+L` / `Ctrl+T` overlay | Included |
 | 3 | `gh` `npm` `mdn` `caniuse` `so` | Offline parser → URL | Included |
 | 3 | `env` · `boost` | Wired to env switcher and Boosts editor | Included |

@@ -1,5 +1,6 @@
 import type { Session, WebContents } from 'electron';
 import type { PrivacySettings } from '../shared/types';
+import { DomainList, normalizeAllowList, shouldBlock } from './content-blocking';
 
 const DOH_LIMIT = 300;
 
@@ -26,6 +27,8 @@ export function normalizePrivacy(raw: unknown, platform: NodeJS.Platform): Priva
     // Windows and macOS use the system spell checker; elsewhere Chromium downloads dictionaries from Google.
     spellcheck: bool(r.spellcheck, platform === 'win32' || platform === 'darwin'),
     clearOnExit: bool(r.clearOnExit, false),
+    blockTrackers: bool(r.blockTrackers, true),
+    adAllowList: normalizeAllowList(r.adAllowList),
   };
 }
 
@@ -42,11 +45,37 @@ export function hostResolverOptions(p: PrivacySettings): { secureDnsMode: 'off' 
 export class PrivacyController {
   private readonly sessions = new Set<Session>();
   private readonly contents = new Set<WebContents>();
+  /** Requests blocked on each page since it last navigated, by webContents id. */
+  private readonly blocked = new Map<number, number>();
+  private readonly list = new DomainList();
 
   constructor(
     private readonly settings: () => PrivacySettings,
     private readonly configureDns: (options: ReturnType<typeof hostResolverOptions>) => void,
+    private readonly blocking: {
+      /** Whether ad blocking applies to a session (Quiver's own pages are left alone). */
+      appliesTo?: (ses: Session) => boolean;
+      /** A page's blocked count changed. */
+      changed?: (wc: WebContents) => void;
+    } = {},
   ) {}
+
+  /** Requests blocked on a page since it last navigated. */
+  blockedCount(wcId: number): number {
+    return this.blocked.get(wcId) ?? 0;
+  }
+
+  private pageUrl(details: Electron.OnBeforeRequestListenerDetails): string | undefined {
+    try {
+      // The top frame decides first- vs third-party, so ads inside an ad iframe still count against the page.
+      const top = details.frame?.top?.url;
+      if (top) return top;
+    } catch {
+      /* the frame can be gone by the time the request is checked */
+    }
+    const wc = details.webContents;
+    return wc && !wc.isDestroyed() ? wc.getURL() : undefined;
+  }
 
   private applySpellcheck(ses: Session): void {
     const on = this.settings().spellcheck;
@@ -74,12 +103,40 @@ export class PrivacyController {
     ses.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
       callback({ requestHeaders: privacyHeaders(details.requestHeaders, this.settings().gpc) });
     });
+    // Electron keeps one onBeforeRequest listener per session, so ad blocking is registered here with the other
+    // per-session privacy hooks rather than from a second place that would silently replace it.
+    // Which session this is gets decided on its first request: asking while Electron is still creating sessions
+    // could create another one from inside this handler.
+    let applies: boolean | undefined;
+    ses.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
+      applies ??= this.blocking.appliesTo?.(ses) ?? true;
+      const p = this.settings();
+      if (!applies || !p.blockTrackers || !shouldBlock({ url: details.url, resourceType: details.resourceType, pageUrl: this.pageUrl(details) }, this.list, p.adAllowList)) {
+        callback({});
+        return;
+      }
+      callback({ cancel: true });
+      const wc = details.webContents;
+      if (wc && !wc.isDestroyed()) {
+        this.blocked.set(wc.id, this.blockedCount(wc.id) + 1);
+        this.blocking.changed?.(wc);
+      }
+    });
   }
 
   configureContents(wc: WebContents): void {
     this.contents.add(wc);
     this.applyContents(wc);
-    (wc as Partial<Pick<WebContents, 'once'>>).once?.('destroyed', () => this.contents.delete(wc));
+    const events = wc as Partial<Pick<WebContents, 'once' | 'on'>>;
+    events.once?.('destroyed', () => {
+      this.contents.delete(wc);
+      this.blocked.delete(wc.id);
+    });
+    // The toolbar count is per page, so it starts over when the tab loads a new document.
+    events.on?.('did-start-navigation', ({ isMainFrame, isSameDocument }) => {
+      if (!isMainFrame || isSameDocument || !this.blocked.delete(wc.id)) return;
+      this.blocking.changed?.(wc);
+    });
   }
 
   private applyContents(wc: WebContents): void {

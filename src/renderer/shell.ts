@@ -89,12 +89,14 @@ function renderSpaces(s: ShellState): HTMLElement {
     const chip = h(
       'button',
       {
-        class: 'space' + (sp.id === s.activeSpaceId ? ' active' : ''),
+        class: 'space' + (sp.id === s.activeSpaceId ? ' active' : '') + (sp.private ? ' private' : ''),
         role: 'tab',
         'aria-selected': String(sp.id === s.activeSpaceId),
         dataset: { focusKey: sp.id },
-        'aria-label': sp.isolated ? sp.name + ', separate sign-in' : sp.name + ', shared sign-in',
-        title: `${sp.name}${sp.isolated ? ' — separate cookies & storage' : ' — shared cookies'}\nRight-click: rename or delete · Double-click: rename`,
+        'aria-label': sp.private ? sp.name + ', private Space' : sp.isolated ? sp.name + ', separate sign-in' : sp.name + ', shared sign-in',
+        title: sp.private
+          ? `${sp.name} — private: nothing is saved, synced or kept in history. Closing it or quitting Quiver discards everything.\nRight-click: close`
+          : `${sp.name}${sp.isolated ? ' — separate cookies & storage' : ' — shared cookies'}\nRight-click: rename or delete · Double-click: rename`,
         onClick: () => call('space:activate', sp.id),
         onDblclick: () => {
           renamingSpace = sp.id;
@@ -106,7 +108,7 @@ function renderSpaces(s: ShellState): HTMLElement {
         },
       },
       dot,
-      h('span', { class: 'label' }, (sp.isolated ? '🔒 ' : '') + sp.name),
+      h('span', { class: 'label' }, (sp.private ? '' : sp.isolated ? '🔒 ' : '') + sp.name),
     );
     wrap.append(chip);
   }
@@ -141,6 +143,12 @@ function renderAddForm(): HTMLElement {
     name,
     h('label', { title: 'Own cookie jar, logins and storage, separate from other Spaces' }, iso, 'Separate cookies & logins'),
     h('div', { class: 'row' }, h('button', { class: 'btn primary', dataset: { focusKey: 'space-create' }, onClick: submit }, 'Create'), h('button', { class: 'btn', dataset: { focusKey: 'space-cancel' }, onClick: () => { addingSpace = false; render(); } }, 'Cancel')),
+    h('button', {
+      class: 'btn private-space-btn',
+      title: 'A temporary Space with in-memory cookies and storage, no history, never saved or synced (Ctrl+Shift+N)',
+      dataset: { focusKey: 'space-private' },
+      onClick: () => { addingSpace = false; void call('space:create-private'); render(); },
+    }, 'New private Space'),
   );
 }
 
@@ -544,13 +552,19 @@ function renderSidebar(s: ShellState): void {
   }
 
   const active = s.spaces.find(({ id }) => id === s.activeSpaceId);
-  const isolation = active && h('p', {
+  const isolation = active && (active.private ? h('p', {
+    class: 'space-isolation private',
+    title: 'Private Space: cookies and storage live in memory; no history; not saved or synced. Close it or quit Quiver to discard everything.',
+  },
+    h('span', { class: 'recovery-expanded' }, 'Private: nothing is saved'),
+    h('span', { class: 'recovery-compact' }, 'Private'),
+  ) : h('p', {
     class: 'space-isolation',
     title: active.name + (active.isolated ? ' has separate cookies and sign-ins' : ' shares cookies and sign-ins with other shared Spaces'),
   },
     h('span', { class: 'recovery-expanded' }, active.isolated ? 'Separate sign-in' : 'Shared sign-in'),
     h('span', { class: 'recovery-compact' }, active.isolated ? 'Separate' : 'Shared'),
-  );
+  ));
   sidebar.replaceChildren(brand, renderSpaces(s), ...(isolation ? [isolation] : []),
     ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderRecovery(s),
     ...(s.localServerStatus ? [renderLocalServerStatus(s.localServerStatus)] : []), tabsEl, servers);
@@ -663,6 +677,19 @@ function renderToolbar(s: ShellState): void {
     dataset: { focusKey: 'research' },
     onClick: () => call('cmd:run', { type: 'internal', page: 'research', topic: s.research!.id }),
   }, h('span', { class: 'dot', 'aria-hidden': 'true' }), h('span', { class: 'research-name' }, s.research.name), h('span', { class: 'tool-count', 'aria-hidden': 'true' }, String(s.research.count)));
+  const ab = s.adBlock && s.adBlock.tabId === s.activeTabId && s.adBlock.enabled ? s.adBlock : undefined;
+  const shield = ab && h('button', {
+    class: 'shield-chip' + (ab.allowed ? ' off' : ''),
+    title: ab.allowed
+      ? `Ads and trackers are allowed on ${ab.host}. Click to block them again`
+      : `${ab.blocked} ad and tracker request${ab.blocked === 1 ? '' : 's'} blocked on this page. Click to allow ads on ${ab.host}`,
+    'aria-label': ab.allowed
+      ? `Ads allowed on ${ab.host}. Block ads on this site`
+      : `${ab.blocked} ads and trackers blocked. Allow ads on this site`,
+    'aria-pressed': String(!ab.allowed),
+    dataset: { focusKey: 'shield' },
+    onClick: () => call('adblock:toggle-site', ab.tabId),
+  }, h('span', { 'aria-hidden': 'true' }, '🛡'), h('span', { class: 'tool-count', 'aria-hidden': 'true' }, ab.allowed ? 'off' : String(ab.blocked)));
   const prompt = s.permissionPrompt;
   const devices = prompt ? (['camera', 'microphone'] as const).filter((k) => prompt.kinds.includes(k)) : [];
   const askFor = prompt && [devices.length ? 'use your ' + devices.join(' and ') : '', prompt.kinds.includes('screen') ? 'share your screen' : '']
@@ -686,6 +713,7 @@ function renderToolbar(s: ShellState): void {
     icon(ICON.reload, 'Reload (Ctrl+R)', () => call('tab:reload')),
     permissionBar || (s.find ? renderFindBar(s.find) : null) || addr,
     ...(s.zoom !== 1 && Number.isFinite(s.zoom) ? [h('button', { class: 'zoom-chip', title: 'Reset zoom (Ctrl+0)', 'aria-label': `Zoom ${Math.round(s.zoom * 100)} percent. Reset zoom`, dataset: { focusKey: 'zoom' }, onClick: () => call('zoom:reset') }, `${Math.round(s.zoom * 100)}%`)] : []),
+    ...(shield ? [shield] : []),
     ...(research ? [research] : []),
     ...(downloadsButton ? [downloadsButton] : []),
     icon(ICON.env, 'Switch environment: local → staging → prod (Ctrl+Alt+E)', () => call('env:switch'), { disabled: !t?.env }),
@@ -706,6 +734,7 @@ function render(): void {
   document.body.style.setProperty('--sb', state.settings.sidebarCollapsed ? '56px' : '264px');
   const sp: Space | undefined = state.spaces.find((x) => x.id === state!.activeSpaceId);
   document.title = `Quiver — ${sp?.name ?? ''}`;
+  document.body.classList.toggle('private-space', sp?.private === true);
   renderSidebar(state);
   renderToolbar(state);
   const message = recoveryMessage(state);

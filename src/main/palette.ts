@@ -17,6 +17,7 @@ export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string
   { command: 'console', label: 'Open the console', keys: '', keywords: 'devtools errors log' },
   { command: 'next-space', label: 'Next Space', keys: '', keywords: 'switch' },
   { command: 'prev-space', label: 'Previous Space', keys: '', keywords: 'switch' },
+  { command: 'private-space', label: 'New private Space', keys: 'Ctrl+Shift+N', keywords: 'incognito private window' },
   { command: 'move-tab-up', label: 'Move tab up', keys: 'Ctrl+Shift+PageUp', keywords: 'reorder' },
   { command: 'move-tab-down', label: 'Move tab down', keys: 'Ctrl+Shift+PageDown', keywords: 'reorder' },
   { command: 'toggle-sidebar', label: 'Toggle sidebar', keys: 'Ctrl+B', keywords: 'collapse expand' },

@@ -31,6 +31,7 @@ export type ShortcutAction =
   | 'console'
   | 'next-space'
   | 'prev-space'
+  | 'private-space'
   | `tab-${number}`
   | `space-${number}`;
 
@@ -57,6 +58,7 @@ export function shortcutFor(input: Input): ShortcutAction | null {
   if (code === 'KeyT' && shift && !alt) return 'reopen-tab';
   if (code === 'KeyI' && shift && !alt) return 'devtools';
   if (code === 'KeyB' && shift && !alt) return 'boosts';
+  if (code === 'KeyN' && shift && !alt) return 'private-space';
   if (code === 'Tab' && !alt) return shift ? 'recent-tab-back' : 'recent-tab';
   if (!alt && (code === 'Equal' || code === 'NumpadAdd')) return 'zoom-in';
   if (!alt && !shift && (code === 'Minus' || code === 'NumpadSubtract')) return 'zoom-out';
