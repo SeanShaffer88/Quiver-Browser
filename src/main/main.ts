@@ -1,8 +1,10 @@
-import { app, BaseWindow, clipboard, crashReporter, dialog, desktopCapturer, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
+import { app, BaseWindow, clipboard, crashReporter, dialog, desktopCapturer, Menu, nativeTheme, net, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME, SHARED_PARTITION } from '../shared/constants';
 import type { Settings } from '../shared/types';
+import { windowBackground } from '../shared/theme';
+import { findArcSidebar } from './arc-import';
 import { normalizeBookmarks } from './bookmarks';
 import { Boosts, isValidBoostName } from './boosts';
 import { configureSitePermissions } from './browser-policy';
@@ -18,7 +20,8 @@ import { normalizeTopics, Research } from './research';
 import { normalizeSyncState, SyncService } from './sync-service';
 import os from 'node:os';
 import { parseLaunchArgs } from './launch-args';
-import type { ShortcutAction } from './shortcuts';
+import { setShortcutOverrides, type ShortcutAction } from './shortcuts';
+import { UpdateChecker } from './updates';
 import { Store } from './store';
 import { restrictInternalNavigation, TabManager } from './tabs';
 import { placeWindow } from './window-placement';
@@ -138,7 +141,13 @@ async function main(): Promise<void> {
   Menu.setApplicationMenu(null);
   // Privacy settings must reach every session before anything (including the internal protocol) creates one.
   const store = new Store();
-  const privacy = new PrivacyController(() => store.state.settings.privacy, (options) => app.configureHostResolver(options));
+  setShortcutOverrides(store.state.settings.shortcuts);
+  // Quiver's own pages (settings, command bar) are not ad-blocked. Blocked counts reach the toolbar once tabs exist.
+  let onBlockedChanged = () => {};
+  const privacy = new PrivacyController(() => store.state.settings.privacy, (options) => app.configureHostResolver(options), {
+    appliesTo: (ses) => ses !== session.fromPartition(INTERNAL_PARTITION),
+    changed: () => onBlockedChanged(),
+  });
   app.on('session-created', (ses) => privacy.configureSession(ses));
   app.on('web-contents-created', (_event, contents) => privacy.configureContents(contents));
   privacy.configureSession(session.defaultSession);
@@ -151,18 +160,21 @@ async function main(): Promise<void> {
     // Clear web Spaces only; Quiver's own pages and settings are kept.
     event.preventDefault();
     clearedOnExit = true;
-    const partitions = [SHARED_PARTITION, ...store.state.spaces.filter((sp) => sp.isolated).map((sp) => `persist:quiver-space-${sp.id}`)];
+    const partitions = [SHARED_PARTITION, ...store.state.spaces.filter((sp) => sp.isolated && !sp.private).map((sp) => `persist:quiver-space-${sp.id}`)];
     void clearSessions(partitions.map((partition) => session.fromPartition(partition))).finally(() => app.quit());
   });
   const boosts = new Boosts();
   boosts.startWatching();
 
+  // themeSource drives prefers-color-scheme in every renderer (Quiver's pages and websites) as well as native
+  // menus and dialogs, so the CSS only needs @media (prefers-color-scheme) and no page has to ask for the setting.
+  nativeTheme.themeSource = store.state.settings.theme;
   const launchPlacement = screenPlacement(store.state.bounds);
   const win = new BaseWindow({
     ...launchPlacement.bounds,
     minWidth: launchPlacement.minWidth,
     minHeight: launchPlacement.minHeight,
-    backgroundColor: '#14161a',
+    backgroundColor: windowBackground(nativeTheme.shouldUseDarkColors),
     title: 'Quiver',
     icon: process.platform === 'win32' ? path.join(RENDERER_DIR, 'quiver-icon.ico') : undefined,
     show: false,
@@ -184,6 +196,13 @@ async function main(): Promise<void> {
     view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   }
   overlay.setBackgroundColor('#00000000');
+  // The shell paints its own background. Transparent lets the page show through its content area while the
+  // collapsed sidebar peeks over the page (TabManager.setSidebarPeek raises the shell above the tab views).
+  shell.setBackgroundColor('#00000000');
+  // Covers both the setting changing and Windows switching app mode while the setting is 'system'.
+  nativeTheme.on('updated', () => {
+    if (!win.isDestroyed()) win.setBackgroundColor(windowBackground(nativeTheme.shouldUseDarkColors));
+  });
   win.contentView.addChildView(shell);
   win.contentView.addChildView(overlay);
   overlay.setVisible(false);
@@ -200,7 +219,15 @@ async function main(): Promise<void> {
         actions?.openCommandBar(undefined, 'current');
         break;
       case 'close-tab':
-        if (tabs.activeTabId !== null) tabs.closeTab(tabs.activeTabId);
+        // Ctrl+W in a Peek puts the Peek away rather than closing the pinned tab behind it.
+        if (tabs.peekOpen) tabs.closePeek();
+        else if (tabs.activeTabId !== null) tabs.closeTab(tabs.activeTabId);
+        break;
+      case 'split':
+        tabs.startSplit();
+        break;
+      case 'unsplit':
+        tabs.exitSplit();
         break;
       case 'reopen-tab':
         tabs.reopenClosedTab();
@@ -240,6 +267,9 @@ async function main(): Promise<void> {
         break;
       case 'prev-space':
         tabs.cycleSpace(-1);
+        break;
+      case 'private-space':
+        tabs.createPrivateSpace();
         break;
       case 'prev-tab':
         tabs.cycleTab(-1);
@@ -339,6 +369,7 @@ async function main(): Promise<void> {
     askWhereToSave: () => store.state.settings.askWhereToSave,
     fromPartition: (partition) => session.fromPartition(partition),
     persist: (records) => {
+      // Downloads from a private Space are listed while Quiver runs; private-spaces.ts keeps them out of the saved file.
       store.state.downloads = records;
       store.save();
     },
@@ -350,6 +381,8 @@ async function main(): Promise<void> {
     },
   });
   tabs.downloads = downloads;
+  tabs.blockedCount = (id) => privacy.blockedCount(id);
+  onBlockedChanged = () => tabs.emit();
   tabs.onFtpLink = (url, partition) => {
     // A page can navigate to ftp:// on its own, so the person confirms before anything downloads.
     const shown = url.replace(/\/\/[^/@]*@/, '//');
@@ -410,15 +443,31 @@ async function main(): Promise<void> {
       if (tab.internalPage === 'settings' && !tab.view.webContents.isDestroyed()) tab.view.webContents.send('sync:changed');
     }
   });
+  const updates = new UpdateChecker(
+    () => store.state.updates ?? { lastCheckedAt: 0 },
+    (next) => {
+      store.state.updates = next;
+      store.save();
+    },
+    () => store.state.settings.checkForUpdates,
+    app.getVersion(),
+    // Chromium's network stack, so the system proxy applies; the release check is the only request Quiver makes itself.
+    (url, init) => net.fetch(url, init),
+  );
+  tabs.updateNotice = () => updates.notice();
   actions = registerIpc({
-    tabs, store, boosts, devWatcher, overlay, shell, research, sync, history, downloads,
+    tabs, store, boosts, devWatcher, overlay, shell, research, sync, history, downloads, updates,
     onPrivacyChanged: () => privacy.apply(),
+    onThemeChanged: () => { nativeTheme.themeSource = store.state.settings.theme; },
     runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings') : onShortcut(command)),
   });
 
   await Promise.all([shell.webContents.loadURL('quiver://app/shell.html'), overlay.webContents.loadURL('quiver://app/commandbar.html')]);
   const interrupted = store.state.sessionOpen === true;
   const restored = tabs.restore();
+  // Offer the Arc import once, on the first launch of this profile, when Arc for Windows has a sidebar to bring over.
+  if (store.firstRun && findArcSidebar(process.env.LOCALAPPDATA ?? '')) store.state.arcImportOffer = 'pending';
+  tabs.arcImportOffer = store.state.arcImportOffer === 'pending';
   if (interrupted && restored.tabs > 0) tabs.showSessionRecovery(restored);
   if (launchPlacement.relocated) tabs.showWindowRecovery();
   store.state.bounds = { ...launchPlacement.bounds, maximized: launchPlacement.maximized };
@@ -433,6 +482,10 @@ async function main(): Promise<void> {
   // Archive unused temporary tabs shortly after launch and then every few minutes.
   setTimeout(() => tabs.archiveStale(), 60_000).unref();
   setInterval(() => tabs.archiveStale(), 5 * 60_000).unref();
+  // Opt-in release check: does nothing unless enabled in Settings, and then at most once a day.
+  const checkForUpdates = () => void updates.maybeCheck().then((status) => status && tabs.emit());
+  setTimeout(checkForUpdates, 30_000).unref();
+  setInterval(checkForUpdates, 60 * 60_000).unref();
   tabs.layout();
   win.show();
   handleSecondInstance = (targets) => {

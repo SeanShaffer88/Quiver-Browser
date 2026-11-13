@@ -1,4 +1,4 @@
-import type { LocalServerStatus, PhoneStatus, ShellState, SidebarRow, TabInfo, Space } from '../shared/types';
+import type { LocalServerStatus, PeekView, PhoneStatus, ShellState, SidebarRow, SplitView, TabInfo, Space } from '../shared/types';
 import { scrollToReveal, visibleRows } from './virtual-list.js';
 
 type Child = Node | string | null | undefined | false;
@@ -60,6 +60,24 @@ function icon(svg: string, label: string, onClick: () => void, extra: Record<str
   return b;
 }
 
+/** A control label with the action's current keys appended, e.g. "Find in page (Ctrl+F)"; rebinding changes it. */
+function withKeys(s: ShellState, label: string, action: string): string {
+  const keys = s.keys?.[action];
+  return keys ? `${label} (${keys})` : label;
+}
+
+/** The opt-in "Quiver X is available" notice. It only links to the release page; nothing is downloaded. */
+function renderUpdateNotice(s: ShellState): HTMLElement[] {
+  const u = s.update;
+  if (!u) return [];
+  const label = `Quiver ${u.version} is available`;
+  return [h('div', { class: 'recovery-card update-card', role: 'status', title: label },
+    h('p', { class: 'recovery-copy recovery-expanded' }, label),
+    h('button', { class: 'btn', title: `Open the Quiver ${u.version} release page`, 'aria-label': `Open the Quiver ${u.version} release page`, dataset: { focusKey: 'update-open' }, onClick: () => call('update:open') },
+      h('span', { class: 'recovery-expanded' }, 'Release notes'), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, '↑')),
+    h('button', { class: 'btn', title: 'Dismiss', 'aria-label': `Dismiss the Quiver ${u.version} notice`, dataset: { focusKey: 'update-dismiss' }, onClick: () => call('update:dismiss') }, '×'))];
+}
+
 const call = (ch: string, ...a: unknown[]) => quiver.invoke(ch, ...a).catch((e: Error) => console.error(ch, e.message));
 
 function renderSpaces(s: ShellState): HTMLElement {
@@ -89,12 +107,14 @@ function renderSpaces(s: ShellState): HTMLElement {
     const chip = h(
       'button',
       {
-        class: 'space' + (sp.id === s.activeSpaceId ? ' active' : ''),
+        class: 'space' + (sp.id === s.activeSpaceId ? ' active' : '') + (sp.private ? ' private' : ''),
         role: 'tab',
         'aria-selected': String(sp.id === s.activeSpaceId),
         dataset: { focusKey: sp.id },
-        'aria-label': sp.isolated ? sp.name + ', separate sign-in' : sp.name + ', shared sign-in',
-        title: `${sp.name}${sp.isolated ? ' — separate cookies & storage' : ' — shared cookies'}\nRight-click: rename or delete · Double-click: rename`,
+        'aria-label': sp.private ? sp.name + ', private Space' : sp.isolated ? sp.name + ', separate sign-in' : sp.name + ', shared sign-in',
+        title: sp.private
+          ? `${sp.name} — private: nothing is saved, synced or kept in history. Closing it or quitting Quiver discards everything.\nRight-click: close`
+          : `${sp.name}${sp.isolated ? ' — separate cookies & storage' : ' — shared cookies'}\nRight-click: rename or delete · Double-click: rename`,
         onClick: () => call('space:activate', sp.id),
         onDblclick: () => {
           renamingSpace = sp.id;
@@ -106,7 +126,7 @@ function renderSpaces(s: ShellState): HTMLElement {
         },
       },
       dot,
-      h('span', { class: 'label' }, (sp.isolated ? '🔒 ' : '') + sp.name),
+      h('span', { class: 'label' }, (sp.private ? '' : sp.isolated ? '🔒 ' : '') + sp.name),
     );
     wrap.append(chip);
   }
@@ -141,6 +161,12 @@ function renderAddForm(): HTMLElement {
     name,
     h('label', { title: 'Own cookie jar, logins and storage, separate from other Spaces' }, iso, 'Separate cookies & logins'),
     h('div', { class: 'row' }, h('button', { class: 'btn primary', dataset: { focusKey: 'space-create' }, onClick: submit }, 'Create'), h('button', { class: 'btn', dataset: { focusKey: 'space-cancel' }, onClick: () => { addingSpace = false; render(); } }, 'Cancel')),
+    h('button', {
+      class: 'btn private-space-btn',
+      title: 'A temporary Space with in-memory cookies and storage, no history, never saved or synced (Ctrl+Shift+N)',
+      dataset: { focusKey: 'space-private' },
+      onClick: () => { addingSpace = false; void call('space:create-private'); render(); },
+    }, 'New private Space'),
   );
 }
 
@@ -395,6 +421,7 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
   const fav = t.favicon ? h('img', { class: 'fav', src: t.favicon, alt: '' }) : h('span', { class: 'fav' });
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
+  if (t.split) kids.push(h('span', { class: 'split-mark', title: `In split view (${t.split} pane)`, 'aria-hidden': 'true' }, t.split === 'left' ? '◧' : '◨'));
   if (t.live) kids.push(h('span', { class: 'live', title: 'Using camera, microphone or screen sharing', 'aria-label': 'live' }, '●'));
   if (t.local && t.errors > 0) {
     kids.push(h('span', {
@@ -406,7 +433,7 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
   const select = h('button', {
     class: 'tab-select',
     role: 'treeitem',
-    'aria-label': t.title + (t.pinned ? ', pinned' : '') + (t.live ? ', using camera or microphone' : ''),
+    'aria-label': t.title + (t.pinned ? ', pinned' : '') + (t.split ? `, in split view, ${t.split} pane` : '') + (t.live ? ', using camera or microphone' : ''),
     'aria-selected': String(active),
     'aria-level': String(m.level), 'aria-setsize': String(m.setsize), 'aria-posinset': String(m.posinset),
     dataset: { focusKey: 'tab-' + t.id },
@@ -422,7 +449,7 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
     onClick: () => call('tab:close', t.id),
   }, '×');
   return h('div', {
-    class: 'tab' + (active ? ' active' : '') + (t.loading ? ' loading' : '') + (t.pinned ? ' pinned' : ''),
+    class: 'tab' + (active ? ' active' : '') + (t.loading ? ' loading' : '') + (t.pinned ? ' pinned' : '') + (t.split ? ' split' : ''),
     dataset: { tabId: String(t.id) },
     onAuxclick: (e: MouseEvent) => {
       if (e.button === 1) void call('tab:close', t.id);
@@ -470,6 +497,25 @@ function renderRecovery(s: ShellState): HTMLElement[] {
       }, 'ⓘ'),
     ));
   }
+  if (s.arcImportOffer) {
+    cards.push(h('div', { class: 'recovery-card arc-offer' },
+      h('p', { class: 'recovery-copy' }, 'Bring your Arc Spaces, pins and folders into Quiver.'),
+      h('button', {
+        class: 'btn',
+        'aria-label': 'Review Arc import',
+        title: 'Review your Arc sidebar in Settings before importing it',
+        dataset: { focusKey: 'arc-offer-open' },
+        onClick: () => call('arc:offer-open'),
+      }, h('span', { class: 'recovery-expanded' }, 'Review import'), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, 'A')),
+      h('button', {
+        class: 'icon-btn recovery-expanded',
+        'aria-label': 'Dismiss Arc import',
+        title: 'Not now. Import from Arc stays available in Settings.',
+        dataset: { focusKey: 'arc-offer-dismiss' },
+        onClick: () => call('arc:offer-dismiss'),
+      }, '×'),
+    ));
+  }
   const closed = s.recentlyClosed;
   const original = closed && s.spaces.find(({ id }) => id === closed.spaceId);
   if (closed && original) {
@@ -512,8 +558,8 @@ function sidebarKey(s: ShellState): string {
   return JSON.stringify([
     s.tabs.filter((t) => t.spaceId === s.activeSpaceId),
     devServers,
-    rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.recentlyClosed, rest.recoveryNotice, rest.localServerStatus,
-    rest.settings.sidebarCollapsed, rest.settings.devServerScan, addingSpace, renamingSpace, renamingFolder,
+    rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.recentlyClosed, rest.recoveryNotice, rest.arcImportOffer, rest.localServerStatus,
+    rest.settings.sidebarCollapsed, rest.settings.devServerScan, rest.keys, rest.update, addingSpace, renamingSpace, renamingFolder,
   ]);
 }
 
@@ -524,7 +570,7 @@ function renderSidebar(s: ShellState): void {
   const spaceTabs = s.tabs.filter((t) => t.spaceId === s.activeSpaceId);
   const brand = h('div', { class: 'brand' });
   const logo = h('img', { src: 'quiver-icon.png', width: 22, height: 22, alt: '' });
-  brand.append(logo, h('span', { class: 'name' }, 'Quiver'), icon(ICON.sidebar, 'Collapse / expand sidebar (Ctrl+B)', () => call('sidebar:toggle')));
+  brand.append(logo, h('span', { class: 'name' }, 'Quiver'), icon(ICON.sidebar, withKeys(s, 'Collapse / expand sidebar', 'toggle-sidebar'), () => call('sidebar:toggle')));
 
   const newtab = h('button', { class: 'newtab', title: 'Open the command bar in a new tab (Ctrl+T)', dataset: { focusKey: 'new-tab' }, onClick: () => call('cmd:open', '', 'new', 'new-tab') }, h('span', {}, '＋ New tab'), h('kbd', {}, 'Ctrl+T'));
 
@@ -539,20 +585,26 @@ function renderSidebar(s: ShellState): void {
   else if (s.devServers.length === 0) servers.append(h('div', { class: 'empty' }, 'No HTTP servers found on localhost.'));
   for (const d of s.devServers) {
     servers.append(
-      h('button', { class: 'server', title: `${d.title}\n${d.url}`, dataset: { focusKey: d.url }, onClick: () => call('devserver:open', d.url) }, h('span', { class: 'port' }, `:${d.port}`), h('span', { class: 'stitle' }, d.title)),
+      h('button', { class: 'server', title: `${d.label}\n${d.url}`, dataset: { focusKey: d.url }, onClick: () => call('devserver:open', d.url) }, h('span', { class: 'port' }, `:${d.port}`), h('span', { class: 'stitle' }, d.label)),
     );
   }
 
   const active = s.spaces.find(({ id }) => id === s.activeSpaceId);
-  const isolation = active && h('p', {
+  const isolation = active && (active.private ? h('p', {
+    class: 'space-isolation private',
+    title: 'Private Space: cookies and storage live in memory; no history; not saved or synced. Close it or quit Quiver to discard everything.',
+  },
+    h('span', { class: 'recovery-expanded' }, 'Private: nothing is saved'),
+    h('span', { class: 'recovery-compact' }, 'Private'),
+  ) : h('p', {
     class: 'space-isolation',
     title: active.name + (active.isolated ? ' has separate cookies and sign-ins' : ' shares cookies and sign-ins with other shared Spaces'),
   },
     h('span', { class: 'recovery-expanded' }, active.isolated ? 'Separate sign-in' : 'Shared sign-in'),
     h('span', { class: 'recovery-compact' }, active.isolated ? 'Separate' : 'Shared'),
-  );
+  ));
   sidebar.replaceChildren(brand, renderSpaces(s), ...(isolation ? [isolation] : []),
-    ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderRecovery(s),
+    ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderUpdateNotice(s), ...renderRecovery(s),
     ...(s.localServerStatus ? [renderLocalServerStatus(s.localServerStatus)] : []), tabsEl, servers);
   tabsEl.scrollTop = previousScroll;
   tabList = { scroller: tabsEl, inner, rows: s.sidebar, meta: rowMeta(s.sidebar), tabs: new Map(spaceTabs.map((t) => [t.id, t])), activeId: s.activeTabId };
@@ -639,8 +691,8 @@ function renderToolbar(s: ShellState): void {
   if (t?.env) addr.append(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env));
   addr.append(h('span', { class: 'url' + (t?.url ? '' : ' placeholder') }, t?.url || 'Search, paste a URL, JWT, or type gh / npm / mdn / env / boost…'), h('span', { class: 'hint' }, 'Ctrl+K'));
   const phoneStatus = PHONE_LABELS[s.phoneStatus];
-  const phone = icon(ICON.phone, 'Phone preview (Ctrl+Shift+P)', () => call('preview:toggle'), { on: s.preview, focusKey: 'phone-preview' });
-  phone.title = `${phoneStatus.label} (Ctrl+Shift+P)`;
+  const phone = icon(ICON.phone, withKeys(s, 'Phone preview', 'preview'), () => call('preview:toggle'), { on: s.preview, focusKey: 'phone-preview' });
+  phone.title = withKeys(s, phoneStatus.label, 'preview');
   phone.setAttribute('aria-describedby', 'phone-label');
   phone.setAttribute('aria-pressed', String(s.preview));
   if (phoneStatus.compact) {
@@ -650,9 +702,9 @@ function renderToolbar(s: ShellState): void {
   const activeBoosts = t?.activeBoosts ?? [];
   const count = activeBoosts.length;
   const boostLabel = count ? `Boosts: ${count} active on this page` : 'Boosts: none active on this page';
-  const boost = icon(ICON.boost, `${boostLabel} (Ctrl+Shift+B)`, () => call('cmd:run', { type: 'internal', page: 'boosts' }), { on: count > 0, focusKey: 'boosts' });
+  const boost = icon(ICON.boost, withKeys(s, boostLabel, 'boosts'), () => call('cmd:run', { type: 'internal', page: 'boosts' }), { on: count > 0, focusKey: 'boosts' });
   if (count) {
-    boost.title = `${boostLabel}: ${activeBoosts.join(', ')} (Ctrl+Shift+B)`;
+    boost.title = withKeys(s, `${boostLabel}: ${activeBoosts.join(', ')}`, 'boosts');
     boost.classList.add('tool-status');
     boost.append(h('span', { class: 'tool-count', 'aria-hidden': 'true' }, String(count)));
   }
@@ -663,6 +715,19 @@ function renderToolbar(s: ShellState): void {
     dataset: { focusKey: 'research' },
     onClick: () => call('cmd:run', { type: 'internal', page: 'research', topic: s.research!.id }),
   }, h('span', { class: 'dot', 'aria-hidden': 'true' }), h('span', { class: 'research-name' }, s.research.name), h('span', { class: 'tool-count', 'aria-hidden': 'true' }, String(s.research.count)));
+  const ab = s.adBlock && s.adBlock.tabId === s.activeTabId && s.adBlock.enabled ? s.adBlock : undefined;
+  const shield = ab && h('button', {
+    class: 'shield-chip' + (ab.allowed ? ' off' : ''),
+    title: ab.allowed
+      ? `Ads and trackers are allowed on ${ab.host}. Click to block them again`
+      : `${ab.blocked} ad and tracker request${ab.blocked === 1 ? '' : 's'} blocked on this page. Click to allow ads on ${ab.host}`,
+    'aria-label': ab.allowed
+      ? `Ads allowed on ${ab.host}. Block ads on this site`
+      : `${ab.blocked} ads and trackers blocked. Allow ads on this site`,
+    'aria-pressed': String(!ab.allowed),
+    dataset: { focusKey: 'shield' },
+    onClick: () => call('adblock:toggle-site', ab.tabId),
+  }, h('span', { 'aria-hidden': 'true' }, '🛡'), h('span', { class: 'tool-count', 'aria-hidden': 'true' }, ab.allowed ? 'off' : String(ab.blocked)));
   const prompt = s.permissionPrompt;
   const devices = prompt ? (['camera', 'microphone'] as const).filter((k) => prompt.kinds.includes(k)) : [];
   const askFor = prompt && [devices.length ? 'use your ' + devices.join(' and ') : '', prompt.kinds.includes('screen') ? 'share your screen' : '']
@@ -681,14 +746,16 @@ function renderToolbar(s: ShellState): void {
     onClick: () => call('cmd:run', { type: 'internal', page: 'downloads' }),
   }, h('span', { 'aria-hidden': 'true' }, '↓'), h('span', {}, dl.progress === null ? String(dl.active) : `${Math.floor(dl.progress * 100)}%`));
   toolbar.replaceChildren(
-    icon(ICON.back, 'Back (Alt+←)', () => call('tab:back'), { disabled: !t?.canGoBack }),
-    icon(ICON.forward, 'Forward (Alt+→)', () => call('tab:forward'), { disabled: !t?.canGoForward }),
+    icon(ICON.back, withKeys(s, 'Back', 'back'), () => call('tab:back'), { disabled: !t?.canGoBack }),
+    icon(ICON.forward, withKeys(s, 'Forward', 'forward'), () => call('tab:forward'), { disabled: !t?.canGoForward }),
     icon(ICON.reload, 'Reload (Ctrl+R)', () => call('tab:reload')),
     permissionBar || (s.find ? renderFindBar(s.find) : null) || addr,
+    ...(s.zoom !== 1 && Number.isFinite(s.zoom) ? [h('button', { class: 'zoom-chip', title: withKeys(s, 'Reset zoom', 'zoom-reset'), 'aria-label': `Zoom ${Math.round(s.zoom * 100)} percent. Reset zoom`, dataset: { focusKey: 'zoom' }, onClick: () => call('zoom:reset') }, `${Math.round(s.zoom * 100)}%`)] : []),
     ...(s.zoom !== 1 && Number.isFinite(s.zoom) ? [h('button', { class: 'zoom-chip', title: 'Reset zoom (Ctrl+0)', 'aria-label': `Zoom ${Math.round(s.zoom * 100)} percent. Reset zoom`, dataset: { focusKey: 'zoom' }, onClick: () => call('zoom:reset') }, `${Math.round(s.zoom * 100)}%`)] : []),
+    ...(shield ? [shield] : []),
     ...(research ? [research] : []),
     ...(downloadsButton ? [downloadsButton] : []),
-    icon(ICON.env, 'Switch environment: local → staging → prod (Ctrl+Alt+E)', () => call('env:switch'), { disabled: !t?.env }),
+    icon(ICON.env, withKeys(s, 'Switch environment: local → staging → prod', 'env'), () => call('env:switch'), { disabled: !t?.env }),
     phone,
     boost,
     icon(ICON.gear, 'Settings', () => call('cmd:run', { type: 'internal', page: 'settings' })),
@@ -699,15 +766,20 @@ function renderToolbar(s: ShellState): void {
 function render(): void {
   if (!state) return;
   const focused = document.hasFocus() && document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  document.body.classList.toggle('collapsed', state.settings.sidebarCollapsed);
+  if (!state.settings.sidebarCollapsed && peek !== 'off') resetPeek();
+  // While peeking the sidebar draws expanded (no .collapsed) but the grid keeps the collapsed width below.
+  document.body.classList.toggle('collapsed', state.settings.sidebarCollapsed && peek === 'off');
   document.body.classList.toggle('preview', ['starting', 'active', 'unavailable'].includes(state.phoneStatus));
   const phoneMessage = PHONE_LABELS[state.phoneStatus].label;
   if (phoneLabel.textContent !== phoneMessage) phoneLabel.textContent = phoneMessage;
   document.body.style.setProperty('--sb', state.settings.sidebarCollapsed ? '56px' : '264px');
   const sp: Space | undefined = state.spaces.find((x) => x.id === state!.activeSpaceId);
   document.title = `Quiver — ${sp?.name ?? ''}`;
+  document.body.classList.toggle('private-space', sp?.private === true);
   renderSidebar(state);
   renderToolbar(state);
+  renderSplit(state.split, state.activeTabId);
+  renderPeek(state.peek);
   const message = recoveryMessage(state);
   if (recoveryStatus.textContent !== message) recoveryStatus.textContent = message;
   const devMessage = state.localServerStatus?.state === 'recovered' ? 'Local server is back. Retry the failed page.' :
@@ -717,6 +789,216 @@ function render(): void {
     if (!focusShellControl('tab-' + state.activeTabId)) focusShellControl('address');
   }
 }
+
+// ───────── split view ─────────
+// The two panes are native views; the shell only draws in the gap between them (the divider) and in a thin strip
+// above them that marks the active pane. Dragging works because the shell view keeps pointer capture while the
+// button is held, even when the pointer is over a page.
+const content = document.getElementById('content')!;
+const splitLayer = h('div', { class: 'split-layer', hidden: true });
+const leftStrip = h('div', { class: 'split-strip' });
+const rightStrip = h('div', { class: 'split-strip' });
+const divider = h('div', {
+  class: 'split-divider', role: 'separator', tabindex: 0, 'aria-orientation': 'vertical',
+  'aria-label': 'Split view divider', 'aria-valuemin': '20', 'aria-valuemax': '80',
+  title: 'Drag to resize the split view · double-click to reset · Ctrl+Shift+- exits split view',
+});
+splitLayer.append(leftStrip, rightStrip, divider);
+content.append(splitLayer);
+let splitNow: SplitView | undefined;
+let pendingRatio: number | null = null;
+
+function sendRatio(ratio: number): void {
+  const first = pendingRatio === null;
+  pendingRatio = Math.min(0.8, Math.max(0.2, ratio));
+  // One update per frame keeps the main process from re-laying out the panes for every pointer event.
+  if (first) requestAnimationFrame(() => {
+    const value = pendingRatio;
+    pendingRatio = null;
+    if (value !== null) void call('split:ratio', value);
+  });
+}
+
+function ratioFor(clientX: number): number | null {
+  if (!splitNow) return null;
+  const usable = splitNow.area.width - splitNow.divider.width;
+  if (usable <= 0) return null;
+  const x = clientX - content.getBoundingClientRect().left - splitNow.area.x - splitNow.divider.width / 2;
+  return x / usable;
+}
+
+divider.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  divider.setPointerCapture(e.pointerId);
+  divider.classList.add('dragging');
+});
+divider.addEventListener('pointermove', (e) => {
+  if (!divider.hasPointerCapture(e.pointerId)) return;
+  const ratio = ratioFor(e.clientX);
+  if (ratio !== null) sendRatio(ratio);
+});
+const endDrag = (e: PointerEvent) => {
+  if (divider.hasPointerCapture(e.pointerId)) divider.releasePointerCapture(e.pointerId);
+  divider.classList.remove('dragging');
+};
+divider.addEventListener('pointerup', endDrag);
+divider.addEventListener('pointercancel', endDrag);
+divider.addEventListener('dblclick', () => sendRatio(0.5));
+divider.addEventListener('keydown', (e) => {
+  if (!splitNow) return;
+  const step = e.shiftKey ? 0.1 : 0.05;
+  const next = e.key === 'ArrowLeft' ? splitNow.ratio - step : e.key === 'ArrowRight' ? splitNow.ratio + step :
+    e.key === 'Home' ? 0.2 : e.key === 'End' ? 0.8 : null;
+  if (next === null) return;
+  e.preventDefault();
+  sendRatio(next);
+});
+
+function place(el: HTMLElement, r: { x: number; y: number; width: number; height: number }): void {
+  el.style.left = `${r.x}px`;
+  el.style.top = `${r.y}px`;
+  el.style.width = `${r.width}px`;
+  el.style.height = `${r.height}px`;
+}
+
+function renderSplit(split: SplitView | undefined, activeTabId: number | null): void {
+  splitNow = split;
+  splitLayer.hidden = !split;
+  if (!split) return;
+  place(divider, split.divider);
+  place(leftStrip, { x: split.leftPane.x, y: split.area.y, width: split.leftPane.width, height: split.leftPane.y - split.area.y });
+  place(rightStrip, { x: split.rightPane.x, y: split.area.y, width: split.rightPane.width, height: split.rightPane.y - split.area.y });
+  leftStrip.classList.toggle('active', activeTabId === split.left);
+  rightStrip.classList.toggle('active', activeTabId === split.right);
+  const percent = String(Math.round(split.ratio * 100));
+  divider.setAttribute('aria-valuenow', percent);
+  divider.setAttribute('aria-valuetext', `Left pane ${percent}%`);
+}
+
+// ───────── Peek ─────────
+// While a Peek is open the main process hides the page and sends a still image of it, so the shell can dim it and
+// draw the Peek's header bar (the live Peek page sits just below the header).
+const peekLayer = h('div', { class: 'peek-layer', hidden: true, onClick: (e: MouseEvent) => { if (e.target === peekLayer || (e.target as HTMLElement).closest('.peek-backdrop')) void call('peek:close'); } });
+const peekBackdrop = h('div', { class: 'peek-backdrop' });
+const peekHost = h('span', { class: 'peek-host' });
+const peekHeader = h('div', { class: 'peek-header', role: 'toolbar', 'aria-label': 'Peek' },
+  peekHost,
+  h('button', { class: 'peek-btn', title: 'Keep this page as a tab', onClick: () => call('peek:open-tab') }, 'Open as tab'),
+  h('button', { class: 'peek-btn', title: 'Close the Peek (Esc)', 'aria-label': 'Close Peek (Esc)', onClick: () => call('peek:close') }, 'Close'),
+);
+peekLayer.append(peekBackdrop, peekHeader);
+content.append(peekLayer);
+
+function renderPeek(peek: PeekView | undefined): void {
+  peekLayer.hidden = !peek;
+  if (!peek) {
+    peekBackdrop.replaceChildren();
+    return;
+  }
+  place(peekHeader, peek.header);
+  peekHost.textContent = peek.host || peek.url;
+  peekHost.title = peek.url;
+}
+
+quiver.on('peek:backdrop', (images: unknown) => {
+  const list = Array.isArray(images) ? images : [];
+  peekBackdrop.replaceChildren(...list.filter((i) => typeof i?.src === 'string' && i.src.startsWith('data:image/') && i.rect).map((i) => {
+    const img = h('img', { src: i.src, alt: '' });
+    place(img, i.rect);
+    return img;
+  }));
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state?.peek && !e.defaultPrevented) {
+    e.preventDefault();
+    void call('peek:close');
+  }
+});
+// ───────── sidebar peek ─────────
+// Hovering the collapsed sidebar opens it over the page (main raises the shell view above the tab views) and it
+// closes again shortly after the pointer leaves. The delays stop it flickering open when the pointer only crosses
+// the window's left edge, and closed when the pointer briefly overshoots the sidebar's edge.
+const PEEK_OPEN_MS = 150;
+const PEEK_CLOSE_MS = 300;
+let peek: 'off' | 'opening' | 'on' = 'off';
+let peekOpenTimer: number | undefined;
+let peekCloseTimer: number | undefined;
+
+function clearPeekTimers(): void {
+  clearTimeout(peekOpenTimer);
+  clearTimeout(peekCloseTimer);
+  peekOpenTimer = peekCloseTimer = undefined;
+}
+
+function resetPeek(): void {
+  clearPeekTimers();
+  peek = 'off';
+  document.body.classList.remove('peek');
+}
+
+function startPeek(): void {
+  if (!state?.settings.sidebarCollapsed || peek !== 'off') return;
+  peek = 'opening';
+  document.body.classList.add('peek');
+  render();
+  // Paint the transparent content area before main raises the shell, so the page never blinks out.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (peek !== 'opening') return;
+    peek = 'on';
+    void call('sidebar:peek', true);
+  }));
+}
+
+async function endPeek(): Promise<void> {
+  clearPeekTimers();
+  if (peek === 'off') return;
+  const wasRaised = peek === 'on';
+  peek = 'off';
+  // Lower the shell first, then collapse: the page covers the content area again before it repaints.
+  if (wasRaised) await call('sidebar:peek', false);
+  if (peek === 'off') {
+    document.body.classList.remove('peek');
+    render();
+  }
+}
+
+function scheduleEndPeek(): void {
+  if (peek === 'off' || peekCloseTimer !== undefined) return;
+  // Keep it open while someone is typing in a sidebar editor (renaming a Space or folder).
+  if (document.activeElement instanceof HTMLInputElement && sidebar.contains(document.activeElement)) return;
+  peekCloseTimer = window.setTimeout(() => void endPeek(), PEEK_CLOSE_MS);
+}
+
+sidebar.addEventListener('pointerenter', () => {
+  clearTimeout(peekCloseTimer);
+  peekCloseTimer = undefined;
+  if (peek === 'off' && state?.settings.sidebarCollapsed && peekOpenTimer === undefined) {
+    peekOpenTimer = window.setTimeout(() => { peekOpenTimer = undefined; startPeek(); }, PEEK_OPEN_MS);
+  }
+});
+sidebar.addEventListener('pointerleave', () => {
+  clearTimeout(peekOpenTimer);
+  peekOpenTimer = undefined;
+  scheduleEndPeek();
+});
+// While raised the shell covers the whole window, so pointer movement over the page area arrives here too.
+document.addEventListener('pointermove', (e) => {
+  if (peek === 'off') return;
+  if (e.target instanceof Node && sidebar.contains(e.target)) {
+    clearTimeout(peekCloseTimer);
+    peekCloseTimer = undefined;
+  } else scheduleEndPeek();
+});
+document.documentElement.addEventListener('pointerleave', scheduleEndPeek);
+// A click on the page area closes at once instead of being swallowed by the transparent shell for 300 ms.
+document.addEventListener('pointerdown', (e) => {
+  if (peek !== 'off' && !(e.target instanceof Node && sidebar.contains(e.target))) void endPeek();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && peek !== 'off') void endPeek();
+});
 
 quiver.on('state', (s: ShellState) => {
   // Don't clobber an inline editor the user is typing in.

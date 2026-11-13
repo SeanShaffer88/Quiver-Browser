@@ -6,6 +6,8 @@ export interface Space {
   color: string;
   /** true = own cookie jar / storage partition; false = shared default partition */
   isolated: boolean;
+  /** A private Space: in-memory storage, no history, never saved or synced. Gone when closed or when Quiver quits. */
+  private?: true;
   /** Pinned-tab folders, nested by parentId. */
   folders?: Folder[];
 }
@@ -42,7 +44,44 @@ export interface Settings {
   askWhereToSave: boolean;
   /** Archive temporary tabs unused for this many hours; 0 never. */
   archiveAfterHours: number;
+  /** Links a pinned tab opens in a new tab or window open in a floating Peek instead. */
+  peekPinnedLinks: boolean;
   privacy: PrivacySettings;
+  /** Light, dark, or follow Windows. Applied through nativeTheme so every page's prefers-color-scheme follows. */
+  theme: 'system' | 'light' | 'dark';
+  /** Rebound shortcuts: action → binding such as "Ctrl+Shift+KeyB" ('' = no key). Missing actions use defaults. */
+  shortcuts: Record<string, string>;
+  /** Opt-in: look up the latest Quiver release on GitHub at most once a day. Never downloads anything. */
+  checkForUpdates: boolean;
+}
+
+/** One rebindable action for Settings → Shortcuts. */
+export interface ShortcutRow {
+  action: string;
+  label: string;
+  /** Human labels of the current keys, e.g. ["Ctrl+B"]; empty when unbound. */
+  keys: string[];
+  /** Current bindings in stored form, e.g. ["Ctrl+KeyB"]. */
+  bindings: string[];
+  isDefault: boolean;
+  /** Whether a web page gets the key first. */
+  pageFirst: boolean;
+}
+
+/** A newer Quiver release, found by the opt-in check. */
+export interface UpdateNotice {
+  version: string;
+  url: string;
+}
+
+export interface UpdateStatus {
+  enabled: boolean;
+  /** Epoch ms of the last completed check, 0 if none. */
+  lastCheckedAt: number;
+  current: string;
+  latest?: string;
+  notice?: UpdateNotice;
+  error?: string;
 }
 
 export interface PrivacySettings {
@@ -56,6 +95,10 @@ export interface PrivacySettings {
   spellcheck: boolean;
   /** Clear cookies, site storage and cache for web Spaces when Quiver closes. */
   clearOnExit: boolean;
+  /** Block third-party requests to well-known ad and tracker hosts. */
+  blockTrackers: boolean;
+  /** Sites (hostnames) where ads and trackers are allowed. */
+  adAllowList: string[];
 }
 
 export interface Bookmark {
@@ -106,12 +149,40 @@ export interface TabInfo {
   internal: boolean;
   env: EnvBadge | null;
   activeBoosts: string[];
+  /** Which side of the split view the tab is on, when it is in one. */
+  split: 'left' | 'right' | null;
+}
+
+/** Rectangles are relative to the shell's page area (below the toolbar, right of the sidebar). */
+interface ShellRect { x: number; y: number; width: number; height: number }
+
+export interface SplitView {
+  left: number;
+  right: number;
+  /** Share of the width the left pane takes (0.2–0.8). */
+  ratio: number;
+  /** The area both panes share, for turning a pointer position into a ratio. */
+  area: ShellRect;
+  divider: ShellRect;
+  leftPane: ShellRect;
+  rightPane: ShellRect;
+}
+
+export interface PeekView {
+  host: string;
+  url: string;
+  header: ShellRect;
+  frame: ShellRect;
 }
 
 export interface DevServer {
   port: number;
   url: string;
   title: string;
+  /** The project the server runs from (package.json name or folder), when Quiver could find it. */
+  project: string | null;
+  /** What the sidebar shows: "project — Page title", or whichever is known. */
+  label: string;
 }
 
 export type PhoneStatus = 'off' | 'paused' | 'narrow' | 'starting' | 'active' | 'unavailable';
@@ -130,6 +201,8 @@ export interface RecoveryNotice {
 export interface ShellState {
   recentlyClosed?: { id: number; spaceId: string; title: string };
   recoveryNotice?: RecoveryNotice;
+  /** First launch found an Arc sidebar; the sidebar offers to import it until the person acts on it. */
+  arcImportOffer?: boolean;
   spaces: Space[];
   activeSpaceId: string;
   tabs: TabInfo[];
@@ -144,13 +217,23 @@ export interface ShellState {
   research?: { id: string; name: string; count: number };
   /** A camera / microphone / screen request waiting on the active tab. */
   permissionPrompt?: { id: number; host: string; kinds: ('camera' | 'microphone' | 'screen')[] };
+  /** Ad and tracker blocking on the active web tab; absent for Quiver's own pages. */
+  adBlock?: { tabId: number; host: string; blocked: number; enabled: boolean; allowed: boolean };
   /** Downloads in progress, for the toolbar. Progress is null when a size is unknown. */
   downloads?: { active: number; progress: number | null };
   devServers: DevServer[];
   preview: boolean;
   phoneStatus: PhoneStatus;
   localServerStatus: LocalServerStatus | null;
+  /** The split view the active tab is part of, when it is shown. */
+  split?: SplitView;
+  /** The floating preview of a link opened from a pinned tab. */
+  peek?: PeekView;
   settings: Settings;
+  /** Key labels for rebindable actions (e.g. { 'toggle-sidebar': 'Ctrl+B' }); '' when unbound. */
+  keys: Record<string, string>;
+  /** A newer Quiver release the user hasn't dismissed. */
+  update?: UpdateNotice;
 }
 
 export interface TabCommandTarget {
@@ -171,6 +254,7 @@ export type SuggestionAction =
   | { type: 'env'; target: EnvBadge; url: string }
   | { type: 'internal'; page: 'boosts' | 'settings' | 'research' | 'downloads' }
   | { type: 'activate-tab'; target: TabCommandTarget }
+  | { type: 'split-with'; target: TabCommandTarget }
   | { type: 'browser'; command: BrowserCommand }
   | { type: 'download'; url: string }
   | { type: 'open-share'; path: string }
@@ -185,7 +269,8 @@ export type BrowserCommand =
   | 'command-new' | 'close-tab' | 'reopen-tab' | 'reload' | 'back' | 'forward' | 'next-tab' | 'prev-tab'
   | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings' | 'downloads'
   | 'find' | 'zoom-in' | 'zoom-out' | 'zoom-reset'
-  | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space';
+  | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space'
+  | 'split' | 'unsplit' | 'private-space';
 
 export interface Suggestion {
   kind: string;
@@ -278,3 +363,59 @@ export interface DownloadInfo {
 }
 
 export type NativeKind = 'ftp' | 'hls' | 'dash' | 'metalink' | 'webdav';
+
+/** An Arc sidebar entry as Settings previews it: titles and hosts, never full URLs. */
+export type ArcNode =
+  | { kind: 'tab'; title: string; host: string }
+  | { kind: 'folder' | 'split'; title: string; children: ArcNode[] };
+
+export interface ArcSpace {
+  title: string;
+  profile: number;
+  pinned: ArcNode[];
+  pinnedTabs: number;
+  todayTabs: number;
+}
+
+export interface ArcProfile {
+  label: string;
+  favorites: ArcNode[];
+  favoriteTabs: number;
+}
+
+export interface ArcSidebarPreview {
+  spaces: ArcSpace[];
+  profiles: ArcProfile[];
+  skipped: number;
+  limited: boolean;
+}
+
+/** What importing a reviewed Arc sidebar would add to Quiver right now. */
+export interface ArcImportCounts {
+  /** Quiver Spaces that receive tabs or folders (new and merged). */
+  spaces: number;
+  newSpaces: number;
+  mergedSpaces: number;
+  pinned: number;
+  favorites: number;
+  folders: number;
+  /** Tabs whose URL that Space already has. */
+  duplicates: number;
+  /** Entries left out by Quiver's limits (folder count, depth, tab count) or because the URL cannot be restored. */
+  dropped: number;
+}
+
+export interface ArcReview {
+  id: number;
+  source: string;
+  preview: ArcSidebarPreview;
+  counts: ArcImportCounts;
+}
+
+export interface ArcImportStatus {
+  /** An Arc sidebar exists at the usual Windows location. */
+  detected: boolean;
+  /** The first-launch offer is still waiting for an answer. */
+  offer: boolean;
+  undo?: { id: number; tabs: number; spaces: number; folders: number };
+}

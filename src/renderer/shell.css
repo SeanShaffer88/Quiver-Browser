@@ -90,6 +90,7 @@ body { display: grid; grid-template-columns: var(--sb, 264px) minmax(0, 1fr); gr
 .recovery-notice { flex-wrap: nowrap; }
 .recovery-notice .recovery-copy { flex: 1; }
 .recovery-notice .icon-btn { width: 24px; height: 24px; flex: none; }
+.arc-offer .icon-btn { width: 24px; height: 24px; flex: none; margin-inline-start: auto; }
 .recovery-compact { display: none; }
 .collapsed .recovery-card { justify-content: center; margin-inline: 5px; padding: 3px; }
 .collapsed .recovery-compact { display: inline; }
@@ -124,3 +125,37 @@ body { display: grid; grid-template-columns: var(--sb, 264px) minmax(0, 1fr); gr
 .zoom-chip { flex: none; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
 .zoom-chip:hover { border-color: var(--accent); }
 @media (forced-colors: active) { .find-bar { border-color: Highlight; } }
+
+/* split view: the shell shows through the gap between the two page views */
+.split-layer { position: absolute; inset: 0; pointer-events: none; }
+.split-strip { position: absolute; background: var(--border); }
+.split-strip.active { background: var(--accent); }
+.split-divider { position: absolute; pointer-events: auto; cursor: col-resize; background: var(--panel); touch-action: none; }
+.split-divider::after { content: ''; position: absolute; left: 50%; top: 50%; width: 2px; height: 40px; margin: -20px 0 0 -1px; border-radius: 1px; background: var(--muted); }
+.split-divider:hover::after, .split-divider.dragging::after, .split-divider:focus-visible::after { background: var(--accent); height: 64px; margin-top: -32px; }
+.split-divider:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tab .split-mark { color: var(--accent); font-size: 12px; line-height: 1; }
+
+/* Peek: dimmed still of the page, the header bar above the live preview */
+.peek-layer { position: absolute; inset: 0; background: #000; z-index: 5; }
+.peek-layer[hidden], .split-layer[hidden] { display: none; }
+.peek-backdrop { position: absolute; inset: 0; opacity: .45; }
+.peek-backdrop img { position: absolute; object-fit: fill; }
+.peek-header { position: absolute; display: flex; align-items: center; gap: 6px; padding: 0 6px 0 12px; box-sizing: border-box; background: var(--panel); border: 1px solid var(--border); border-bottom: 0; border-radius: var(--radius) var(--radius) 0 0; box-shadow: 0 8px 30px rgba(0, 0, 0, .5); }
+.peek-host { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font: 12px var(--mono); }
+.peek-btn { padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); color: var(--text); background: var(--panel-2); font-size: 12px; }
+.peek-btn:hover { border-color: var(--accent); }
+/* Collapsed sidebar peeking over the page. The grid keeps the collapsed column; the sidebar floats over the page
+   area at full width. html/body/#content go transparent so the page (a separate view below) shows through. */
+html:has(> body.peek), body.peek { background: transparent; }
+body.peek #sidebar { position: fixed; inset: 0 auto 0 0; width: 264px; z-index: 10; box-shadow: 4px 0 24px var(--shadow); }
+@media (forced-colors: active) { body.peek #sidebar { border-right: 1px solid CanvasText; } }
+/* Private Spaces: dark purple stripes so it is obvious at a glance that nothing here is saved. */
+.space.private { color: #e9ddff; border-color: #6d28d9; background: repeating-linear-gradient(135deg, #2a1650 0 6px, #1c0f38 6px 12px); }
+.space.private.active { border-color: #a78bfa; box-shadow: 0 0 0 1px #a78bfa inset; }
+.space-isolation.private { color: #c4b5fd; }
+body.private-space #toolbar { box-shadow: inset 0 -2px 0 #7c3aed; }
+.add-space-form .private-space-btn { margin-top: 6px; width: 100%; }
+/* Ad and tracker blocking count for the active page. */
+.shield-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text); background: var(--panel-2); font-size: 12px; flex: none; }
+.shield-chip.off { color: var(--muted); opacity: 0.8; }

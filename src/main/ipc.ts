@@ -2,7 +2,11 @@ import { clipboard, dialog, ipcMain, Menu, session, shell as electronShell, type
 import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
 import { detectEnv } from '../shared/env';
 import { parseCommand } from '../shared/parser';
-import type { BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, Settings, Suggestion } from '../shared/types';
+import type { ArcImportStatus, ArcReview, BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, Settings, ShortcutRow, Suggestion } from '../shared/types';
+import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import { findArcSidebar, planArcImport, type ArcImportUndo } from './arc-import';
+import { ARC_SIDEBAR_MAX_BYTES, parseArcSidebar, previewOf, type ArcSidebar } from './arc-sidebar';
 import { BookmarkImports } from './bookmark-import';
 import { isValidBoostName, type Boosts } from './boosts';
 import { BookmarkProfileReadError, bookmarkProfileLabel, discoverBookmarkProfiles, readChromiumBookmarkCandidates } from './chromium-bookmarks';
@@ -11,6 +15,7 @@ import { internalRole, type InternalPage, type InternalRole } from './internal-a
 import type { Store } from './store';
 import { paletteQuery, paletteSuggestions } from './palette';
 import { normalizePrivacy } from './privacy';
+import { siteAllowed } from './content-blocking';
 import { topicMarkdown, type Research } from './research';
 import { researchSuggestions } from './research-commands';
 import { meetSuggestions } from './meetings';
@@ -20,8 +25,14 @@ import { shareTarget } from './native/share';
 import type { SyncService } from './sync-service';
 import type { History } from './history';
 import type { DownloadAction, Downloads } from './downloads';
-import { tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
+import { splitSearchQuery, splitSuggestions, tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
+import { normalizeTheme } from '../shared/theme';
+import {
+  bindingProblem, currentShortcutOverrides, effectiveBindings, formatBinding, isRebindable, normalizeShortcutOverrides, parseBinding,
+  REBINDABLE, setShortcutOverrides,
+} from './shortcuts';
+import type { UpdateChecker } from './updates';
 
 export interface IpcDeps {
   tabs: TabManager;
@@ -38,6 +49,8 @@ export interface IpcDeps {
   downloads: Downloads;
   /** Reapply privacy settings after they change. */
   onPrivacyChanged: () => void;
+  onThemeChanged: () => void;
+  updates: UpdateChecker;
 }
 
 const MAX_COMMAND_LENGTH = 65536;
@@ -68,6 +81,12 @@ export function downloadSuggestions(text: string, currentUrl = ''): Suggestion[]
   const leaf = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() ?? url.host) + (kind === 'webdav' && url.pathname.endsWith('/') ? ' (folder)' : '');
   return [{ kind: 'download', label: kind ? `Download ${KIND_LABEL[kind]}: ${leaf}` : `Download ${leaf}`, detail: url.host, action: { type: 'download', url: url.href } }];
 }
+/** The base name of a file the page picked, for display only (the page cannot be trusted to send just a name). */
+function fileLabel(name: unknown): string {
+  if (typeof name !== 'string') return '';
+  return name.slice(0, 260).split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 120) ?? '';
+}
+
 type AuthorizedInvokeEvent = IpcMainInvokeEvent & { senderFrame: WebFrameMain };
 
 export function sanitizeEnvGroups(input: unknown): EnvGroup[] {
@@ -160,6 +179,8 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (downloadSuggestion) return downloadSuggestion;
     const archived = /^archive(?:\s+([\s\S]*))?$/i.exec(text.trim());
     if (archived) return archiveSuggestions((archived[1] ?? '').trim(), tabs.archive);
+    const splitQuery = splitSearchQuery(text);
+    if (splitQuery !== undefined) return splitSuggestions(splitQuery, context.spaceId, context.tabId, openTabTargets());
     const tabQuery = tabSearchQuery(text);
     if (tabQuery !== undefined) return tabSearchSuggestions(tabQuery, context.spaceId, openTabTargets());
     const palette = paletteQuery(text);
@@ -220,9 +241,19 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
         ],
       },
       { type: 'separator' },
+      tabs.inSplit(tab.id)
+        ? { label: 'Exit split view', click: () => tabs.exitSplit() }
+        : { label: 'Open in split view', enabled: tabs.activeTabId !== null && tabs.activeTab?.spaceId === tab.spaceId, click: () => tabs.startSplit(tab.id) },
+      { type: 'separator' },
       { label: 'Copy link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(false); if (link) clipboard.writeText(link); } },
       { label: 'Copy Markdown link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(true); if (link) clipboard.writeText(link); } },
       { label: 'Open the console', enabled: !tab.internal, click: () => tabs.openConsole(tab.id) },
+      ...(!tab.internal && store.state.settings.privacy.blockTrackers ? [{
+        label: 'Allow ads on this site',
+        type: 'checkbox' as const,
+        checked: siteAllowed(tabs.tabUrl(tab), store.state.settings.privacy.adAllowList),
+        click: () => tabs.toggleSiteAds(tab.id),
+      }] : []),
       { type: 'separator' },
       ...(tab.pinned ? [
         { label: 'Make this page the pinned page', enabled: !tab.internal, click: () => tabs.setPinnedPage(tab.id) },
@@ -281,18 +312,33 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   });
   handle('shell', 'find:close', () => tabs.stopFind(true));
   handle('shell', 'zoom:reset', () => tabs.zoom(0));
+  // split view and Peek
+  handle('shell', 'split:ratio', (_e, ratio: unknown) => {
+    if (typeof ratio === 'number' && Number.isFinite(ratio)) tabs.setSplitRatio(ratio);
+  });
+  handle('shell', 'split:exit', () => tabs.exitSplit());
+  handle('shell', 'peek:close', () => tabs.closePeek());
+  handle('shell', 'peek:open-tab', () => tabs.peekToTab());
 
   // spaces
   handle('shell', 'space:create', (_e, name: string, isolated: boolean) => {
     tabs.createSpace(String(name ?? ''), !!isolated);
+  });
+  handle('shell', 'space:create-private', () => {
+    tabs.createPrivateSpace();
+  });
+  handle('shell', 'adblock:toggle-site', (_e, id: unknown) => {
+    if (!Number.isSafeInteger(id)) throw new Error('invalid tab');
+    return tabs.toggleSiteAds(id as number);
   });
   handle('shell', 'space:rename', (_e, id: string, name: string) => tabs.renameSpace(String(id), String(name)));
   handle('shell', 'space:activate', (_e, id: string) => tabs.activateSpace(String(id)));
   handle('shell', 'space:menu', (_e, id: string) => {
     const menu = Menu.buildFromTemplate([
       { label: 'Rename Space', click: () => shell.webContents.send('space:rename-start', id) },
+      { label: 'New private Space', accelerator: 'Ctrl+Shift+N', click: () => tabs.createPrivateSpace() },
       { type: 'separator' },
-      { label: 'Delete Space and its tabs', enabled: tabs.spaces.length > 1, click: () => void tabs.deleteSpace(String(id)).then(() => research.prune(new Set(tabs.spaces.map((sp) => sp.id)))) },
+      { label: tabs.isPrivate(String(id)) ? 'Close private Space and discard everything' : 'Delete Space and its tabs', enabled: tabs.canDeleteSpace(String(id)), click: () => void tabs.deleteSpace(String(id)).then(() => research.prune(new Set(tabs.spaces.map((sp) => sp.id)))) },
     ]);
     menu.popup();
   });
@@ -302,7 +348,11 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('shell', 'preview:toggle', () => tabs.setPreview(!tabs.preview));
   handle('shell', 'env:switch', (_e, target?: 'LOCAL' | 'STAGING' | 'PROD') => tabs.switchEnvironment(target));
 
+  // Hovering the collapsed sidebar shows it over the page until the pointer leaves; Ctrl+B is unaffected.
+  handle('shell', 'sidebar:peek', (_e, on: unknown) => tabs.setSidebarPeek(on === true));
+
   function toggleSidebar() {
+    tabs.setSidebarPeek(false);
     store.state.settings.sidebarCollapsed = !store.state.settings.sidebarCollapsed;
     store.save();
     tabs.syncPhone();
@@ -407,6 +457,14 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
         tabs.activateTab(tab.id);
         break;
       }
+      case 'split-with': {
+        const tab = tabs.tabs.get(action.target.id);
+        const space = tab && tabs.spaces.find(({ id }) => id === tab.spaceId);
+        if (!tab || !space || tab.view.webContents.isDestroyed() ||
+            !tabTargetMatches(action.target, commandTabTarget(tab, space.name))) return 'stale';
+        closeOverlay(true);
+        return tabs.startSplit(tab.id) ? 'done' : 'unavailable';
+      }
     }
     closeOverlay(false);
     return 'done';
@@ -474,7 +532,24 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (typeof patch.devServerScan === 'boolean') s.devServerScan = patch.devServerScan;
     if (typeof patch.rememberHistory === 'boolean') s.rememberHistory = patch.rememberHistory;
     if (typeof patch.askWhereToSave === 'boolean') s.askWhereToSave = patch.askWhereToSave;
+    if (typeof patch.peekPinnedLinks === 'boolean') {
+      s.peekPinnedLinks = patch.peekPinnedLinks;
+      if (!s.peekPinnedLinks) tabs.closePeek();
+    }
     if (patch.archiveAfterHours !== undefined) s.archiveAfterHours = normalizeArchiveHours(patch.archiveAfterHours);
+    if (patch.theme !== undefined) {
+      s.theme = normalizeTheme(patch.theme);
+      d.onThemeChanged();
+    }
+    if (patch.shortcuts !== undefined) {
+      s.shortcuts = normalizeShortcutOverrides(patch.shortcuts) as Record<string, string>;
+      setShortcutOverrides(s.shortcuts);
+    }
+    if (typeof patch.checkForUpdates === 'boolean' && patch.checkForUpdates !== s.checkForUpdates) {
+      s.checkForUpdates = patch.checkForUpdates;
+      // Turning the check on is the user's go-ahead to contact GitHub; check right away if a day has passed.
+      if (s.checkForUpdates) void d.updates.maybeCheck().then(() => tabs.emit());
+    }
     if (patch.privacy !== undefined && typeof patch.privacy === 'object') {
       s.privacy = normalizePrivacy({ ...s.privacy, ...patch.privacy }, process.platform);
       d.onPrivacyChanged();
@@ -489,6 +564,56 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     tabs.emit();
   };
   handle('settings', 'settings:set', (_e, patch: Partial<Settings>) => applySettings(patch));
+
+  // shortcuts
+  const shortcutRows = (): ShortcutRow[] => {
+    const overrides = currentShortcutOverrides();
+    return REBINDABLE.map((r) => {
+      const bindings = effectiveBindings(r.action, overrides);
+      return { action: r.action, label: r.label, bindings, keys: bindings.map(formatBinding), isDefault: overrides[r.action] === undefined, pageFirst: r.pageFirst };
+    });
+  };
+  handle('settings', 'shortcuts:list', () => shortcutRows());
+  handle('settings', 'shortcuts:set', (_e, action: unknown, raw: unknown) => {
+    if (typeof action !== 'string' || !isRebindable(action)) return { error: 'Unknown action', rows: shortcutRows() };
+    const binding = raw === '' ? '' : parseBinding(raw);
+    if (binding === null) return { error: 'Use Ctrl or Alt with a key, or a function key (F1–F24)', rows: shortcutRows() };
+    const overrides = { ...currentShortcutOverrides() };
+    if (binding) {
+      const problem = bindingProblem(action, binding, overrides);
+      if (problem) return { error: problem, rows: shortcutRows() };
+    }
+    overrides[action] = binding;
+    applySettings({ shortcuts: overrides as Record<string, string> });
+    return { rows: shortcutRows() };
+  });
+  handle('settings', 'shortcuts:reset', (_e, action: unknown) => {
+    const overrides = { ...currentShortcutOverrides() };
+    if (action === undefined || action === null) applySettings({ shortcuts: {} });
+    else if (typeof action === 'string' && isRebindable(action)) {
+      delete overrides[action];
+      applySettings({ shortcuts: overrides as Record<string, string> });
+    }
+    return shortcutRows();
+  });
+  handle('settings', 'shortcuts:recording', (e, on: unknown) => tabs.setRecordingKeys(e.sender, on === true));
+
+  // opt-in update notice
+  handle('settings', 'update:status', () => d.updates.status());
+  handle('settings', 'update:check', async () => {
+    const status = await d.updates.check();
+    tabs.emit();
+    return status;
+  });
+  handle('shell', 'update:open', () => {
+    // Only the validated release page from the last check can be opened.
+    const notice = d.updates.notice();
+    if (notice) tabs.openTab(notice.url);
+  });
+  handle('shell', 'update:dismiss', () => {
+    d.updates.dismiss();
+    tabs.emit();
+  });
 
   // sync
   handle('settings', 'sync:status', () => d.sync.status());
@@ -571,7 +696,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('settings', 'bookmarks:review-file', (event, name: unknown, input: unknown, scanLimited: unknown) => {
     const frame = event.senderFrame;
     const generation = beginBookmarkReview(event, frame);
-    const file = typeof name === 'string' ? name.slice(0, 260).split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 120) : '';
+    const file = fileLabel(name);
     return imports.finish(frame, generation, file || 'HTML bookmark export', input, scanLimited === true);
   });
   handle('settings', 'bookmarks:cancel-review', (event) => clearBookmarkReview(event.senderFrame));
@@ -590,6 +715,82 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     const bookmark = store.state.bookmarks.find((item) => item.url === url);
     if (bookmark) tabs.openTab(bookmark.url);
   });
+
+  // Arc sidebar import. Settings sends a file (picked, or found where Arc for Windows keeps it) for review, then
+  // confirms that review by id. The import is planned again at confirm time so it reflects the current tabs.
+  const ARC_ERRORS = {
+    'too-large': 'Choose an Arc sidebar file no larger than 16 MiB.',
+    'invalid-json': 'This file contains invalid JSON. Choose a copy of StorableSidebar.json.',
+    'unrecognized-sidebar': 'Quiver could not recognize this Arc sidebar. Choose a copy of StorableSidebar.json.',
+  } as const;
+  let arcReview: { id: number; frame: WebFrameMain; sidebar: ArcSidebar } | null = null;
+  let arcUndo: ArcImportUndo | null = null;
+  let nextArcId = 0;
+  const arcFolderId = () => `arc-${randomUUID()}`;
+  const detectedArcSidebar = () => findArcSidebar(process.env.LOCALAPPDATA ?? '');
+  const settleArcOffer = () => {
+    if (store.state.arcImportOffer === 'pending') {
+      store.state.arcImportOffer = 'dismissed';
+      store.save();
+    }
+    if (tabs.arcImportOffer) {
+      tabs.arcImportOffer = false;
+      tabs.emit();
+    }
+  };
+  const reviewArc = (frame: WebFrameMain, text: unknown, source: string): ArcReview | { error: string } => {
+    arcReview = null;
+    const sidebar = typeof text === 'string' ? parseArcSidebar(text) : 'unrecognized-sidebar';
+    if (typeof sidebar === 'string') return { error: ARC_ERRORS[sidebar] };
+    const id = ++nextArcId;
+    arcReview = { id, frame, sidebar };
+    return { id, source, preview: previewOf(sidebar), counts: planArcImport(sidebar, tabs.importTargets(), arcFolderId).counts };
+  };
+  handle('settings', 'arc:status', (): ArcImportStatus => ({
+    detected: detectedArcSidebar() !== undefined,
+    offer: store.state.arcImportOffer === 'pending',
+    ...(arcUndo ? { undo: {
+      id: arcUndo.id, tabs: arcUndo.tabIds.length, spaces: arcUndo.createdSpaceIds.length,
+      folders: arcUndo.folders.reduce((total, entry) => total + entry.ids.length, 0),
+    } } : {}),
+  }));
+  handle('settings', 'arc:review-detected', async (event) => {
+    const file = detectedArcSidebar();
+    if (!file) return { error: 'Quiver could not find Arc’s sidebar on this PC. Choose the file instead.' };
+    try {
+      if ((await fs.promises.stat(file)).size > ARC_SIDEBAR_MAX_BYTES) return { error: ARC_ERRORS['too-large'] };
+      return reviewArc(event.senderFrame, await fs.promises.readFile(file, 'utf8'), 'Arc on this PC');
+    } catch {
+      return { error: 'Quiver could not read Arc’s sidebar file. Close Arc and try again, or choose a copy.' };
+    }
+  });
+  handle('settings', 'arc:review-file', (event, name: unknown, text: unknown) => {
+    const file = fileLabel(name);
+    return reviewArc(event.senderFrame, text, file || 'StorableSidebar.json');
+  });
+  handle('settings', 'arc:cancel-review', (event) => {
+    if (arcReview?.frame === event.senderFrame) arcReview = null;
+  });
+  handle('settings', 'arc:import', (event, id: unknown) => {
+    const review = arcReview;
+    if (!review || review.id !== id || review.frame !== event.senderFrame) return { error: 'Review the Arc sidebar again before importing.' };
+    arcReview = null;
+    const plan = planArcImport(review.sidebar, tabs.importTargets(), arcFolderId);
+    arcUndo = tabs.importArc(plan, ++nextArcId);
+    settleArcOffer();
+    return { counts: plan.counts, undoId: arcUndo.id };
+  });
+  handle('settings', 'arc:undo', (_event, id: unknown) => {
+    if (!arcUndo || arcUndo.id !== id) return { error: 'There is no Arc import to undo.' };
+    const removed = tabs.undoArcImport(arcUndo);
+    arcUndo = null;
+    return { removed };
+  });
+  handle('shell', 'arc:offer-open', () => {
+    settleArcOffer();
+    tabs.navigate('quiver://settings?import=arc');
+  });
+  handle('shell', 'arc:offer-dismiss', () => settleArcOffer());
 
   // boosts
   handle('boosts', 'boost:list', () => boosts.list());

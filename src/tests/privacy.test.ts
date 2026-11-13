@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { hostResolverOptions, normalizePrivacy, PrivacyController, privacyHeaders } from '../main/privacy';
 
 test('defaults favour privacy; spell check is on only where the OS checker avoids downloads', () => {
-  assert.deepEqual(normalizePrivacy(undefined, 'win32'), { gpc: true, hideLocalIp: true, secureDns: 'automatic', dohTemplate: '', spellcheck: true, clearOnExit: false });
+  assert.deepEqual(normalizePrivacy(undefined, 'win32'), { gpc: true, hideLocalIp: true, secureDns: 'automatic', dohTemplate: '', spellcheck: true, clearOnExit: false, blockTrackers: true, adAllowList: [] });
   assert.equal(normalizePrivacy(undefined, 'linux').spellcheck, false);
   assert.equal(normalizePrivacy({ spellcheck: true }, 'linux').spellcheck, true);
 });
@@ -37,7 +37,7 @@ test('the controller applies settings to sessions and pages and reapplies on cha
   let listener: ((d: { requestHeaders: Record<string, string> }, cb: (r: { requestHeaders: Record<string, string> }) => void) => void) | undefined;
   const ses = {
     setSpellCheckerEnabled: (on: boolean) => calls.push(`spell:${on}`),
-    webRequest: { onBeforeSendHeaders: (_f: unknown, fn: typeof listener) => { listener = fn; } },
+    webRequest: { onBeforeSendHeaders: (_f: unknown, fn: typeof listener) => { listener = fn; }, onBeforeRequest: () => undefined },
   };
   const wc = { isDestroyed: () => false, setWebRTCIPHandlingPolicy: (p: string) => calls.push(`webrtc:${p}`) };
   const dns: unknown[] = [];

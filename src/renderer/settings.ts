@@ -1,5 +1,9 @@
-import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, Settings } from '../shared/types';
+import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, Settings, ShortcutRow, UpdateStatus } from '../shared/types';
 import { readBookmarkExport } from './bookmark-file.js';
+import { currentSection, searchTerms, sectionMatches } from './settings-search.js';
+import { setupArcImport } from './arc-import.js';
+
+setupArcImport();
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let groups: EnvGroup[] = [];
@@ -300,7 +304,11 @@ function renderGroups(): void {
   void showHistoryCount();
   $<HTMLInputElement>('ask-save').checked = settings.askWhereToSave;
   $<HTMLSelectElement>('archive-after').value = String(settings.archiveAfterHours);
+  $<HTMLInputElement>('peek-pinned').checked = settings.peekPinnedLinks;
   renderPrivacy(settings.privacy);
+  $<HTMLSelectElement>('theme').value = settings.theme;
+  renderShortcuts(await quiver.invoke('shortcuts:list') as ShortcutRow[]);
+  renderUpdates(await quiver.invoke('update:status') as UpdateStatus);
 })();
 
 $('addgroup').addEventListener('click', () => {
@@ -400,6 +408,8 @@ function renderPrivacy(p: Settings['privacy']): void {
   $('privacy-doh-row').hidden = p.secureDns !== 'custom';
   $<HTMLInputElement>('privacy-spell').checked = p.spellcheck;
   $<HTMLInputElement>('privacy-clear').checked = p.clearOnExit;
+  $<HTMLInputElement>('privacy-block').checked = p.blockTrackers;
+  renderAllowList(p.adAllowList);
   if (!navigator.userAgent.includes('Windows')) {
     $('privacy-spell-note').textContent = 'On this system Chromium downloads spelling dictionaries from Google when spell check is on.';
   }
@@ -410,19 +420,44 @@ async function savePrivacy(patch: Partial<Settings['privacy']>, message = 'Saved
     await quiver.invoke('settings:set', { privacy: patch });
     const settings = (await quiver.invoke('settings:get')) as Settings;
     renderPrivacy(settings.privacy);
-    const rejected = Object.entries(patch).some(([key, value]) => settings.privacy[key as keyof Settings['privacy']] !== value);
+    const rejected = Object.entries(patch).some(([key, value]) => JSON.stringify(settings.privacy[key as keyof Settings['privacy']]) !== JSON.stringify(value));
     flash($('privacy-status'), rejected ? 'Not saved: enter an https:// DNS-over-HTTPS address.' : message, rejected ? 'err' : undefined);
   } catch (e) {
     flash($('privacy-status'), (e as Error).message, 'err');
   }
 }
 
-const checkbox = (id: string, key: 'gpc' | 'hideLocalIp' | 'spellcheck' | 'clearOnExit') =>
+function renderAllowList(sites: string[]): void {
+  const list = $('privacy-allow-list');
+  if (!sites.length) {
+    const empty = document.createElement('li');
+    empty.className = 'note';
+    empty.textContent = 'None. Ads are blocked on every site.';
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...sites.map((site) => {
+    const item = document.createElement('li');
+    const label = document.createElement('span');
+    label.className = 'mono';
+    label.textContent = site;
+    const remove = document.createElement('button');
+    remove.className = 'btn';
+    remove.textContent = 'Block ads again';
+    remove.setAttribute('aria-label', `Block ads again on ${site}`);
+    remove.addEventListener('click', () => void savePrivacy({ adAllowList: sites.filter((s) => s !== site) }));
+    item.append(label, remove);
+    return item;
+  }));
+}
+
+const checkbox = (id: string, key: 'gpc' | 'hideLocalIp' | 'spellcheck' | 'clearOnExit' | 'blockTrackers') =>
   $<HTMLInputElement>(id).addEventListener('change', (e) => void savePrivacy({ [key]: (e.target as HTMLInputElement).checked }));
 checkbox('privacy-gpc', 'gpc');
 checkbox('privacy-webrtc', 'hideLocalIp');
 checkbox('privacy-spell', 'spellcheck');
 checkbox('privacy-clear', 'clearOnExit');
+checkbox('privacy-block', 'blockTrackers');
 $<HTMLSelectElement>('privacy-dns').addEventListener('change', (e) => {
   const mode = (e.target as HTMLSelectElement).value as Settings['privacy']['secureDns'];
   $('privacy-doh-row').hidden = mode !== 'custom';
@@ -431,5 +466,265 @@ $<HTMLSelectElement>('privacy-dns').addEventListener('change', (e) => {
 });
 $('privacy-doh-save').addEventListener('click', () => void savePrivacy({ secureDns: 'custom', dohTemplate: $<HTMLInputElement>('privacy-doh').value }));
 
+$<HTMLInputElement>('peek-pinned').addEventListener('change', (e) => void quiver.invoke('settings:set', { peekPinnedLinks: (e.target as HTMLInputElement).checked }));
 $<HTMLInputElement>('ask-save').addEventListener('change', (e) => void quiver.invoke('settings:set', { askWhereToSave: (e.target as HTMLInputElement).checked }));
 $<HTMLSelectElement>('archive-after').addEventListener('change', (e) => void quiver.invoke('settings:set', { archiveAfterHours: Number((e.target as HTMLSelectElement).value) }));
+$<HTMLSelectElement>('theme').addEventListener('change', (e) => void quiver.invoke('settings:set', { theme: (e.target as HTMLSelectElement).value }));
+
+// ───────── section list and search ─────────
+const sections = [...document.querySelectorAll<HTMLElement>('.settings-section')];
+const toc = $('settings-toc');
+const search = $<HTMLInputElement>('settings-search');
+const searchStatus = $('settings-search-status');
+const links = new Map<HTMLElement, HTMLAnchorElement>();
+for (const section of sections) {
+  const heading = section.querySelector<HTMLElement>('h2')!;
+  const link = document.createElement('a');
+  link.href = '#' + section.id;
+  link.textContent = heading.textContent;
+  link.addEventListener('click', (e) => {
+    // Move focus to the heading as well as scrolling, so keyboard and screen-reader users continue from there.
+    e.preventDefault();
+    heading.scrollIntoView({ block: 'start' });
+    heading.focus({ preventScroll: true });
+    jumped = section;
+    markCurrent(section);
+  });
+  const item = document.createElement('li');
+  item.append(link);
+  toc.append(item);
+  links.set(section, link);
+}
+
+function visibleSections(): HTMLElement[] {
+  return sections.filter((section) => !section.hidden);
+}
+
+function markCurrent(current: HTMLElement | undefined): void {
+  for (const [section, link] of links) {
+    if (section === current) link.setAttribute('aria-current', 'location');
+    else link.removeAttribute('aria-current');
+  }
+}
+
+// Reading line a little below the top, so the section whose heading just passed under the sticky list counts.
+const READING_LINE = 96;
+// The section a link jumped to stays current while it is still near the top. Otherwise jumping to a section near
+// the end, which can only scroll as far as the bottom of the page, would highlight the last section instead.
+let jumped: HTMLElement | undefined;
+function updateCurrent(): void {
+  const shown = visibleSections();
+  if (!shown.length) return markCurrent(undefined);
+  if (jumped && !jumped.hidden) {
+    const top = jumped.getBoundingClientRect().top;
+    if (top > -8 && top < window.innerHeight / 2) return markCurrent(jumped);
+  }
+  jumped = undefined;
+  const scrolled = document.body.scrollTop + document.documentElement.scrollTop > 0;
+  const atBottom = scrolled && shown[shown.length - 1].getBoundingClientRect().bottom <= window.innerHeight + 2;
+  // Near the end the last short sections can never reach the reading line; mark the last one at the bottom.
+  const index = atBottom ? shown.length - 1 : currentSection(shown.map((s) => s.getBoundingClientRect().top), READING_LINE);
+  markCurrent(shown[index]);
+}
+let scrollFrame = 0;
+// Capture: the page scrolls inside <body> (base.css fixes html and body to the window height), and element
+// scroll events do not reach window listeners.
+document.addEventListener('scroll', () => {
+  if (scrollFrame) return;
+  scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; updateCurrent(); });
+}, { passive: true, capture: true });
+window.addEventListener('resize', updateCurrent);
+
+function sectionText(section: HTMLElement): string {
+  // Placeholders and accessible names are part of what people search for, not only the visible text.
+  const extra = [...section.querySelectorAll<HTMLElement>('[placeholder], [aria-label]')]
+    .map((el) => `${el.getAttribute('placeholder') ?? ''} ${el.getAttribute('aria-label') ?? ''}`);
+  return `${section.textContent ?? ''} ${extra.join(' ')}`;
+}
+
+function applySearch(): void {
+  const terms = searchTerms(search.value);
+  let shown = 0;
+  for (const section of sections) {
+    const match = sectionMatches(sectionText(section), terms);
+    section.hidden = !match;
+    links.get(section)!.parentElement!.hidden = !match;
+    if (match) shown++;
+  }
+  searchStatus.textContent = !terms.length ? '' : shown ? `${shown} of ${sections.length} sections` : 'No settings match.';
+  updateCurrent();
+}
+search.addEventListener('input', applySearch);
+search.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && search.value) {
+    search.value = '';
+    applySearch();
+  } else if (e.key === 'Enter') {
+    // Enter jumps to the first matching section.
+    const first = visibleSections()[0];
+    if (first) links.get(first)!.click();
+  }
+});
+updateCurrent();
+
+// ───────── shortcuts ─────────
+let recording: { action: string; button: HTMLButtonElement; stop: () => void } | null = null;
+const shortcutStatus = $('shortcut-status');
+const MODIFIER_CODES = /^(Control|Shift|Alt|Meta|OS)(Left|Right)?$/;
+
+/** The stored form of a key press, matching the main process: Ctrl, Alt, Shift, then the physical key code. */
+function bindingFromEvent(e: KeyboardEvent): string {
+  const parts: string[] = [];
+  if (e.ctrlKey || e.metaKey) parts.push('Ctrl');
+  if (e.altKey) parts.push('Alt');
+  if (e.shiftKey) parts.push('Shift');
+  parts.push(e.code);
+  return parts.join('+');
+}
+
+function stopRecording(): void {
+  const r = recording;
+  recording = null;
+  r?.stop();
+  void quiver.invoke('shortcuts:recording', false);
+}
+
+function renderShortcuts(rows: ShortcutRow[]): void {
+  const body = $('shortcut-rows');
+  body.replaceChildren(...rows.map((row) => {
+    const tr = document.createElement('tr');
+    const name = document.createElement('td');
+    name.textContent = row.label;
+    if (row.pageFirst) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = 'page first';
+      tag.title = 'A web page that uses this key (for example in a text editor) gets it first';
+      name.append(tag);
+    }
+    const keys = document.createElement('td');
+    if (row.keys.length) {
+      row.keys.forEach((k, i) => {
+        if (i) keys.append(' or ');
+        const kbd = document.createElement('kbd');
+        kbd.textContent = k;
+        keys.append(kbd);
+      });
+    } else {
+      keys.className = 'note';
+      keys.textContent = 'None';
+    }
+    const actions = document.createElement('td');
+    const change = document.createElement('button');
+    change.className = 'btn';
+    change.textContent = 'Change';
+    change.setAttribute('aria-label', `Change the shortcut for ${row.label}`);
+    change.addEventListener('click', () => startRecording(row, change, tr));
+    actions.append(change);
+    if (row.keys.length) {
+      const clear = document.createElement('button');
+      clear.className = 'btn';
+      clear.textContent = 'Remove';
+      clear.setAttribute('aria-label', `Remove the shortcut for ${row.label}`);
+      clear.addEventListener('click', () => void setShortcut(row, ''));
+      actions.append(clear);
+    }
+    if (!row.isDefault) {
+      const reset = document.createElement('button');
+      reset.className = 'btn';
+      reset.textContent = 'Reset to default';
+      reset.setAttribute('aria-label', `Reset the shortcut for ${row.label} to its default`);
+      reset.addEventListener('click', async () => {
+        renderShortcuts(await quiver.invoke('shortcuts:reset', row.action) as ShortcutRow[]);
+        flash(shortcutStatus, `${row.label}: default restored`);
+      });
+      actions.append(reset);
+    }
+    tr.append(name, keys, actions);
+    return tr;
+  }));
+}
+
+async function setShortcut(row: ShortcutRow, binding: string): Promise<void> {
+  const result = await quiver.invoke('shortcuts:set', row.action, binding) as { error?: string; rows: ShortcutRow[] };
+  renderShortcuts(result.rows);
+  if (result.error) flash(shortcutStatus, `Not changed: ${result.error}.`, 'err');
+  else flash(shortcutStatus, binding ? `${row.label}: saved` : `${row.label}: no shortcut`);
+}
+
+function startRecording(row: ShortcutRow, button: HTMLButtonElement, tr: HTMLTableRowElement): void {
+  if (recording) stopRecording();
+  // Quiver stops handling keys in this page while recording, so even its own shortcuts can be pressed here.
+  void quiver.invoke('shortcuts:recording', true);
+  tr.classList.add('recording');
+  button.textContent = 'Press keys…';
+  button.setAttribute('aria-label', `Press the new shortcut for ${row.label}, or Escape to cancel`);
+  const onKey = (e: KeyboardEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (MODIFIER_CODES.test(e.code)) return;
+    if (e.code === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+      stopRecording();
+      return;
+    }
+    stopRecording();
+    void setShortcut(row, bindingFromEvent(e));
+  };
+  const onBlur = () => stopRecording();
+  window.addEventListener('keydown', onKey, true);
+  button.addEventListener('blur', onBlur);
+  recording = {
+    action: row.action,
+    button,
+    stop: () => {
+      window.removeEventListener('keydown', onKey, true);
+      button.removeEventListener('blur', onBlur);
+      tr.classList.remove('recording');
+      button.textContent = 'Change';
+      button.setAttribute('aria-label', `Change the shortcut for ${row.label}`);
+    },
+  };
+}
+
+$('shortcuts-reset-all').addEventListener('click', async () => {
+  stopRecording();
+  renderShortcuts(await quiver.invoke('shortcuts:reset') as ShortcutRow[]);
+  flash(shortcutStatus, 'All shortcuts restored');
+});
+
+// ───────── updates ─────────
+function renderUpdates(status: UpdateStatus, checked = false): void {
+  $<HTMLInputElement>('updates-on').checked = status.enabled;
+  $<HTMLButtonElement>('updates-check').disabled = !status.enabled;
+  const el = $('updates-status');
+  el.className = 'status' + (status.error ? ' err' : '');
+  if (!status.enabled) el.textContent = `You have Quiver ${status.current}.`;
+  else if (status.error) el.textContent = `${status.error}. You have Quiver ${status.current}.`;
+  else if (status.notice) el.textContent = `Quiver ${status.notice.version} is available (you have ${status.current}).`;
+  else if (status.lastCheckedAt) {
+    el.textContent = `Quiver ${status.current} is up to date. Last checked ${new Date(status.lastCheckedAt).toLocaleString()}.`;
+  } else el.textContent = checked ? 'Checking…' : `You have Quiver ${status.current}. Not checked yet.`;
+}
+
+$<HTMLInputElement>('updates-on').addEventListener('change', async (e) => {
+  const on = (e.target as HTMLInputElement).checked;
+  await quiver.invoke('settings:set', { checkForUpdates: on });
+  const status = await quiver.invoke('update:status') as UpdateStatus;
+  renderUpdates(status);
+  // Turning the check on starts one if none ran today; this waits for the same request and shows its answer.
+  if (on && Date.now() - status.lastCheckedAt >= 24 * 60 * 60 * 1000) {
+    $('updates-status').textContent = 'Checking…';
+    renderUpdates(await quiver.invoke('update:check') as UpdateStatus, true);
+  }
+});
+$('updates-check').addEventListener('click', async () => {
+  const button = $<HTMLButtonElement>('updates-check');
+  button.disabled = true;
+  $('updates-status').textContent = 'Checking…';
+  try {
+    renderUpdates(await quiver.invoke('update:check') as UpdateStatus, true);
+  } catch {
+    $('updates-status').textContent = 'Check failed.';
+    button.disabled = false;
+  }
+});
