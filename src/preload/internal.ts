@@ -13,6 +13,8 @@ const INVOKE = new Set([
   'cmd:open', 'cmd:close', 'cmd:suggest', 'cmd:commit', 'cmd:run',
   'settings:get', 'settings:set', 'sync:status', 'sync:choose', 'sync:disconnect', 'sync:options', 'sync:now',
   'history:clear', 'history:count',
+  'shortcuts:list', 'shortcuts:set', 'shortcuts:reset', 'shortcuts:recording',
+  'update:status', 'update:check', 'update:open', 'update:dismiss',
   'bookmarks:list', 'bookmarks:profiles', 'bookmarks:review-profile', 'bookmarks:review-file',
   'bookmarks:cancel-review', 'bookmarks:confirm', 'bookmarks:undo', 'bookmarks:open',
   'boost:list', 'boost:read', 'boost:save', 'boost:create', 'boost:delete', 'boost:dir',

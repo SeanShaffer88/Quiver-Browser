@@ -1,4 +1,4 @@
-import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, Settings } from '../shared/types';
+import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, Settings, ShortcutRow, UpdateStatus } from '../shared/types';
 import { readBookmarkExport } from './bookmark-file.js';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -301,6 +301,8 @@ function renderGroups(): void {
   $<HTMLInputElement>('ask-save').checked = settings.askWhereToSave;
   $<HTMLSelectElement>('archive-after').value = String(settings.archiveAfterHours);
   renderPrivacy(settings.privacy);
+  renderShortcuts(await quiver.invoke('shortcuts:list') as ShortcutRow[]);
+  renderUpdates(await quiver.invoke('update:status') as UpdateStatus);
 })();
 
 $('addgroup').addEventListener('click', () => {
@@ -433,3 +435,165 @@ $('privacy-doh-save').addEventListener('click', () => void savePrivacy({ secureD
 
 $<HTMLInputElement>('ask-save').addEventListener('change', (e) => void quiver.invoke('settings:set', { askWhereToSave: (e.target as HTMLInputElement).checked }));
 $<HTMLSelectElement>('archive-after').addEventListener('change', (e) => void quiver.invoke('settings:set', { archiveAfterHours: Number((e.target as HTMLSelectElement).value) }));
+
+// ───────── shortcuts ─────────
+let recording: { action: string; button: HTMLButtonElement; stop: () => void } | null = null;
+const shortcutStatus = $('shortcut-status');
+const MODIFIER_CODES = /^(Control|Shift|Alt|Meta|OS)(Left|Right)?$/;
+
+/** The stored form of a key press, matching the main process: Ctrl, Alt, Shift, then the physical key code. */
+function bindingFromEvent(e: KeyboardEvent): string {
+  const parts: string[] = [];
+  if (e.ctrlKey || e.metaKey) parts.push('Ctrl');
+  if (e.altKey) parts.push('Alt');
+  if (e.shiftKey) parts.push('Shift');
+  parts.push(e.code);
+  return parts.join('+');
+}
+
+function stopRecording(): void {
+  const r = recording;
+  recording = null;
+  r?.stop();
+  void quiver.invoke('shortcuts:recording', false);
+}
+
+function renderShortcuts(rows: ShortcutRow[]): void {
+  const body = $('shortcut-rows');
+  body.replaceChildren(...rows.map((row) => {
+    const tr = document.createElement('tr');
+    const name = document.createElement('td');
+    name.textContent = row.label;
+    if (row.pageFirst) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = 'page first';
+      tag.title = 'A web page that uses this key (for example in a text editor) gets it first';
+      name.append(tag);
+    }
+    const keys = document.createElement('td');
+    if (row.keys.length) {
+      row.keys.forEach((k, i) => {
+        if (i) keys.append(' or ');
+        const kbd = document.createElement('kbd');
+        kbd.textContent = k;
+        keys.append(kbd);
+      });
+    } else {
+      keys.className = 'note';
+      keys.textContent = 'None';
+    }
+    const actions = document.createElement('td');
+    const change = document.createElement('button');
+    change.className = 'btn';
+    change.textContent = 'Change';
+    change.setAttribute('aria-label', `Change the shortcut for ${row.label}`);
+    change.addEventListener('click', () => startRecording(row, change, tr));
+    actions.append(change);
+    if (row.keys.length) {
+      const clear = document.createElement('button');
+      clear.className = 'btn';
+      clear.textContent = 'Remove';
+      clear.setAttribute('aria-label', `Remove the shortcut for ${row.label}`);
+      clear.addEventListener('click', () => void setShortcut(row, ''));
+      actions.append(clear);
+    }
+    if (!row.isDefault) {
+      const reset = document.createElement('button');
+      reset.className = 'btn';
+      reset.textContent = 'Reset to default';
+      reset.setAttribute('aria-label', `Reset the shortcut for ${row.label} to its default`);
+      reset.addEventListener('click', async () => {
+        renderShortcuts(await quiver.invoke('shortcuts:reset', row.action) as ShortcutRow[]);
+        flash(shortcutStatus, `${row.label}: default restored`);
+      });
+      actions.append(reset);
+    }
+    tr.append(name, keys, actions);
+    return tr;
+  }));
+}
+
+async function setShortcut(row: ShortcutRow, binding: string): Promise<void> {
+  const result = await quiver.invoke('shortcuts:set', row.action, binding) as { error?: string; rows: ShortcutRow[] };
+  renderShortcuts(result.rows);
+  if (result.error) flash(shortcutStatus, `Not changed: ${result.error}.`, 'err');
+  else flash(shortcutStatus, binding ? `${row.label}: saved` : `${row.label}: no shortcut`);
+}
+
+function startRecording(row: ShortcutRow, button: HTMLButtonElement, tr: HTMLTableRowElement): void {
+  if (recording) stopRecording();
+  // Quiver stops handling keys in this page while recording, so even its own shortcuts can be pressed here.
+  void quiver.invoke('shortcuts:recording', true);
+  tr.classList.add('recording');
+  button.textContent = 'Press keys…';
+  button.setAttribute('aria-label', `Press the new shortcut for ${row.label}, or Escape to cancel`);
+  const onKey = (e: KeyboardEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (MODIFIER_CODES.test(e.code)) return;
+    if (e.code === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+      stopRecording();
+      return;
+    }
+    stopRecording();
+    void setShortcut(row, bindingFromEvent(e));
+  };
+  const onBlur = () => stopRecording();
+  window.addEventListener('keydown', onKey, true);
+  button.addEventListener('blur', onBlur);
+  recording = {
+    action: row.action,
+    button,
+    stop: () => {
+      window.removeEventListener('keydown', onKey, true);
+      button.removeEventListener('blur', onBlur);
+      tr.classList.remove('recording');
+      button.textContent = 'Change';
+      button.setAttribute('aria-label', `Change the shortcut for ${row.label}`);
+    },
+  };
+}
+
+$('shortcuts-reset-all').addEventListener('click', async () => {
+  stopRecording();
+  renderShortcuts(await quiver.invoke('shortcuts:reset') as ShortcutRow[]);
+  flash(shortcutStatus, 'All shortcuts restored');
+});
+
+// ───────── updates ─────────
+function renderUpdates(status: UpdateStatus, checked = false): void {
+  $<HTMLInputElement>('updates-on').checked = status.enabled;
+  $<HTMLButtonElement>('updates-check').disabled = !status.enabled;
+  const el = $('updates-status');
+  el.className = 'status' + (status.error ? ' err' : '');
+  if (!status.enabled) el.textContent = `You have Quiver ${status.current}.`;
+  else if (status.error) el.textContent = `${status.error}. You have Quiver ${status.current}.`;
+  else if (status.notice) el.textContent = `Quiver ${status.notice.version} is available (you have ${status.current}).`;
+  else if (status.lastCheckedAt) {
+    el.textContent = `Quiver ${status.current} is up to date. Last checked ${new Date(status.lastCheckedAt).toLocaleString()}.`;
+  } else el.textContent = checked ? 'Checking…' : `You have Quiver ${status.current}. Not checked yet.`;
+}
+
+$<HTMLInputElement>('updates-on').addEventListener('change', async (e) => {
+  const on = (e.target as HTMLInputElement).checked;
+  await quiver.invoke('settings:set', { checkForUpdates: on });
+  const status = await quiver.invoke('update:status') as UpdateStatus;
+  renderUpdates(status);
+  // Turning the check on starts one if none ran today; this waits for the same request and shows its answer.
+  if (on && Date.now() - status.lastCheckedAt >= 24 * 60 * 60 * 1000) {
+    $('updates-status').textContent = 'Checking…';
+    renderUpdates(await quiver.invoke('update:check') as UpdateStatus, true);
+  }
+});
+$('updates-check').addEventListener('click', async () => {
+  const button = $<HTMLButtonElement>('updates-check');
+  button.disabled = true;
+  $('updates-status').textContent = 'Checking…';
+  try {
+    renderUpdates(await quiver.invoke('update:check') as UpdateStatus, true);
+  } catch {
+    $('updates-status').textContent = 'Check failed.';
+    button.disabled = false;
+  }
+});
