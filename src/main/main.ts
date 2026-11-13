@@ -1,8 +1,9 @@
-import { app, BaseWindow, clipboard, crashReporter, dialog, desktopCapturer, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
+import { app, BaseWindow, clipboard, crashReporter, dialog, desktopCapturer, Menu, nativeTheme, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME, SHARED_PARTITION } from '../shared/constants';
 import type { Settings } from '../shared/types';
+import { windowBackground } from '../shared/theme';
 import { normalizeBookmarks } from './bookmarks';
 import { Boosts, isValidBoostName } from './boosts';
 import { configureSitePermissions } from './browser-policy';
@@ -157,12 +158,15 @@ async function main(): Promise<void> {
   const boosts = new Boosts();
   boosts.startWatching();
 
+  // themeSource drives prefers-color-scheme in every renderer (Quiver's pages and websites) as well as native
+  // menus and dialogs, so the CSS only needs @media (prefers-color-scheme) and no page has to ask for the setting.
+  nativeTheme.themeSource = store.state.settings.theme;
   const launchPlacement = screenPlacement(store.state.bounds);
   const win = new BaseWindow({
     ...launchPlacement.bounds,
     minWidth: launchPlacement.minWidth,
     minHeight: launchPlacement.minHeight,
-    backgroundColor: '#14161a',
+    backgroundColor: windowBackground(nativeTheme.shouldUseDarkColors),
     title: 'Quiver',
     icon: process.platform === 'win32' ? path.join(RENDERER_DIR, 'quiver-icon.ico') : undefined,
     show: false,
@@ -184,6 +188,13 @@ async function main(): Promise<void> {
     view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   }
   overlay.setBackgroundColor('#00000000');
+  // The shell paints its own background. Transparent lets the page show through its content area while the
+  // collapsed sidebar peeks over the page (TabManager.setSidebarPeek raises the shell above the tab views).
+  shell.setBackgroundColor('#00000000');
+  // Covers both the setting changing and Windows switching app mode while the setting is 'system'.
+  nativeTheme.on('updated', () => {
+    if (!win.isDestroyed()) win.setBackgroundColor(windowBackground(nativeTheme.shouldUseDarkColors));
+  });
   win.contentView.addChildView(shell);
   win.contentView.addChildView(overlay);
   overlay.setVisible(false);
@@ -413,6 +424,7 @@ async function main(): Promise<void> {
   actions = registerIpc({
     tabs, store, boosts, devWatcher, overlay, shell, research, sync, history, downloads,
     onPrivacyChanged: () => privacy.apply(),
+    onThemeChanged: () => { nativeTheme.themeSource = store.state.settings.theme; },
     runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings') : onShortcut(command)),
   });
 

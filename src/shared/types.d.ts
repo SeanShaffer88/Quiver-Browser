@@ -43,6 +43,8 @@ export interface Settings {
   /** Archive temporary tabs unused for this many hours; 0 never. */
   archiveAfterHours: number;
   privacy: PrivacySettings;
+  /** Light, dark, or follow Windows. Applied through nativeTheme so every page's prefers-color-scheme follows. */
+  theme: 'system' | 'light' | 'dark';
 }
 
 export interface PrivacySettings {

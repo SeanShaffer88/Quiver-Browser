@@ -78,7 +78,7 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `Esc` (in command bar) | Close the bar and return focus to the control or page where you started |
 | `Ctrl+Alt+E` / `Ctrl+Shift+E` | Jump to next environment (local → staging → prod) |
 | `Ctrl+Shift+P` | Toggle phone preview |
-| `Ctrl+B` | Collapse / expand sidebar |
+| `Ctrl+B` | Collapse / expand sidebar (hover a collapsed sidebar to open it over the page until the pointer leaves) |
 | `Ctrl+Shift+B` | Boosts page |
 | `Ctrl+W` | Close tab |
 | `Ctrl+Shift+T` | Reopen the latest closed tab in its original Space |
@@ -93,6 +93,10 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `Ctrl+J` | Downloads |
 | `Ctrl+F`, `F3` / `Shift+F3` | Find in page, next / previous match |
 | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom in / out / reset (per site; the toolbar shows the level when it isn't 100%) |
+
+### Appearance and Settings
+
+**Settings → Appearance** picks System (follow Windows' app mode, the default), Light or Dark. The choice applies to Quiver's pages, native menus and dialogs, and websites that support `prefers-color-scheme`. Windows high-contrast themes override both palettes. Settings lists its sections at the side (at the top in a narrow window); type in **Search settings** to show only sections containing every word, Enter to jump to the first and Esc to clear.
 
 ### Command bar
 

@@ -1,6 +1,6 @@
 html, body { background: transparent; }
-#backdrop { position: fixed; inset: 0; background: rgba(8, 10, 14, .55); display: flex; justify-content: center; align-items: flex-start; padding: min(12vh, 64px) 0 12px; }
-#panel { display: flex; flex-direction: column; max-height: 100%; width: min(680px, 92vw); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .55); overflow: hidden; }
+#backdrop { position: fixed; inset: 0; background: var(--backdrop); display: flex; justify-content: center; align-items: flex-start; padding: min(12vh, 64px) 0 12px; }
+#panel { display: flex; flex-direction: column; max-height: 100%; width: min(680px, 92vw); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 20px 60px var(--shadow); overflow: hidden; }
 [hidden] { display: none !important; }
 #bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 #bar:focus-within { border-bottom-color: var(--accent); }

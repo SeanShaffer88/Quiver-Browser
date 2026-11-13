@@ -22,6 +22,7 @@ import type { History } from './history';
 import type { DownloadAction, Downloads } from './downloads';
 import { tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
+import { normalizeTheme } from '../shared/theme';
 
 export interface IpcDeps {
   tabs: TabManager;
@@ -38,6 +39,7 @@ export interface IpcDeps {
   downloads: Downloads;
   /** Reapply privacy settings after they change. */
   onPrivacyChanged: () => void;
+  onThemeChanged: () => void;
 }
 
 const MAX_COMMAND_LENGTH = 65536;
@@ -302,7 +304,11 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('shell', 'preview:toggle', () => tabs.setPreview(!tabs.preview));
   handle('shell', 'env:switch', (_e, target?: 'LOCAL' | 'STAGING' | 'PROD') => tabs.switchEnvironment(target));
 
+  // Hovering the collapsed sidebar shows it over the page until the pointer leaves; Ctrl+B is unaffected.
+  handle('shell', 'sidebar:peek', (_e, on: unknown) => tabs.setSidebarPeek(on === true));
+
   function toggleSidebar() {
+    tabs.setSidebarPeek(false);
     store.state.settings.sidebarCollapsed = !store.state.settings.sidebarCollapsed;
     store.save();
     tabs.syncPhone();
@@ -475,6 +481,10 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (typeof patch.rememberHistory === 'boolean') s.rememberHistory = patch.rememberHistory;
     if (typeof patch.askWhereToSave === 'boolean') s.askWhereToSave = patch.askWhereToSave;
     if (patch.archiveAfterHours !== undefined) s.archiveAfterHours = normalizeArchiveHours(patch.archiveAfterHours);
+    if (patch.theme !== undefined) {
+      s.theme = normalizeTheme(patch.theme);
+      d.onThemeChanged();
+    }
     if (patch.privacy !== undefined && typeof patch.privacy === 'object') {
       s.privacy = normalizePrivacy({ ...s.privacy, ...patch.privacy }, process.platform);
       d.onPrivacyChanged();

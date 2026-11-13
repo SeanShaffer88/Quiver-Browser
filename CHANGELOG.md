@@ -4,6 +4,9 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+- Light and dark themes: **Settings → Appearance** chooses System (follows Windows, the default), Light or Dark for every Quiver page, native menus and dialogs, and websites' `prefers-color-scheme`. Both palettes meet WCAG AA for text; high-contrast mode is unchanged.
+- Settings has a section list (beside the page on wide windows, above it on narrow ones) that highlights the section you are reading, and a search box that filters sections.
+- Collapsed sidebar opens over the page while you hover it and closes when the pointer leaves; the page does not resize. `Ctrl+B` still pins it open or closed.
 - Native downloaders: FTP/FTPS (resumable, encryption first, no FTP bounce), HLS with AES-128, on-demand MPEG-DASH, and Metalink with mirror failover and checksum checks; `download <address>` in the command bar; Windows shares open in File Explorer.
 - Meetings: camera, microphone and screen-share prompts (allow once, always or block per site), a screen/window picker, a live indicator on tabs, `meet` commands to start or join Meet, Zoom (web client), Teams, Webex, Jitsi and Whereby, and saved choices in Settings.
 - Auto-archive: temporary tabs unused for 12 hours (configurable, or never) move to a searchable archive (`archive` in the command bar). Pinned, current and audible tabs stay.

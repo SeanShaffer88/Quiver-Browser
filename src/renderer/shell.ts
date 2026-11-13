@@ -699,7 +699,9 @@ function renderToolbar(s: ShellState): void {
 function render(): void {
   if (!state) return;
   const focused = document.hasFocus() && document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  document.body.classList.toggle('collapsed', state.settings.sidebarCollapsed);
+  if (!state.settings.sidebarCollapsed && peek !== 'off') resetPeek();
+  // While peeking the sidebar draws expanded (no .collapsed) but the grid keeps the collapsed width below.
+  document.body.classList.toggle('collapsed', state.settings.sidebarCollapsed && peek === 'off');
   document.body.classList.toggle('preview', ['starting', 'active', 'unavailable'].includes(state.phoneStatus));
   const phoneMessage = PHONE_LABELS[state.phoneStatus].label;
   if (phoneLabel.textContent !== phoneMessage) phoneLabel.textContent = phoneMessage;
@@ -717,6 +719,90 @@ function render(): void {
     if (!focusShellControl('tab-' + state.activeTabId)) focusShellControl('address');
   }
 }
+
+// ───────── sidebar peek ─────────
+// Hovering the collapsed sidebar opens it over the page (main raises the shell view above the tab views) and it
+// closes again shortly after the pointer leaves. The delays stop it flickering open when the pointer only crosses
+// the window's left edge, and closed when the pointer briefly overshoots the sidebar's edge.
+const PEEK_OPEN_MS = 150;
+const PEEK_CLOSE_MS = 300;
+let peek: 'off' | 'opening' | 'on' = 'off';
+let peekOpenTimer: number | undefined;
+let peekCloseTimer: number | undefined;
+
+function clearPeekTimers(): void {
+  clearTimeout(peekOpenTimer);
+  clearTimeout(peekCloseTimer);
+  peekOpenTimer = peekCloseTimer = undefined;
+}
+
+function resetPeek(): void {
+  clearPeekTimers();
+  peek = 'off';
+  document.body.classList.remove('peek');
+}
+
+function startPeek(): void {
+  if (!state?.settings.sidebarCollapsed || peek !== 'off') return;
+  peek = 'opening';
+  document.body.classList.add('peek');
+  render();
+  // Paint the transparent content area before main raises the shell, so the page never blinks out.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (peek !== 'opening') return;
+    peek = 'on';
+    void call('sidebar:peek', true);
+  }));
+}
+
+async function endPeek(): Promise<void> {
+  clearPeekTimers();
+  if (peek === 'off') return;
+  const wasRaised = peek === 'on';
+  peek = 'off';
+  // Lower the shell first, then collapse: the page covers the content area again before it repaints.
+  if (wasRaised) await call('sidebar:peek', false);
+  if (peek === 'off') {
+    document.body.classList.remove('peek');
+    render();
+  }
+}
+
+function scheduleEndPeek(): void {
+  if (peek === 'off' || peekCloseTimer !== undefined) return;
+  // Keep it open while someone is typing in a sidebar editor (renaming a Space or folder).
+  if (document.activeElement instanceof HTMLInputElement && sidebar.contains(document.activeElement)) return;
+  peekCloseTimer = window.setTimeout(() => void endPeek(), PEEK_CLOSE_MS);
+}
+
+sidebar.addEventListener('pointerenter', () => {
+  clearTimeout(peekCloseTimer);
+  peekCloseTimer = undefined;
+  if (peek === 'off' && state?.settings.sidebarCollapsed && peekOpenTimer === undefined) {
+    peekOpenTimer = window.setTimeout(() => { peekOpenTimer = undefined; startPeek(); }, PEEK_OPEN_MS);
+  }
+});
+sidebar.addEventListener('pointerleave', () => {
+  clearTimeout(peekOpenTimer);
+  peekOpenTimer = undefined;
+  scheduleEndPeek();
+});
+// While raised the shell covers the whole window, so pointer movement over the page area arrives here too.
+document.addEventListener('pointermove', (e) => {
+  if (peek === 'off') return;
+  if (e.target instanceof Node && sidebar.contains(e.target)) {
+    clearTimeout(peekCloseTimer);
+    peekCloseTimer = undefined;
+  } else scheduleEndPeek();
+});
+document.documentElement.addEventListener('pointerleave', scheduleEndPeek);
+// A click on the page area closes at once instead of being swallowed by the transparent shell for 300 ms.
+document.addEventListener('pointerdown', (e) => {
+  if (peek !== 'off' && !(e.target instanceof Node && sidebar.contains(e.target))) void endPeek();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && peek !== 'off') void endPeek();
+});
 
 quiver.on('state', (s: ShellState) => {
   // Don't clobber an inline editor the user is typing in.
