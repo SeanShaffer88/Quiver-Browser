@@ -539,7 +539,7 @@ function renderSidebar(s: ShellState): void {
   else if (s.devServers.length === 0) servers.append(h('div', { class: 'empty' }, 'No HTTP servers found on localhost.'));
   for (const d of s.devServers) {
     servers.append(
-      h('button', { class: 'server', title: `${d.title}\n${d.url}`, dataset: { focusKey: d.url }, onClick: () => call('devserver:open', d.url) }, h('span', { class: 'port' }, `:${d.port}`), h('span', { class: 'stitle' }, d.title)),
+      h('button', { class: 'server', title: `${d.label}\n${d.url}`, dataset: { focusKey: d.url }, onClick: () => call('devserver:open', d.url) }, h('span', { class: 'port' }, `:${d.port}`), h('span', { class: 'stitle' }, d.label)),
     );
   }
 

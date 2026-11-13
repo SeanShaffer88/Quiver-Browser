@@ -112,6 +112,10 @@ export interface DevServer {
   port: number;
   url: string;
   title: string;
+  /** The project the server runs from (package.json name or folder), when Quiver could find it. */
+  project: string | null;
+  /** What the sidebar shows: "project — Page title", or whichever is known. */
+  label: string;
 }
 
 export type PhoneStatus = 'off' | 'paused' | 'narrow' | 'starting' | 'active' | 'unavailable';

@@ -42,30 +42,102 @@ function writeChunk(stream: fs.WriteStream, data: Buffer): Promise<void> {
   return new Promise((resolve, reject) => stream.write(data, (e) => (e ? reject(e) : resolve())));
 }
 
-/** Save an on-demand HLS stream as one .ts (or fragmented .mp4) file, decrypting AES-128 segments. */
-export async function runHls(url: string, name: string, ctx: JobContext, place: Place): Promise<string[]> {
-  let playlist = parseM3u8(await fetchText(ctx, url), url);
-  let note = '';
-  if (playlist.kind === 'master') {
-    const pick = pickVariant(playlist.variants);
-    if (!pick) throw new Error('The playlist has no streams.');
-    if (pick.separateAudio) note = ' · video only (audio is a separate stream)';
-    playlist = parseM3u8(await fetchText(ctx, pick.variant.uri), pick.variant.uri);
-  }
+/** Fetch and check a media playlist that is about to be saved. */
+async function mediaSegments(ctx: JobContext, uri: string): Promise<HlsSegment[]> {
+  const playlist = parseM3u8(await fetchText(ctx, uri), uri);
   if (playlist.kind !== 'media') throw new Error('Unexpected nested playlist.');
+  return checkedSegments(playlist);
+}
+
+function checkedSegments(playlist: { segments: HlsSegment[]; endList: boolean }): HlsSegment[] {
   if (!playlist.endList) throw new Error('Live streams cannot be saved.');
   const segments = playlist.segments;
   if (!segments.length) throw new Error('The playlist has no segments.');
   if (segments.some((s) => s.key && s.key.method !== 'AES-128')) throw new Error('This stream is protected (DRM) and cannot be saved.');
-  const final = place(`${name}${segments[0].map ? '.mp4' : '.ts'}`);
+  return segments;
+}
+
+/** fMP4 playlists carry an init section (#EXT-X-MAP); only those can be combined with muxFragmentedMp4. */
+const isFmp4 = (segments: readonly HlsSegment[]) => segments.every((s) => s.map);
+
+function audioExtension(segments: readonly HlsSegment[]): string {
+  if (isFmp4(segments)) return '.m4a';
+  const ext = new URL(segments[0].uri).pathname.match(/\.(aac|ac3|ec3|mp3|ts)$/i)?.[1];
+  return `.${(ext ?? 'ts').toLowerCase()}`;
+}
+
+/**
+ * Save an on-demand HLS stream, decrypting AES-128 segments. A master playlist's best variant is used; when its
+ * audio is a separate playlist and both are fragmented MP4, the two are combined into one .mp4.
+ */
+export async function runHls(url: string, name: string, ctx: JobContext, place: Place): Promise<string[]> {
+  const top = parseM3u8(await fetchText(ctx, url), url);
+  if (top.kind === 'media') return saveHls(checkedSegments(top), name, ctx, place);
+  const pick = pickVariant(top.variants, top.renditions);
+  if (!pick) throw new Error('The playlist has no streams.');
+  if (!pick.audio) return saveHls(await mediaSegments(ctx, pick.variant.uri), name, ctx, place, pick.separateAudio ? ' · video only (audio is a separate stream)' : '');
+  const video = await mediaSegments(ctx, pick.variant.uri);
+  const audio = await mediaSegments(ctx, pick.audio.uri!);
+  // Combining needs both halves as fMP4; a muxed variant (even a lower one) beats two loose files.
+  if (!(isFmp4(video) && isFmp4(audio)) && pick.fallback) return saveHls(await mediaSegments(ctx, pick.fallback.uri), name, ctx, place);
+  const progress = { received: 0, done: 0, total: video.length + audio.length };
+  if (!(isFmp4(video) && isFmp4(audio))) {
+    const files = [await saveHls(video, name, ctx, place, ' · video', progress)];
+    try {
+      files.push(await saveHls(audio, name, ctx, place, ' · audio', progress, audioExtension(audio)));
+    } catch (error) { for (const f of files.flat()) fs.rmSync(f, { force: true }); throw error; }
+    return files.flat();
+  }
+  const final = place(`${name}.mp4`);
+  const videoPart = `${final}.video.part`;
+  const audioPart = `${final}.audio.part`;
+  try {
+    await saveHlsTo(video, videoPart, ctx, ' · video', progress);
+    await saveHlsTo(audio, audioPart, ctx, ' · audio', progress);
+  } catch (error) {
+    for (const f of [videoPart, audioPart]) fs.rmSync(f, { force: true });
+    throw error;
+  }
+  try {
+    ctx.progress({ received: progress.received, total: progress.received, detail: 'Combining video and audio' });
+    muxFragmentedMp4(videoPart, audioPart, `${final}.part`);
+    fs.renameSync(`${final}.part`, final);
+    for (const f of [videoPart, audioPart]) fs.rmSync(f, { force: true });
+    return [final];
+  } catch {
+    // Not a shape Quiver can combine: keep the video and hand the audio over as its own file.
+    fs.rmSync(`${final}.part`, { force: true });
+    fs.renameSync(videoPart, final);
+    const audioFile = place(`${name}.m4a`);
+    fs.renameSync(audioPart, audioFile);
+    ctx.progress({ received: progress.received, total: progress.received, detail: 'Saved video and audio as separate files (they could not be combined)' });
+    return [final, audioFile];
+  }
+}
+
+interface HlsProgress { received: number; done: number; total: number }
+
+async function saveHls(segments: HlsSegment[], name: string, ctx: JobContext, place: Place, note = '', progress?: HlsProgress, ext?: string): Promise<string[]> {
+  const final = place(`${name}${ext ?? (segments[0].map ? '.mp4' : '.ts')}`);
   const part = `${final}.part`;
-  const stream = fs.createWriteStream(part);
+  try {
+    await saveHlsTo(segments, part, ctx, note, progress ?? { received: 0, done: 0, total: segments.length });
+  } catch (error) {
+    fs.rmSync(part, { force: true });
+    throw error;
+  }
+  fs.renameSync(part, final);
+  return [final];
+}
+
+/** Write a media playlist's segments (with their init sections) to `file`, in order. */
+async function saveHlsTo(segments: HlsSegment[], file: string, ctx: JobContext, note: string, progress: HlsProgress): Promise<void> {
+  const stream = fs.createWriteStream(file);
   const keys = new Map<string, Promise<Buffer>>();
   const key = (uri: string) => {
     if (!keys.has(uri)) keys.set(uri, fetchBytes(ctx, uri, undefined, 1024).then((k) => { if (k.length !== 16) throw new Error('The stream key is not valid.'); return k; }));
     return keys.get(uri)!;
   };
-  let received = 0;
   let lastMap = '';
   try {
     await fetchInOrder(ctx, segments.length, async (i) => {
@@ -85,14 +157,14 @@ export async function runHls(url: string, name: string, ctx: JobContext, place: 
         lastMap = mapId;
       }
       await writeChunk(stream, data);
-      received += data.length;
-      ctx.progress({ received, total: i >= 2 ? Math.round((received / (i + 1)) * segments.length) : 0, detail: `${i + 1} of ${segments.length} segments${note}` });
+      progress.received += data.length;
+      progress.done++;
+      const { received, done, total } = progress;
+      ctx.progress({ received, total: done >= 3 ? Math.round((received / done) * total) : 0, detail: `${done} of ${total} segments${note}` });
     });
-    await finish(stream, part, final);
-    return [final];
+    await new Promise<void>((resolve, reject) => stream.end((e?: Error | null) => (e ? reject(e) : resolve())));
   } catch (error) {
     stream.destroy();
-    fs.rmSync(part, { force: true });
     throw error;
   }
 }

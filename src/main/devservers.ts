@@ -1,14 +1,18 @@
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
 import http from 'node:http';
 import { isIPv4 } from 'node:net';
 import path from 'node:path';
 import type { DevServer } from '../shared/types';
+import { parseNetstatPids, ProjectNames } from './devserver-projects';
 
 const SKIP_PORTS = new Set([135, 139, 445, 5040, 5357, 7680]);
 
 interface LocalEndpoint {
   host: string;
   port: number;
+  /** The listening process, when the platform reports it. */
+  pid?: number;
 }
 
 export function parseNetstat(out: string): LocalEndpoint[] {
@@ -31,7 +35,54 @@ export function parseNetstat(out: string): LocalEndpoint[] {
   return [...endpoints.values()].sort((a, b) => a.port - b.port || (a.host < b.host ? -1 : a.host > b.host ? 1 : 0));
 }
 
+/** Listening loopback/wildcard TCP sockets from /proc/net/tcp or tcp6, with their socket inode. */
+export function parseProcNetTcp(text: string, v6: boolean): { host: string; port: number; inode: number }[] {
+  const out: { host: string; port: number; inode: number }[] = [];
+  for (const line of text.split('\n').slice(1)) {
+    const f = line.trim().split(/\s+/);
+    if (f.length < 10 || f[3] !== '0A') continue; // 0A = LISTEN
+    const [addr, portHex] = f[1].split(':');
+    const port = parseInt(portHex, 16);
+    if (!(port >= 1 && port <= 65535) || SKIP_PORTS.has(port)) continue;
+    let host: string | null = null;
+    if (!v6) {
+      // Little-endian IPv4: 0100007F is 127.0.0.1.
+      const ip = [3, 2, 1, 0].map((i) => parseInt(addr.slice(i * 2, i * 2 + 2), 16)).join('.');
+      host = ip === '0.0.0.0' ? '127.0.0.1' : ip.startsWith('127.') ? ip : null;
+    } else if (/^0{32}$/.test(addr) || addr === '00000000000000000000000001000000') host = '::1';
+    if (host) out.push({ host, port, inode: Number(f[9]) });
+  }
+  return out;
+}
+
+/** Linux (used by the test suite and Linux runs): sockets from /proc, owners found through /proc/<pid>/fd. */
+function listLinux(): LocalEndpoint[] | null {
+  let sockets: { host: string; port: number; inode: number }[] = [];
+  try {
+    sockets = parseProcNetTcp(fs.readFileSync('/proc/net/tcp', 'utf8'), false);
+    try { sockets.push(...parseProcNetTcp(fs.readFileSync('/proc/net/tcp6', 'utf8'), true)); } catch { /* no IPv6 */ }
+  } catch {
+    return null;
+  }
+  const owners = new Map<number, number>();
+  const wanted = new Set(sockets.map((s) => s.inode));
+  for (const pid of fs.readdirSync('/proc').filter((d) => /^\d+$/.test(d))) {
+    let fds: string[] = [];
+    try { fds = fs.readdirSync(`/proc/${pid}/fd`); } catch { continue; } // other users' processes
+    for (const fd of fds) {
+      try {
+        const inode = Number(fs.readlinkSync(`/proc/${pid}/fd/${fd}`).match(/^socket:\[(\d+)\]$/)?.[1]);
+        if (wanted.has(inode) && !owners.has(inode)) owners.set(inode, Number(pid));
+      } catch { /* closed meanwhile */ }
+    }
+  }
+  const endpoints = new Map<string, LocalEndpoint>();
+  for (const s of sockets) endpoints.set(`${s.host}:${s.port}`, { host: s.host, port: s.port, pid: owners.get(s.inode) });
+  return [...endpoints.values()].sort((a, b) => a.port - b.port || (a.host < b.host ? -1 : a.host > b.host ? 1 : 0));
+}
+
 function listListening(): Promise<LocalEndpoint[] | null> {
+  if (process.platform === 'linux') return Promise.resolve(listLinux());
   const windows = process.env.SystemRoot;
   if (process.platform !== 'win32' || !windows) return Promise.resolve(null);
   return new Promise((resolve) => {
@@ -39,7 +90,9 @@ function listListening(): Promise<LocalEndpoint[] | null> {
     execFile(path.join(windows, 'System32', 'netstat.exe'), ['-ano'], {
       windowsHide: true, timeout: 4000, maxBuffer: 4_000_000,
     }, (err, stdout) => {
-      resolve(err ? null : parseNetstat(stdout));
+      if (err) { resolve(null); return; }
+      const pids = parseNetstatPids(stdout);
+      resolve(parseNetstat(stdout).map((e) => ({ ...e, pid: pids.get(e.port) })));
     });
   });
 }
@@ -50,11 +103,13 @@ export function extractTitle(html: string): string {
   return m[1].replace(/\s+/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim().slice(0, 120);
 }
 
-function probe({ host, port }: LocalEndpoint): Promise<DevServer | null> {
+type Probed = Pick<DevServer, 'port' | 'url' | 'title'>;
+
+function probe({ host, port }: LocalEndpoint): Promise<Probed | null> {
   return new Promise((resolve) => {
     const address = host === '::1' ? `[${host}]:${port}` : `${host}:${port}`;
     const url = `http://${address}/`;
-    let response: DevServer | null = null;
+    let response: Probed | null = null;
     const finish = () => {
       clearTimeout(deadline);
       resolve(response);
@@ -105,11 +160,26 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R
   return out;
 }
 
+const projectNames = new ProjectNames();
+
 export async function scanDevServers(): Promise<DevServer[] | null> {
   const endpoints = await listListening();
   if (!endpoints) return null;
   const res = await mapLimit(endpoints, 12, probe);
-  return res.filter((x): x is DevServer => x !== null);
+  const found = endpoints.flatMap((e, i) => { const r = res[i]; return r ? [{ ...r, pid: e.pid }] : []; });
+  // Only servers that answered HTTP are worth a process lookup.
+  const names = await projectNames.lookup(found.flatMap((s) => (s.pid ? [s.pid] : [])));
+  return found.map(({ pid, ...s }) => {
+    const project = (pid && names.get(pid)) || null;
+    return { ...s, project, label: serverLabel({ ...s, project }) };
+  });
+}
+
+/** The sidebar label: "project — Page title", or whichever of the two is known. */
+export function serverLabel(server: Pick<DevServer, 'project' | 'title' | 'url'>): string {
+  const address = server.url.replace(/^http:\/\//, '').replace(/\/$/, '');
+  if (!server.project) return server.title;
+  return server.title && server.title !== address && server.title !== server.project ? `${server.project} — ${server.title}` : server.project;
 }
 
 export class DevServerWatcher {
