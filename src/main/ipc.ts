@@ -151,6 +151,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       after: w.after === true,
     });
   });
+  handle('shell', 'tab:console', (_e, id: number) => tabs.openConsole(Number(id)));
   handle('shell', 'tab:menu', (_e, id: number) => {
     const tab = tabs.tabs.get(Number(id));
     if (!tab) return;
@@ -184,6 +185,10 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
           { label: 'New folder', click: () => newFolder(null) },
         ],
       },
+      { type: 'separator' },
+      { label: 'Copy link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(false); if (link) clipboard.writeText(link); } },
+      { label: 'Copy Markdown link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(true); if (link) clipboard.writeText(link); } },
+      { label: 'Open the console', enabled: !tab.internal, click: () => tabs.openConsole(tab.id) },
       { type: 'separator' },
       { label: 'Close tab', click: () => tabs.closeTab(tab.id) },
     ]).popup();

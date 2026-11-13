@@ -396,7 +396,13 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
   if (t.live) kids.push(h('span', { class: 'live', title: 'Using camera, microphone or screen sharing', 'aria-label': 'live' }, '●'));
-  if (t.local && t.errors > 0) kids.push(h('span', { class: 'err', title: `${t.errors} console error(s) since last navigation` }, String(t.errors > 99 ? '99+' : t.errors)));
+  if (t.local && t.errors > 0) {
+    kids.push(h('span', {
+      class: 'err', title: `${t.errors} console error(s) since last navigation. Click to open the console`,
+      // Not a nested button: the tab row is the control; this is a mouse shortcut, also in the tab's right-click menu.
+      onClick: (e: MouseEvent) => { e.stopPropagation(); void call('tab:console', t.id); },
+    }, String(t.errors > 99 ? '99+' : t.errors)));
+  }
   const select = h('button', {
     class: 'tab-select',
     role: 'treeitem',

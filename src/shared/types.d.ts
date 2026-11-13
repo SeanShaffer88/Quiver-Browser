@@ -177,7 +177,8 @@ export type SuggestionAction =
 export type BrowserCommand =
   | 'command-new' | 'close-tab' | 'reopen-tab' | 'reload' | 'back' | 'forward' | 'next-tab' | 'prev-tab'
   | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings' | 'downloads'
-  | 'find' | 'zoom-in' | 'zoom-out' | 'zoom-reset';
+  | 'find' | 'zoom-in' | 'zoom-out' | 'zoom-reset'
+  | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space';
 
 export interface Suggestion {
   kind: string;
