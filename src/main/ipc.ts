@@ -10,6 +10,7 @@ import type { DevServerWatcher } from './devservers';
 import { internalRole, type InternalPage, type InternalRole } from './internal-access';
 import type { Store } from './store';
 import { paletteQuery, paletteSuggestions } from './palette';
+import { normalizePrivacy } from './privacy';
 import { topicMarkdown, type Research } from './research';
 import { researchSuggestions } from './research-commands';
 import { tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
@@ -25,6 +26,8 @@ export interface IpcDeps {
   /** Runs a browser action chosen in the command palette. */
   runCommand: (command: BrowserCommand) => void;
   research: Research;
+  /** Reapply privacy settings after they change. */
+  onPrivacyChanged: () => void;
 }
 
 const MAX_COMMAND_LENGTH = 65536;
@@ -304,6 +307,10 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (patch.envGroups !== undefined) s.envGroups = sanitizeEnvGroups(patch.envGroups);
     if (typeof patch.searchEngine === 'string' && /^https?:\/\/.+%s/.test(patch.searchEngine)) s.searchEngine = patch.searchEngine;
     if (typeof patch.devServerScan === 'boolean') s.devServerScan = patch.devServerScan;
+    if (patch.privacy !== undefined && typeof patch.privacy === 'object') {
+      s.privacy = normalizePrivacy({ ...s.privacy, ...patch.privacy }, process.platform);
+      d.onPrivacyChanged();
+    }
     store.save();
     if (s.devServerScan && !devWatcher.active) devWatcher.start();
     if (!s.devServerScan) {
