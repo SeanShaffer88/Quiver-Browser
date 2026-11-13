@@ -295,6 +295,7 @@ function renderGroups(): void {
   renderGroups();
   $<HTMLInputElement>('engine').value = settings.searchEngine;
   $<HTMLInputElement>('scan').checked = settings.devServerScan;
+  renderSitePermissions(settings.sitePermissions);
 })();
 
 $('addgroup').addEventListener('click', () => {
@@ -305,3 +306,31 @@ $<HTMLInputElement>('engine').addEventListener('change', async (e) => {
   await quiver.invoke('settings:set', { searchEngine: (e.target as HTMLInputElement).value.trim() });
 });
 $<HTMLInputElement>('scan').addEventListener('change', (e) => void quiver.invoke('settings:set', { devServerScan: (e.target as HTMLInputElement).checked }));
+
+function renderSitePermissions(saved: Record<string, 'allow' | 'block'>): void {
+  const list = $('site-permissions');
+  const entries = Object.entries(saved).sort(([a], [b]) => a.localeCompare(b));
+  if (!entries.length) {
+    const empty = document.createElement('li');
+    empty.className = 'note';
+    empty.textContent = 'None yet.';
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...entries.map(([origin, decision]) => {
+    const item = document.createElement('li');
+    const label = document.createElement('span');
+    label.className = 'mono';
+    label.textContent = origin;
+    const state = document.createElement('span');
+    state.className = 'note';
+    state.textContent = decision === 'allow' ? 'Allowed' : 'Blocked';
+    const forget = document.createElement('button');
+    forget.className = 'btn';
+    forget.textContent = 'Forget';
+    forget.setAttribute('aria-label', `Forget the choice for ${origin}`);
+    forget.addEventListener('click', async () => renderSitePermissions(await quiver.invoke('sitepermissions:forget', origin) as Record<string, 'allow' | 'block'>));
+    item.append(label, state, forget);
+    return item;
+  }));
+}

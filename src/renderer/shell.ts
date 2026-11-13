@@ -395,11 +395,12 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
   const fav = t.favicon ? h('img', { class: 'fav', src: t.favicon, alt: '' }) : h('span', { class: 'fav' });
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
+  if (t.live) kids.push(h('span', { class: 'live', title: 'Using camera, microphone or screen sharing', 'aria-label': 'live' }, '●'));
   if (t.local && t.errors > 0) kids.push(h('span', { class: 'err', title: `${t.errors} console error(s) since last navigation` }, String(t.errors > 99 ? '99+' : t.errors)));
   const select = h('button', {
     class: 'tab-select',
     role: 'treeitem',
-    'aria-label': t.pinned ? t.title + ', pinned' : t.title,
+    'aria-label': t.title + (t.pinned ? ', pinned' : '') + (t.live ? ', using camera or microphone' : ''),
     'aria-selected': String(active),
     'aria-level': String(m.level), 'aria-setsize': String(m.setsize), 'aria-posinset': String(m.posinset),
     dataset: { focusKey: 'tab-' + t.id },
@@ -609,11 +610,20 @@ function renderToolbar(s: ShellState): void {
     dataset: { focusKey: 'research' },
     onClick: () => call('cmd:run', { type: 'internal', page: 'research', topic: s.research!.id }),
   }, h('span', { class: 'dot', 'aria-hidden': 'true' }), h('span', { class: 'research-name' }, s.research.name), h('span', { class: 'tool-count', 'aria-hidden': 'true' }, String(s.research.count)));
+  const prompt = s.permissionPrompt;
+  const devices = prompt ? (['camera', 'microphone'] as const).filter((k) => prompt.kinds.includes(k)) : [];
+  const askFor = prompt && [devices.length ? 'use your ' + devices.join(' and ') : '', prompt.kinds.includes('screen') ? 'share your screen' : '']
+    .filter(Boolean).join(' and ');
+  const permissionBar = prompt && h('div', { class: 'permission-bar', role: 'alertdialog', 'aria-label': `${prompt.host} wants to ${askFor}` },
+    h('span', { class: 'permission-text' }, h('strong', {}, prompt.host), ` wants to ${askFor}`),
+    h('button', { class: 'btn primary', dataset: { focusKey: 'permission-once' }, onClick: () => call('permission:decide', prompt.id, 'once') }, 'Allow this time'),
+    h('button', { class: 'btn', dataset: { focusKey: 'permission-always' }, title: `Always allow on ${prompt.host} (change in Settings)`, onClick: () => call('permission:decide', prompt.id, 'always') }, 'Always allow'),
+    h('button', { class: 'btn', dataset: { focusKey: 'permission-block' }, title: `Block on ${prompt.host} (change in Settings)`, onClick: () => call('permission:decide', prompt.id, 'block') }, 'Block'));
   toolbar.replaceChildren(
     icon(ICON.back, 'Back (Alt+←)', () => call('tab:back'), { disabled: !t?.canGoBack }),
     icon(ICON.forward, 'Forward (Alt+→)', () => call('tab:forward'), { disabled: !t?.canGoForward }),
     icon(ICON.reload, 'Reload (Ctrl+R)', () => call('tab:reload')),
-    addr,
+    permissionBar || addr,
     ...(research ? [research] : []),
     icon(ICON.env, 'Switch environment: local → staging → prod (Ctrl+Alt+E)', () => call('env:switch'), { disabled: !t?.env }),
     phone,

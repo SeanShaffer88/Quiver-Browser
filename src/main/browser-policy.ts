@@ -70,12 +70,29 @@ export function allowsSitePermission(details: SitePermission): boolean {
     requester.search === top.search && (!requestingOrigin || isLocalFile(origin));
 }
 
-export function configureSitePermissions(ses: Session, webSession: boolean): void {
+/** Camera, microphone and screen-share decisions, which need a person's answer rather than a fixed rule. */
+export interface MediaDelegate {
+  check(contents: WebContents, isMainFrame: boolean): boolean;
+  request(contents: WebContents, requestingUrl: string | undefined, isMainFrame: boolean, kinds: ('camera' | 'microphone')[]): Promise<boolean>;
+  displayMedia: Parameters<Session['setDisplayMediaRequestHandler']>[0];
+}
+
+export function configureSitePermissions(ses: Session, webSession: boolean, media?: MediaDelegate): void {
   const committedUrl = (contents: WebContents | null) => contents && !contents.isDestroyed() ? contents.getURL() : undefined;
-  ses.setPermissionRequestHandler((contents, permission, callback, { isMainFrame, requestingUrl }) => {
+  ses.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const { isMainFrame, requestingUrl } = details;
+    if (permission === 'media' && webSession && media && contents && !contents.isDestroyed()) {
+      const types = 'mediaTypes' in details && Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
+      const kinds = types.length ? types.map((t) => (t === 'video' ? 'camera' as const : 'microphone' as const)) : ['camera' as const, 'microphone' as const];
+      media.request(contents, requestingUrl, isMainFrame, kinds).then(callback, () => callback(false));
+      return;
+    }
     callback(webSession && allowsSitePermission({ permission, isMainFrame, requestingUrl, topLevelUrl: committedUrl(contents) }));
   });
-  ses.setPermissionCheckHandler((contents, permission, requestingOrigin, { isMainFrame, requestingUrl }) =>
-    webSession && allowsSitePermission({ permission, isMainFrame, requestingUrl, requestingOrigin, topLevelUrl: committedUrl(contents) }));
+  ses.setPermissionCheckHandler((contents, permission, requestingOrigin, { isMainFrame, requestingUrl }) => {
+    if (permission === 'media' && webSession && media && contents && !contents.isDestroyed()) return media.check(contents, isMainFrame);
+    return webSession && allowsSitePermission({ permission, isMainFrame, requestingUrl, requestingOrigin, topLevelUrl: committedUrl(contents) });
+  });
   ses.setDevicePermissionHandler(() => false);
+  if (webSession && media) ses.setDisplayMediaRequestHandler(media.displayMedia);
 }

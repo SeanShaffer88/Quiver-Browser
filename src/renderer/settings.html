@@ -57,6 +57,10 @@
   <div class="row"><label for="engine">Search engine</label><input id="engine" type="text" spellcheck="false" placeholder="https://duckduckgo.com/?q=%s"></div>
   <p class="note">Must start with http(s):// and contain <code>%s</code> for the query. Search text is only sent when you press Enter on a search result.</p>
 
+  <h2>Camera, microphone and screen sharing</h2>
+  <p class="note">Sites ask before using your camera, microphone or screen; Quiver shows the question in the toolbar. Known meeting sites (Google Meet, Zoom, Microsoft Teams, Webex, Jitsi, Whereby) can ask; other sites are denied until they ask and you agree. Choices you saved:</p>
+  <ul class="site-permissions" id="site-permissions" aria-label="Saved site permissions"></ul>
+
   <h2>Local servers</h2>
   <div class="row"><label for="scan">Detect servers</label><input id="scan" type="checkbox"><span class="note">Lists HTTP servers listening on this machine (netstat + a local request for the page title). Pauses while the window is in the background.</span></div>
 </div>

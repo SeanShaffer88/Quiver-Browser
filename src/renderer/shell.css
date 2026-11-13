@@ -110,3 +110,9 @@ body { display: grid; grid-template-columns: var(--sb, 264px) minmax(0, 1fr); gr
 .research-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--prod); flex: none; }
 .research-chip .research-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (forced-colors: active) { .research-chip .dot { background: CanvasText; } }
+
+.permission-bar { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 2px 4px 2px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel-2); }
+.permission-bar .permission-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.permission-bar .btn { flex: none; padding: 3px 10px; }
+.tab .live { color: var(--prod); font-size: 10px; flex: none; }
+@media (forced-colors: active) { .permission-bar { border-color: Highlight; } .tab .live { color: Highlight; } }

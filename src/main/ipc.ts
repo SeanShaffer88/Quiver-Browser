@@ -12,6 +12,7 @@ import type { Store } from './store';
 import { paletteQuery, paletteSuggestions } from './palette';
 import { topicMarkdown, type Research } from './research';
 import { researchSuggestions } from './research-commands';
+import { meetSuggestions } from './meetings';
 import { tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
 
@@ -112,6 +113,8 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
 
   /** Tab search (`tab …`), palette scopes (`> …`, `bm …`), else the parser with palette matches below its default result. */
   const suggestionsFor = (text: string, context: CommandContext): Suggestion[] => {
+    const meet = meetSuggestions(text);
+    if (meet) return meet;
     const topics = researchSuggestions(text, research.inSpace(context.spaceId), research.active(context.spaceId), context.internal ? '' : context.url);
     if (topics) return topics;
     const tabQuery = tabSearchQuery(text);
@@ -215,6 +218,11 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     tabs.retryCrashedTab(id);
   });
   handle('shell', 'recovery:dismiss', () => tabs.dismissRecovery());
+
+  // camera, microphone and screen-share prompts
+  handle('shell', 'permission:decide', (_e, id: number, choice: string) => {
+    if (choice === 'once' || choice === 'always' || choice === 'block') tabs.media?.decide(Number(id), choice);
+  });
 
   // spaces
   handle('shell', 'space:create', (_e, name: string, isolated: boolean) => {
@@ -384,6 +392,11 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       tabs.clearDevServers();
     }
     tabs.emit();
+  });
+
+  handle('settings', 'sitepermissions:forget', (_e, origin: string) => {
+    if (typeof origin === 'string' && origin in store.state.settings.sitePermissions) tabs.media?.forget(origin);
+    return store.state.settings.sitePermissions;
   });
 
   const imports = new BookmarkImports<WebFrameMain>(store.state, () => {

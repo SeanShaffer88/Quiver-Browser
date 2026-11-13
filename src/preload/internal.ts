@@ -7,6 +7,7 @@ const INVOKE = new Set([
   'tab:reopen', 'tab:retry-crash', 'recovery:dismiss',
   'space:create', 'space:menu', 'space:rename', 'space:activate',
   'folder:toggle', 'folder:rename', 'folder:move', 'folder:menu',
+  'permission:decide', 'sitepermissions:forget',
   'sidebar:toggle', 'preview:toggle', 'env:switch',
   'cmd:open', 'cmd:close', 'cmd:suggest', 'cmd:commit', 'cmd:run',
   'settings:get', 'settings:set',

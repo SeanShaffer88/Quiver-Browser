@@ -1,4 +1,4 @@
-import { BaseWindow, WebContentsView, session, webContents, type Rectangle, type WebContents } from 'electron';
+import { BaseWindow, WebContentsView, session, webContents, type DesktopCapturerSource, type Rectangle, type WebContents } from 'electron';
 import path from 'node:path';
 import {
   INTERNAL_PARTITION,
@@ -16,6 +16,7 @@ import type { DevServer, EnvBadge, Folder, LocalServerStatus, PhoneStatus, Recov
 import { boostKind, boostMatchesHost, transpileBoost, wrapScript, type Boosts } from './boosts';
 import {
   allowsInternalNavigation, allowsWebNavigation, configureSitePermissions, internalTabUrl, isInternalTabPage, type InternalTabPage,
+  type MediaDelegate,
 } from './browser-policy';
 import { EndpointStatus, type EndpointFailure } from './endpoint-status';
 import { internalPage, type InternalPage } from './internal-access';
@@ -34,6 +35,7 @@ import {
   type ClosedTab,
 } from './session-recovery';
 import { moveInGroup } from './tab-order';
+import type { MediaPermissions } from './site-permissions';
 import { canNest, deleteFolder, displayOrder, folderName, placeRelative, sidebarRows } from './tab-tree';
 
 interface Tab {
@@ -127,6 +129,10 @@ export class TabManager {
   devServers: DevServer[] = [];
   /** Called for each main-frame page a web tab shows (research recording). */
   onVisit?: (spaceId: string, url: string, title: string) => void;
+  /** Camera, microphone and screen-share decisions for web tabs. */
+  media?: MediaPermissions;
+  /** Ask which screen or window to share; resolves null when the person cancels. */
+  pickScreen?: () => Promise<DesktopCapturerSource | null>;
   /** The research topic recording in a Space, for the toolbar. */
   researchStatus?: (spaceId: string) => ShellState['research'];
   private readonly endpointStatus = new EndpointStatus();
@@ -221,6 +227,7 @@ export class TabManager {
       errors: t.errors,
       local,
       internal: t.internal,
+      live: !t.view.webContents.isDestroyed() && !!this.media?.isLive(t.view.webContents.id),
       env: t.internal ? null : badgeFor(url, this.settings.envGroups),
       activeBoosts: [...t.cssKeys.keys(), ...t.tsBoosts].sort(),
     };
@@ -237,6 +244,7 @@ export class TabManager {
       sidebar: sidebarRows(this.spaceTabs(this.activeSpaceId), this.folders(this.activeSpaceId)),
       activeTabId: this.activeTabId,
       research: this.researchStatus?.(this.activeSpaceId),
+      permissionPrompt: this.activePrompt(),
       devServers: this.devServers,
       preview: this.preview,
       phoneStatus: this.getPhoneStatus(),
@@ -289,7 +297,7 @@ export class TabManager {
         item.setSaveDialogOptions({ ...item.getSaveDialogOptions(), defaultPath: safeName ? path.join(downloadPath, name) : downloadPath });
       });
     }
-    if (partition !== INTERNAL_PARTITION) configureSitePermissions(ses, true);
+    if (partition !== INTERNAL_PARTITION) configureSitePermissions(ses, true, this.mediaDelegate());
   }
 
   attachShortcuts(wc: WebContents): void {
@@ -429,6 +437,8 @@ export class TabManager {
       touch();
     });
     wc.on('did-navigate', () => {
+      // A new document starts without the previous page's camera or microphone access.
+      this.media?.reset(wc.id);
       visit();
       this.persist();
       touch();
@@ -543,6 +553,7 @@ export class TabManager {
   }
 
   private discardTab(tab: Tab): void {
+    if (!tab.view.webContents.isDestroyed()) this.media?.reset(tab.view.webContents.id);
     this.tabs.delete(tab.id);
     this.win.contentView.removeChildView(tab.view);
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
@@ -565,6 +576,36 @@ export class TabManager {
     this.load(tab, tab.crashUrl);
     tab.title = '';
     this.emit();
+  }
+
+  // ───────── camera, microphone and screen share ─────────
+  private activePrompt(): ShellState['permissionPrompt'] {
+    const tab = this.activeTab;
+    if (!tab || !this.media || tab.view.webContents.isDestroyed()) return undefined;
+    const prompt = this.media.promptFor(tab.view.webContents.id);
+    return prompt && { id: prompt.id, host: new URL(prompt.origin).host, kinds: prompt.kinds };
+  }
+
+  private mediaDelegate(): MediaDelegate {
+    const top = (wc: WebContents) => (wc.isDestroyed() ? undefined : wc.getURL());
+    return {
+      check: (wc, isMainFrame) => !!this.media?.check(wc.id, top(wc), isMainFrame),
+      request: (wc, requestingUrl, isMainFrame, kinds) => this.media?.request(wc.id, top(wc), requestingUrl, isMainFrame, kinds) ?? Promise.resolve(false),
+      displayMedia: (request, callback) => {
+        const deny = () => callback({});
+        const wc = request.frame ? webContents.fromFrame(request.frame) : undefined;
+        if (!wc || !this.media || !this.pickScreen || !request.videoRequested) return deny();
+        const isMainFrame = request.frame === wc.mainFrame;
+        void this.media.request(wc.id, top(wc), request.securityOrigin, isMainFrame, ['screen'])
+          .then(async (ok) => {
+            if (!ok) return deny();
+            const source = await this.pickScreen!();
+            if (!source) return deny();
+            callback({ video: source });
+          })
+          .catch(deny);
+      },
+    };
   }
 
   // ───────── organization: pinned tabs and folders ─────────
