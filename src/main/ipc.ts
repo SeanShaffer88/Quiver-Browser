@@ -14,7 +14,10 @@ import { normalizePrivacy } from './privacy';
 import { topicMarkdown, type Research } from './research';
 import { researchSuggestions } from './research-commands';
 import { meetSuggestions } from './meetings';
+import { archiveSuggestions, normalizeArchiveHours } from './archive';
 import type { SyncService } from './sync-service';
+import type { History } from './history';
+import type { DownloadAction, Downloads } from './downloads';
 import { tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
 
@@ -29,6 +32,8 @@ export interface IpcDeps {
   runCommand: (command: BrowserCommand) => void;
   research: Research;
   sync: SyncService;
+  history: History;
+  downloads: Downloads;
   /** Reapply privacy settings after they change. */
   onPrivacyChanged: () => void;
 }
@@ -122,10 +127,12 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (meet) return meet;
     const topics = researchSuggestions(text, research.inSpace(context.spaceId), research.active(context.spaceId), context.internal ? '' : context.url);
     if (topics) return topics;
+    const archived = /^archive(?:\s+([\s\S]*))?$/i.exec(text.trim());
+    if (archived) return archiveSuggestions((archived[1] ?? '').trim(), tabs.archive);
     const tabQuery = tabSearchQuery(text);
     if (tabQuery !== undefined) return tabSearchSuggestions(tabQuery, context.spaceId, openTabTargets());
     const palette = paletteQuery(text);
-    const sources = () => ({ activeSpaceId: context.spaceId, tabs: openTabTargets(), bookmarks: store.state.bookmarks });
+    const sources = () => ({ activeSpaceId: context.spaceId, tabs: openTabTargets(), bookmarks: store.state.bookmarks, history: d.history.list() });
     if (palette && palette.scope !== 'all') return paletteSuggestions(palette.scope, palette.query, sources());
     const parsed = parseCommand(text, parseContext(context));
     const fellThrough = parsed.length === 1 && (parsed[0].kind === 'url' || parsed[0].kind === 'search');
@@ -147,6 +154,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       after: w.after === true,
     });
   });
+  handle('shell', 'tab:console', (_e, id: number) => tabs.openConsole(Number(id)));
   handle('shell', 'tab:menu', (_e, id: number) => {
     const tab = tabs.tabs.get(Number(id));
     if (!tab) return;
@@ -181,7 +189,15 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
         ],
       },
       { type: 'separator' },
-      { label: 'Close tab', click: () => tabs.closeTab(tab.id) },
+      { label: 'Copy link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(false); if (link) clipboard.writeText(link); } },
+      { label: 'Copy Markdown link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(true); if (link) clipboard.writeText(link); } },
+      { label: 'Open the console', enabled: !tab.internal, click: () => tabs.openConsole(tab.id) },
+      { type: 'separator' },
+      ...(tab.pinned ? [
+        { label: 'Make this page the pinned page', enabled: !tab.internal, click: () => tabs.setPinnedPage(tab.id) },
+        { label: 'Back to pinned page (Ctrl+W)', click: () => tabs.closeTab(tab.id) },
+        { label: 'Remove pinned tab', click: () => tabs.closeTab(tab.id, { remove: true }) },
+      ] : [{ label: 'Close tab', click: () => tabs.closeTab(tab.id) }]),
     ]).popup();
   });
 
@@ -228,6 +244,12 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('shell', 'permission:decide', (_e, id: number, choice: string) => {
     if (choice === 'once' || choice === 'always' || choice === 'block') tabs.media?.decide(Number(id), choice);
   });
+  // find in page and zoom
+  handle('shell', 'find:query', (_e, text: unknown, forward: unknown, findNext: unknown) => {
+    if (typeof text === 'string') tabs.find(text, forward !== false, findNext === true);
+  });
+  handle('shell', 'find:close', () => tabs.stopFind(true));
+  handle('shell', 'zoom:reset', () => tabs.zoom(0));
 
   // spaces
   handle('shell', 'space:create', (_e, name: string, isolated: boolean) => {
@@ -323,6 +345,9 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       case 'internal':
         tabs.navigate(`quiver://${action.page}`);
         break;
+      case 'unarchive':
+        if (!tabs.unarchive(action.url, action.archivedAt)) return 'stale';
+        break;
       case 'browser':
         closeOverlay(true);
         d.runCommand(action.command);
@@ -342,12 +367,21 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('shell', 'cmd:run', (_e, action: unknown) => {
     const choice = action as Partial<{ type: string; page: string; topic: string }> | null;
     if (choice?.type !== 'internal') return;
-    if (choice.page === 'boosts' || choice.page === 'settings') tabs.navigate(`quiver://${choice.page}`);
+    if (choice.page === 'boosts' || choice.page === 'settings' || choice.page === 'downloads') tabs.navigate(`quiver://${choice.page}`);
     if (choice.page === 'research') {
       const topic = typeof choice.topic === 'string' && research.get(choice.topic) ? `?topic=${encodeURIComponent(choice.topic)}` : '';
       tabs.navigate(`quiver://research${topic}`);
     }
   });
+  // downloads page
+  const DOWNLOAD_ACTIONS = new Set<DownloadAction>(['pause', 'resume', 'cancel', 'retry', 'open', 'show', 'remove']);
+  handle('downloads', 'downloads:list', () => d.downloads.list());
+  handle('downloads', 'downloads:act', (_e, id: unknown, action: unknown, confirmedRisky: unknown) => {
+    if (typeof id !== 'string' || !DOWNLOAD_ACTIONS.has(action as DownloadAction)) return 'Unknown action.';
+    return d.downloads.act(id, action as DownloadAction, confirmedRisky === true);
+  });
+  handle('downloads', 'downloads:clear', () => d.downloads.clearFinished());
+
   // research notes page
   const topicId = (id: unknown) => (typeof id === 'string' ? id : '');
   const text = (value: unknown) => (typeof value === 'string' ? value : '');
@@ -391,6 +425,9 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (patch.envGroups !== undefined) s.envGroups = sanitizeEnvGroups(patch.envGroups);
     if (typeof patch.searchEngine === 'string' && /^https?:\/\/.+%s/.test(patch.searchEngine)) s.searchEngine = patch.searchEngine;
     if (typeof patch.devServerScan === 'boolean') s.devServerScan = patch.devServerScan;
+    if (typeof patch.rememberHistory === 'boolean') s.rememberHistory = patch.rememberHistory;
+    if (typeof patch.askWhereToSave === 'boolean') s.askWhereToSave = patch.askWhereToSave;
+    if (patch.archiveAfterHours !== undefined) s.archiveAfterHours = normalizeArchiveHours(patch.archiveAfterHours);
     if (patch.privacy !== undefined && typeof patch.privacy === 'object') {
       s.privacy = normalizePrivacy({ ...s.privacy, ...patch.privacy }, process.platform);
       d.onPrivacyChanged();
@@ -431,6 +468,12 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (typeof origin === 'string' && origin in store.state.settings.sitePermissions) tabs.media?.forget(origin);
     return store.state.settings.sitePermissions;
   });
+
+  handle('settings', 'history:clear', () => {
+    d.history.clear();
+    return d.history.list().length;
+  });
+  handle('settings', 'history:count', () => d.history.list().length);
 
   const imports = new BookmarkImports<WebFrameMain>(store.state, () => {
     const saved = store.flush();

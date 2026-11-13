@@ -5,7 +5,16 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 ## [Unreleased]
 
 - Meetings: camera, microphone and screen-share prompts (allow once, always or block per site), a screen/window picker, a live indicator on tabs, `meet` commands to start or join Meet, Zoom (web client), Teams, Webex, Jitsi and Whereby, and saved choices in Settings.
+- Auto-archive: temporary tabs unused for 12 hours (configurable, or never) move to a searchable archive (`archive` in the command bar). Pinned, current and audible tabs stay.
+- Closing a pinned tab returns it to its pinned page instead of removing it; the tab menu can update the pinned page or remove the tab.
 - Folder sync: settings, bookmarks, Spaces with folders and pinned tabs, research topics and (opt-in) Boosts sync through a folder you already sync, one file per device, newest change wins, first sync merges.
+- History search: Quiver keeps up to 5,000 visited web pages locally (Settings → History to turn off or clear); `Ctrl+K` lists matches below other results and `h …` searches only history.
+- Downloads: `quiver://downloads` (`Ctrl+J`) with progress, speed, pause, resume (also after restart), cancel, retry, open (with a warning for executables), show in folder and remove; a toolbar progress indicator; and an option to save without asking, with unique file names.
+- Find in page (`Ctrl+F`, `F3`) and zoom (`Ctrl+=`, `Ctrl+-`, `Ctrl+0`) with a toolbar indicator.
+- Pages see the plain Chromium user agent instead of one naming Electron and Quiver, which some sites (Google sign-in among them) refuse.
+- `Ctrl+Tab` returns to the most recently used tab (hold `Ctrl` to go further back); `Ctrl+PageUp/PageDown` keep sidebar order. `Alt+1…9` switch Spaces.
+- Copy link and Copy Markdown link (tab menu and command bar), open the console from a local tab's error count, and `?` in the command bar lists actions with their shortcuts.
+- Fix: Markdown links in research exports now escape parentheses in URLs.
 - Privacy settings: Global Privacy Control, WebRTC local-IP hiding, Secure DNS (automatic, off or custom DoH), spell check without dictionary downloads off Windows, and clearing site data on exit.
 - Research topics: `research <name>` records command-bar searches and visited pages in the Space, `note <text>` annotates the current page, and `quiver://research` keeps topic notes, the trail and a Markdown export.
 - Command palette: `Ctrl+K` fuzzy-matches browser actions, open tabs and bookmarks beneath the address result; `>` lists actions, `bm` lists bookmarks, and `tab` search is now fuzzy.

@@ -59,11 +59,13 @@ test('markdown export lists notes, searches and pages', () => {
   t.notes = 'Overall notes';
   recordSearch(t, 'webgpu', 'https://duckduckgo.com/?q=webgpu', 1);
   recordPage(t, 'https://gpuweb.github.io/', 'Spec [draft]', 2);
+  recordPage(t, 'https://en.wikipedia.org/wiki/Shader_(computing)', 'Shader', 2);
   addNote(t, 'https://gpuweb.github.io/', 'Spec', 'read section 3', 3);
   assert.equal(topicMarkdown(t), [
     '# WebGPU', '', 'Overall notes', '', '## Trail', '',
     '- Search: [webgpu](https://duckduckgo.com/?q=webgpu)',
-    '- [Spec \\[draft\\]](https://gpuweb.github.io/)', '  > read section 3', '',
+    '- [Spec \\[draft\\]](https://gpuweb.github.io/)', '  > read section 3',
+    '- [Shader](https://en.wikipedia.org/wiki/Shader_%28computing%29)', '',
   ].join('\n'));
 });
 

@@ -1,3 +1,4 @@
+import { markdownUrl } from './keyboard-workflows';
 // Research topics: an explicitly started trail of searches, pages and notes, kept per Space on this device.
 
 export interface TopicItem {
@@ -136,7 +137,7 @@ export function topicMarkdown(topic: Topic): string {
   if (topic.notes.trim()) lines.push(topic.notes.trim(), '');
   lines.push('## Trail', '');
   for (const item of topic.items) {
-    const link = `[${mdText(item.title)}](${item.url.replace(/[()\s]/g, encodeURIComponent)})`;
+    const link = `[${mdText(item.title)}](${markdownUrl(item.url)})`;
     lines.push(item.kind === 'search' ? `- Search: ${link}` : `- ${link}`);
     if (item.note) for (const line of item.note.split('\n')) lines.push(`  > ${line}`);
   }

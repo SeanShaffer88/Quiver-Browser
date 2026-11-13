@@ -1,4 +1,4 @@
-import { app, BaseWindow, crashReporter, desktopCapturer, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
+import { app, BaseWindow, clipboard, crashReporter, desktopCapturer, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME, SHARED_PARTITION } from '../shared/constants';
@@ -7,6 +7,9 @@ import { normalizeBookmarks } from './bookmarks';
 import { Boosts, isValidBoostName } from './boosts';
 import { configureSitePermissions } from './browser-policy';
 import { DevServerWatcher } from './devservers';
+import { History } from './history';
+import { Downloads } from './downloads';
+import { cleanUserAgent } from './browsing';
 import { registerIpc } from './ipc';
 import { meetingProvider } from './meetings';
 import { MediaPermissions } from './site-permissions';
@@ -128,6 +131,8 @@ async function main(): Promise<void> {
     if (handleSecondInstance) handleSecondInstance(targets);
     else pendingLaunches.push(targets);
   });
+  // Before any session exists, so every page and request sees the plain Chromium user agent.
+  app.userAgentFallback = cleanUserAgent(app.userAgentFallback, app.getName());
   await app.whenReady();
   if (process.platform === 'win32') app.setAppUserModelId('dev.quiver.browser');
   Menu.setApplicationMenu(null);
@@ -215,6 +220,27 @@ async function main(): Promise<void> {
       case 'next-tab':
         tabs.cycleTab(1);
         break;
+      case 'recent-tab':
+        tabs.cycleRecent(1);
+        break;
+      case 'recent-tab-back':
+        tabs.cycleRecent(-1);
+        break;
+      case 'copy-link':
+      case 'copy-markdown-link': {
+        const link = tabs.activeLink(a === 'copy-markdown-link');
+        if (link) clipboard.writeText(link);
+        break;
+      }
+      case 'console':
+        if (tabs.activeTabId !== null) tabs.openConsole(tabs.activeTabId);
+        break;
+      case 'next-space':
+        tabs.cycleSpace(1);
+        break;
+      case 'prev-space':
+        tabs.cycleSpace(-1);
+        break;
       case 'prev-tab':
         tabs.cycleTab(-1);
         break;
@@ -236,9 +262,30 @@ async function main(): Promise<void> {
       case 'boosts':
         tabs.navigate('quiver://boosts');
         break;
+      case 'downloads':
+        tabs.navigate('quiver://downloads');
+        break;
+      case 'find':
+        tabs.find(null);
+        break;
+      case 'find-next':
+      case 'find-prev':
+        tabs.find(null, a === 'find-next');
+        break;
+      case 'zoom-in':
+        tabs.zoom(1);
+        break;
+      case 'zoom-out':
+        tabs.zoom(-1);
+        break;
+      case 'zoom-reset':
+        tabs.zoom(0);
+        break;
       default: {
         const m = a.match(/^tab-(\d)$/);
         if (m) tabs.tabByIndex(Number(m[1]));
+        const sp = a.match(/^space-(\d)$/);
+        if (sp) tabs.spaceByIndex(Number(sp[1]));
       }
     }
   };
@@ -287,6 +334,22 @@ async function main(): Promise<void> {
       menu.popup({ window: win });
     });
   };
+  const downloads = new Downloads(store.state.downloads, {
+    directory: () => portableDownloadPath ?? app.getPath('downloads'),
+    askWhereToSave: () => store.state.settings.askWhereToSave,
+    fromPartition: (partition) => session.fromPartition(partition),
+    persist: (records) => {
+      store.state.downloads = records;
+      store.save();
+    },
+    changed: () => {
+      tabs.emit();
+      for (const tab of tabs.tabs.values()) {
+        if (tab.internalPage === 'downloads' && !tab.view.webContents.isDestroyed()) tab.view.webContents.send('downloads:changed');
+      }
+    },
+  });
+  tabs.downloads = downloads;
 
   const research = new Research(store.state, () => store.save(), () => {
     tabs.emit();
@@ -295,7 +358,12 @@ async function main(): Promise<void> {
     }
   });
   research.prune(new Set(tabs.spaces.map(({ id }) => id)));
-  tabs.onVisit = (spaceId, url, title) => research.recordPage(spaceId, url, title);
+  const history = new History(path.join(app.getPath('userData'), 'history.json'), () => store.state.settings.rememberHistory);
+  tabs.onVisit = (spaceId, url, title, kind) => {
+    research.recordPage(spaceId, url, title);
+    if (kind === 'title') history.title(url, title);
+    else history.visit(url, title);
+  };
   tabs.researchStatus = (spaceId) => {
     const topic = research.active(spaceId);
     return topic && { id: topic.id, name: topic.name, count: topic.items.length };
@@ -335,7 +403,7 @@ async function main(): Promise<void> {
     }
   });
   actions = registerIpc({
-    tabs, store, boosts, devWatcher, overlay, shell, research, sync,
+    tabs, store, boosts, devWatcher, overlay, shell, research, sync, history, downloads,
     onPrivacyChanged: () => privacy.apply(),
     runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings') : onShortcut(command)),
   });
@@ -354,6 +422,9 @@ async function main(): Promise<void> {
   };
   openLaunchTargets(parseLaunchArgs(process.argv));
   sync.start();
+  // Archive unused temporary tabs shortly after launch and then every few minutes.
+  setTimeout(() => tabs.archiveStale(), 60_000).unref();
+  setInterval(() => tabs.archiveStale(), 5 * 60_000).unref();
   tabs.layout();
   win.show();
   handleSecondInstance = (targets) => {
@@ -428,6 +499,7 @@ async function main(): Promise<void> {
     tabs.persist();
     store.state.sessionOpen = false;
     store.flush();
+    history.flush();
     devWatcher.stop();
     boosts.stopWatching();
   });

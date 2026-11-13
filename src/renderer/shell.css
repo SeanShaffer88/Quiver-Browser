@@ -38,6 +38,7 @@ body { display: grid; grid-template-columns: var(--sb, 264px) minmax(0, 1fr); gr
 .tab.active { background: var(--panel-2); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
 .tab .fav { width: 16px; height: 16px; flex: none; border-radius: 3px; background: var(--border); object-fit: cover; }
 .tab .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab .err { cursor: pointer; }
 .tab .err { background: var(--prod); color: #fff; font-size: 10px; font-weight: 700; border-radius: 999px; padding: 0 6px; min-width: 18px; text-align: center; }
 .tab .close { width: 18px; height: 18px; border-radius: 4px; color: var(--muted); opacity: 0; }
 .tab:hover .close, .tab.active .close { opacity: 1; }
@@ -116,3 +117,10 @@ body { display: grid; grid-template-columns: var(--sb, 264px) minmax(0, 1fr); gr
 .permission-bar .btn { flex: none; padding: 3px 10px; }
 .tab .live { color: var(--prod); font-size: 10px; flex: none; }
 @media (forced-colors: active) { .permission-bar { border-color: Highlight; } .tab .live { color: Highlight; } }
+.downloads-chip { display: flex; align-items: center; gap: 4px; padding: 3px 8px; border: 1px solid var(--accent); border-radius: 999px; color: var(--text); font-size: 12px; flex: none; font-variant-numeric: tabular-nums; }
+.find-bar { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel-2); }
+.find-bar input { flex: 1; min-width: 60px; border: 0; background: transparent; }
+.find-bar .find-count { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.zoom-chip { flex: none; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+.zoom-chip:hover { border-color: var(--accent); }
+@media (forced-colors: active) { .find-bar { border-color: Highlight; } }

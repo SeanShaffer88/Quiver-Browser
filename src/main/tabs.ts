@@ -36,14 +36,22 @@ import {
 } from './session-recovery';
 import { moveInGroup } from './tab-order';
 import type { MediaPermissions } from './site-permissions';
+import { addArchived, tabsToArchive, type ArchivedTab } from './archive';
 import { normalizeSyncedSpaces, type SyncedSpace } from './sync';
 import { canNest, deleteFolder, displayOrder, folderName, normalizeFolders, placeRelative, sidebarRows } from './tab-tree';
+import type { Downloads } from './downloads';
+import { nextZoom } from './browsing';
+import { markdownLink, recentOrder } from './keyboard-workflows';
 
 interface Tab {
   id: number;
   spaceId: string;
   pinned: boolean;
   folderId: string | null;
+  /** Where a pinned tab returns when closed. */
+  pinnedUrl: string | null;
+  /** When the tab was last shown, for auto-archive. */
+  lastActiveAt: number;
   partition: string;
   view: WebContentsView;
   internal: boolean;
@@ -129,11 +137,13 @@ export class TabManager {
   preview = false;
   devServers: DevServer[] = [];
   /** Called for each main-frame page a web tab shows (research recording). */
-  onVisit?: (spaceId: string, url: string, title: string) => void;
   /** Camera, microphone and screen-share decisions for web tabs. */
   media?: MediaPermissions;
   /** Ask which screen or window to share; resolves null when the person cancels. */
   pickScreen?: () => Promise<DesktopCapturerSource | null>;
+  onVisit?: (spaceId: string, url: string, title: string, kind: 'navigate' | 'title') => void;
+  /** Tracks downloads from web Spaces. */
+  downloads?: Downloads;
   /** The research topic recording in a Space, for the toolbar. */
   researchStatus?: (spaceId: string) => ShellState['research'];
   private readonly endpointStatus = new EndpointStatus();
@@ -217,6 +227,7 @@ export class TabManager {
       id: t.id,
       spaceId: t.spaceId,
       pinned: t.pinned,
+      pinnedUrl: t.pinned ? t.pinnedUrl : null,
       folderId: t.folderId,
       url: displayUrl(url),
       title: t.title || displayUrl(url) || 'New Tab',
@@ -244,8 +255,11 @@ export class TabManager {
       tabs: [...this.tabs.values()].map((t) => this.info(t)),
       sidebar: sidebarRows(this.spaceTabs(this.activeSpaceId), this.folders(this.activeSpaceId)),
       activeTabId: this.activeTabId,
+      find: this.findState && this.findState.tabId === this.activeTabId ? { ...this.findState } : undefined,
+      zoom: this.activeZoom(),
       research: this.researchStatus?.(this.activeSpaceId),
       permissionPrompt: this.activePrompt(),
+      downloads: this.downloads?.summary(),
       devServers: this.devServers,
       preview: this.preview,
       phoneStatus: this.getPhoneStatus(),
@@ -288,21 +302,16 @@ export class TabManager {
     if (this.preparedPartitions.has(partition)) return;
     this.preparedPartitions.add(partition);
     const ses = session.fromPartition(partition);
-    const downloadPath = this.portableDownloadPath;
-    if (downloadPath) {
-      ses.setDownloadPath(downloadPath);
-      ses.on('will-download', (_event, item) => {
-        // Chromium otherwise prefers the last folder selected in Save As.
-        const name = path.basename(item.getFilename());
-        const safeName = name && name !== '.' && name !== '..' && !/[<>:"/\\|?*\u0000-\u001f]/u.test(name);
-        item.setSaveDialogOptions({ ...item.getSaveDialogOptions(), defaultPath: safeName ? path.join(downloadPath, name) : downloadPath });
-      });
-    }
+    if (this.portableDownloadPath) ses.setDownloadPath(this.portableDownloadPath);
+    if (partition !== INTERNAL_PARTITION) this.downloads?.attach(ses, partition);
     if (partition !== INTERNAL_PARTITION) configureSitePermissions(ses, true, this.mediaDelegate());
   }
 
   attachShortcuts(wc: WebContents): void {
     wc.on('before-input-event', (event, input) => {
+      // A Ctrl+Tab walk ends when Ctrl is no longer held. Switching tabs moves focus, and Chromium can drop
+      // the Ctrl release in the newly focused page, so any key event without Ctrl ends it too (plus a timeout).
+      if (this.recentWalk && (!input.control && !input.meta || input.key === 'Control' && input.type === 'keyUp')) this.endRecentWalk();
       const action = shortcutFor(input);
       if (action) {
         event.preventDefault();
@@ -334,7 +343,7 @@ export class TabManager {
   }
 
   // ───────── tabs ─────────
-  openTab(rawUrl: string, opts: { spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null } = {}): Tab {
+  openTab(rawUrl: string, opts: { spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null; pinnedUrl?: string | null; lastActiveAt?: number } = {}): Tab {
     const spaceId = opts.spaceId ?? this.activeSpaceId;
     const internal = rawUrl.startsWith('quiver://') || rawUrl === '';
     const url = internal ? toInternalUrl(rawUrl || 'quiver://newtab') : rawUrl;
@@ -346,6 +355,8 @@ export class TabManager {
       id: this.nextId++,
       spaceId,
       pinned: !!opts.pinned,
+      pinnedUrl: opts.pinned ? (opts.pinnedUrl && restorableUrl(opts.pinnedUrl) ? opts.pinnedUrl : null) : null,
+      lastActiveAt: opts.lastActiveAt ?? Date.now(),
       folderId: opts.pinned && opts.folderId && this.folders(spaceId).some((f) => f.id === opts.folderId) ? opts.folderId : null,
       partition,
       view,
@@ -415,13 +426,13 @@ export class TabManager {
     const wc = tab.view.webContents;
     this.attachShortcuts(wc);
     const touch = () => this.emit();
-    const visit = () => {
-      if (!tab.internal && !wc.isDestroyed()) this.onVisit?.(tab.spaceId, wc.getURL(), tab.titleIsExplicit ? tab.title : '');
+    const visit = (kind: 'navigate' | 'title' = 'navigate') => {
+      if (!tab.internal && !wc.isDestroyed()) this.onVisit?.(tab.spaceId, wc.getURL(), tab.titleIsExplicit ? tab.title : '', kind);
     };
     wc.on('page-title-updated', (_e, title, explicitSet) => {
       tab.title = title;
       tab.titleIsExplicit = explicitSet;
-      visit();
+      visit('title');
       touch();
       this.persist();
     });
@@ -437,9 +448,19 @@ export class TabManager {
       tab.loading = false;
       touch();
     });
+    wc.on('found-in-page', (_event, result) => {
+      if (!this.findState || this.findState.tabId !== tab.id || result.requestId !== this.findRequest) return;
+      if (result.finalUpdate || result.matches !== undefined) {
+        this.findState.matches = result.matches;
+        this.findState.active = result.activeMatchOrdinal;
+        this.emit();
+      }
+    });
+    wc.on('zoom-changed', () => this.emit());
     wc.on('did-navigate', () => {
       // A new document starts without the previous page's camera or microphone access.
       this.media?.reset(wc.id);
+      if (this.findState?.tabId === tab.id) this.stopFind();
       visit();
       this.persist();
       touch();
@@ -511,23 +532,35 @@ export class TabManager {
   activateTab(id: number): void {
     const tab = this.tabs.get(id);
     if (!tab) return;
+    if (this.findState && this.findState.tabId !== id) this.stopFind();
     if (tab.spaceId !== this.activeSpaceId) {
       this.store.state.activeSpaceId = tab.spaceId;
       this.store.save();
     }
+    const previous = this.activeTabId !== null ? this.tabs.get(this.activeTabId) : undefined;
+    const now = Date.now();
+    if (previous) previous.lastActiveAt = now;
+    tab.lastActiveAt = now;
     this.activeTabId = id;
     this.lastActive[tab.spaceId] = id;
+    if (!this.recentWalk) this.touchRecent(id);
     if (tab.pendingUrl) this.load(tab, tab.pendingUrl);
     this.layout();
     this.syncPhone();
-    if (!this.overlayOpen) tab.view.webContents.focus();
+    // During a Ctrl+Tab walk focus stays put, so the Ctrl release reaches the view that saw Ctrl pressed.
+    if (!this.overlayOpen && !this.recentWalk) tab.view.webContents.focus();
     this.persist();
     this.emit();
   }
 
-  closeTab(id: number): void {
+  /** Close a tab. A pinned tab is not removed: it returns to its pinned page and Quiver moves to the next tab. */
+  closeTab(id: number, opts: { remove?: boolean } = {}): void {
     const tab = this.tabs.get(id);
     if (!tab) return;
+    if (tab.pinned && !opts.remove) {
+      this.resetPinned(tab);
+      return;
+    }
     const sameSpace = [...this.tabs.values()].filter((other) => other.spaceId === tab.spaceId);
     const index = sameSpace.findIndex((other) => other.id === id);
     const url = this.tabUrl(tab);
@@ -551,6 +584,73 @@ export class TabManager {
     this.syncPhone();
     this.persist();
     this.emit();
+  }
+
+  private resetPinned(tab: Tab): void {
+    const home = tab.pinnedUrl;
+    if (home && this.tabUrl(tab) !== home) this.load(tab, home);
+    if (this.activeTabId === tab.id) {
+      const next = this.orderedSpaceTabs().filter((t) => t.id !== tab.id);
+      const index = this.orderedSpaceTabs().findIndex((t) => t.id === tab.id);
+      const neighbor = next[Math.min(Math.max(index, 0), next.length - 1)];
+      if (neighbor) this.activateTab(neighbor.id);
+    }
+    this.persist();
+    this.emit();
+  }
+
+  /** Make the tab's current page the one it returns to when closed. */
+  setPinnedPage(id: number): void {
+    const tab = this.tabs.get(id);
+    if (!tab?.pinned) return;
+    const url = this.tabUrl(tab);
+    if (restorableUrl(url)) tab.pinnedUrl = url;
+    this.persist();
+    this.emit();
+  }
+
+  // ───────── auto-archive ─────────
+  archive: ArchivedTab[] = [];
+
+  /** Archive temporary tabs nobody has looked at for the configured time (Arc's Today). */
+  archiveStale(now = Date.now()): void {
+    const hours = this.settings.archiveAfterHours;
+    const active = new Set(this.spaces.map((sp) => this.lastActive[sp.id]));
+    const candidates = [...this.tabs.values()].map((t) => ({
+      id: t.id, pinned: t.pinned, active: t.id === this.activeTabId || active.has(t.id),
+      // Playing sound or in a call (camera, microphone or screen) keeps a tab.
+      audible: !t.view.webContents.isDestroyed() && (t.view.webContents.isCurrentlyAudible() || !!this.media?.isLive(t.view.webContents.id)),
+      lastActiveAt: t.lastActiveAt,
+    }));
+    const ids = tabsToArchive(candidates, now, hours);
+    if (!ids.length) return;
+    for (const id of ids) {
+      const tab = this.tabs.get(id)!;
+      const url = this.tabUrl(tab);
+      if (restorableUrl(url) && url !== CANONICAL_NEW_TAB_URL) {
+        this.archive = addArchived(this.archive, { url, title: tab.titleIsExplicit ? normalizeTabTitle(tab.title, url) : '', spaceId: tab.spaceId, archivedAt: now });
+      }
+      this.discardTab(tab);
+    }
+    this.store.state.archive = this.archive;
+    this.persist();
+    this.emit();
+  }
+
+  /** Reopen an archived tab in its Space. */
+  unarchive(url: string, archivedAt: number): boolean {
+    const entry = this.archive.find((e) => e.url === url && e.archivedAt === archivedAt);
+    if (!entry) return false;
+    this.archive = this.archive.filter((e) => e !== entry);
+    this.store.state.archive = this.archive;
+    const spaceId = this.spaces.some((sp) => sp.id === entry.spaceId) ? entry.spaceId : this.activeSpaceId;
+    const tab = this.openTab(entry.url, { spaceId, activate: false });
+    if (entry.title) {
+      tab.title = entry.title;
+      tab.titleIsExplicit = true;
+    }
+    this.activateTab(tab.id);
+    return true;
   }
 
   private discardTab(tab: Tab): void {
@@ -658,6 +758,9 @@ export class TabManager {
     const folderId = pinned && where.folderId !== null && this.folders(tab.spaceId).some((f) => f.id === where.folderId) ? where.folderId : null;
     const target = where.targetId === null ? undefined : this.tabs.get(where.targetId);
     const sameSpaceTarget = target && target.spaceId === tab.spaceId && target.id !== tab.id ? target : undefined;
+    // A tab remembers the page it was pinned on; closing it later returns there.
+    if (pinned && !tab.pinned) tab.pinnedUrl = restorableUrl(this.tabUrl(tab)) ? this.tabUrl(tab) : null;
+    if (!pinned) tab.pinnedUrl = null;
     tab.pinned = pinned;
     tab.folderId = folderId;
     let anchor = sameSpaceTarget?.id ?? null;
@@ -738,6 +841,75 @@ export class TabManager {
     this.emit();
   }
 
+  // ───────── recent tabs, Spaces by number, links and console ─────────
+  private recent: number[] = [];
+  private recentWalk: { order: number[]; index: number } | null = null;
+  private recentWalkTimer: NodeJS.Timeout | null = null;
+
+  private touchRecent(id: number): void {
+    this.recent = [id, ...this.recent.filter((r) => r !== id && this.tabs.has(r))].slice(0, 50);
+  }
+
+  /** Ctrl+Tab: step through the active Space's tabs by most recent use while Ctrl is held. */
+  cycleRecent(delta: number): void {
+    if (!this.recentWalk) {
+      const sidebar = this.orderedSpaceTabs().map((t) => t.id);
+      this.recentWalk = { order: recentOrder(this.recent, sidebar, this.activeTabId), index: 0 };
+    }
+    const { order } = this.recentWalk;
+    if (order.length < 2) return;
+    this.recentWalk.index = (this.recentWalk.index + delta + order.length) % order.length;
+    this.activateTab(order[this.recentWalk.index]);
+    if (this.recentWalkTimer) clearTimeout(this.recentWalkTimer);
+    this.recentWalkTimer = setTimeout(() => this.endRecentWalk(), 1500);
+  }
+
+  endRecentWalk(): void {
+    if (this.recentWalkTimer) clearTimeout(this.recentWalkTimer);
+    this.recentWalkTimer = null;
+    if (!this.recentWalk) return;
+    this.recentWalk = null;
+    if (this.activeTabId !== null) {
+      this.touchRecent(this.activeTabId);
+      const wc = this.tabs.get(this.activeTabId)?.view.webContents;
+      if (wc && !wc.isDestroyed() && !this.overlayOpen) wc.focus();
+    }
+  }
+
+  spaceByIndex(n: number): void {
+    const space = this.spaces[n - 1];
+    if (space) this.activateSpace(space.id);
+  }
+
+  cycleSpace(delta: number): void {
+    if (this.spaces.length < 2) return;
+    const i = this.spaces.findIndex((s) => s.id === this.activeSpaceId);
+    this.activateSpace(this.spaces[(i + delta + this.spaces.length) % this.spaces.length].id);
+  }
+
+  /** The active web tab's address, optionally as a Markdown link. Credentials are never copied. */
+  activeLink(markdown: boolean): string | null {
+    const tab = this.activeTab;
+    if (!tab || tab.internal) return null;
+    const url = URL.parse(this.tabUrl(tab));
+    if (!url || !/^(?:https?|file):$/.test(url.protocol)) return null;
+    url.username = '';
+    url.password = '';
+    return markdown ? markdownLink(tab.titleIsExplicit ? tab.title : '', url.href) : url.href;
+  }
+
+  /** Open DevTools on the Console panel (from the console-error badge). */
+  openConsole(id: number): void {
+    const wc = this.tabs.get(id)?.view.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    const show = () => void wc.devToolsWebContents?.executeJavaScript("DevToolsAPI.showPanel('console')").catch(() => undefined);
+    if (wc.isDevToolsOpened()) show();
+    else {
+      wc.once('devtools-opened', show);
+      wc.openDevTools({ mode: 'right' });
+    }
+  }
+
   cycleTab(delta: number): void {
     const list = this.orderedSpaceTabs();
     if (list.length < 2) return;
@@ -789,6 +961,60 @@ export class TabManager {
     else t.view.webContents.reload();
   }
 
+  // ───────── find in page and zoom ─────────
+  private findState: { tabId: number; text: string; matches: number; active: number } | null = null;
+  private findRequest = 0;
+
+  /** Open the find bar for the active tab, or search it. Empty text clears the highlights. */
+  find(text: string | null, forward = true, findNext = false): void {
+    const tab = this.activeTab;
+    if (!tab || tab.view.webContents.isDestroyed()) return;
+    const wc = tab.view.webContents;
+    if (text === null) {
+      // Open (or re-focus) the bar, searching again for the last text if any.
+      this.findState ??= { tabId: tab.id, text: '', matches: 0, active: 0 };
+      this.emit();
+      this.shell.webContents.focus();
+      this.shell.webContents.send('find:focus');
+      if (this.findState.text) this.findRequest = wc.findInPage(this.findState.text, { forward, findNext: true });
+      return;
+    }
+    const query = text.slice(0, 500);
+    this.findState = { tabId: tab.id, text: query, matches: 0, active: 0 };
+    if (!query) {
+      wc.stopFindInPage('clearSelection');
+      this.emit();
+      return;
+    }
+    this.findRequest = wc.findInPage(query, { forward, findNext });
+    this.emit();
+  }
+
+  stopFind(focusPage = false): void {
+    const state = this.findState;
+    this.findState = null;
+    const tab = state && this.tabs.get(state.tabId);
+    if (tab && !tab.view.webContents.isDestroyed()) {
+      tab.view.webContents.stopFindInPage('keepSelection');
+      if (focusPage) tab.view.webContents.focus();
+    }
+    this.emit();
+  }
+
+  private activeZoom(): number {
+    const tab = this.activeTab;
+    if (!tab || tab.internal || tab.view.webContents.isDestroyed()) return 1;
+    return Math.round(tab.view.webContents.getZoomFactor() * 100) / 100;
+  }
+
+  zoom(direction: -1 | 0 | 1): void {
+    const tab = this.activeTab;
+    if (!tab || tab.view.webContents.isDestroyed()) return;
+    const wc = tab.view.webContents;
+    wc.setZoomFactor(nextZoom(wc.getZoomFactor(), direction));
+    this.emit();
+  }
+
   toggleDevTools(): void {
     this.activeTab?.view.webContents.toggleDevTools();
   }
@@ -810,7 +1036,7 @@ export class TabManager {
     return this.spaces.map((sp) => ({
       id: sp.id, name: sp.name, color: sp.color, isolated: sp.isolated, folders: this.folders(sp.id),
       pinned: this.spaceTabs(sp.id).filter((t) => t.pinned).flatMap((t) => {
-        const url = this.tabUrl(t);
+        const url = t.pinnedUrl ?? this.tabUrl(t);
         if (!restorableUrl(url)) return [];
         const title = t.titleIsExplicit ? normalizeTabTitle(t.title, url) : '';
         return [{ url, ...(title ? { title } : {}), ...(t.folderId ? { folderId: t.folderId } : {}) }];
@@ -840,7 +1066,7 @@ export class TabManager {
       const desired: Tab[] = [];
       for (const pin of remote.pinned) {
         const folderId = pin.folderId && known.has(pin.folderId) ? pin.folderId : null;
-        let tab = [...unmatched].find((t) => t.pinned && this.tabUrl(t) === pin.url) ?? [...unmatched].find((t) => this.tabUrl(t) === pin.url);
+        let tab = [...unmatched].find((t) => t.pinned && (t.pinnedUrl ?? this.tabUrl(t)) === pin.url) ?? [...unmatched].find((t) => this.tabUrl(t) === pin.url);
         if (!tab) {
           tab = this.openTab(pin.url, { spaceId: space.id, activate: false, lazy: true, pinned: true, folderId });
           if (pin.title) {
@@ -850,11 +1076,13 @@ export class TabManager {
         }
         unmatched.delete(tab);
         tab.pinned = true;
+        tab.pinnedUrl = pin.url;
         tab.folderId = folderId;
         desired.push(tab);
       }
       for (const tab of unmatched) {
         tab.pinned = false;
+        tab.pinnedUrl = null;
         tab.folderId = null;
       }
       const others = [...this.tabs.values()].filter((t) => t.spaceId !== space!.id);
@@ -1303,7 +1531,7 @@ export class TabManager {
     for (const space of this.spaces) {
       const list = [...this.tabs.values()]
         .filter((tab) => tab.spaceId === space.id)
-        .map((tab) => ({ id: tab.id, url: this.tabUrl(tab), title: tab.titleIsExplicit ? tab.title : undefined, pinned: tab.pinned, folderId: tab.folderId }));
+        .map((tab) => ({ id: tab.id, url: this.tabUrl(tab), title: tab.titleIsExplicit ? tab.title : undefined, pinned: tab.pinned, folderId: tab.folderId, pinnedUrl: tab.pinnedUrl, lastActiveAt: tab.lastActiveAt }));
       if (list.length === 1 && list[0].url === CANONICAL_NEW_TAB_URL) soleNewTabs.set(space.id, list[0].id);
       const { tabs, activeIndex } = snapshotSpace(list, this.lastActive[space.id]);
       st.tabsBySpace[space.id] = tabs;
@@ -1318,6 +1546,7 @@ export class TabManager {
 
   restore(): { tabs: number; spaces: number } {
     const { tabsBySpace, activeIndexBySpace, activeSpaceId, recentlyClosed } = this.store.state;
+    this.archive = this.store.state.archive ?? [];
     const soleNewTabs = new Map<string, number>();
     const restored = { tabs: 0, spaces: 0 };
     this.restoring = true;
@@ -1328,8 +1557,12 @@ export class TabManager {
         const { entries, activeIndex } = restoreSelection(saved, activeIndexBySpace?.[space.id] ?? 0);
         if (entries.length) restored.spaces++;
         restored.tabs += entries.length;
-        entries.forEach(({ url, title, pinned, folderId }, index) => {
-          const tab = this.openTab(url, { spaceId: space.id, activate: false, lazy: true, pinned: pinned === true, folderId: typeof folderId === 'string' ? folderId : null });
+        entries.forEach(({ url, title, pinned, folderId, pinnedUrl, lastActiveAt }, index) => {
+          const tab = this.openTab(url, {
+            spaceId: space.id, activate: false, lazy: true, pinned: pinned === true, folderId: typeof folderId === 'string' ? folderId : null,
+            pinnedUrl: typeof pinnedUrl === 'string' ? pinnedUrl : url,
+            lastActiveAt: typeof lastActiveAt === 'number' && Number.isFinite(lastActiveAt) && lastActiveAt <= Date.now() ? lastActiveAt : Date.now(),
+          });
           tab.title = normalizeTabTitle(title, url);
           tab.titleIsExplicit = !!tab.title;
           if (index === activeIndex) this.lastActive[space.id] = tab.id;

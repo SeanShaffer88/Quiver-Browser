@@ -36,6 +36,12 @@ export interface Settings {
   sidebarCollapsed: boolean;
   /** Saved camera/microphone/screen decisions by origin. */
   sitePermissions: Record<string, 'allow' | 'block'>;
+  /** Keep a local browsing history for command-bar search. */
+  rememberHistory: boolean;
+  /** Show Save As for each download instead of saving straight to the downloads folder. */
+  askWhereToSave: boolean;
+  /** Archive temporary tabs unused for this many hours; 0 never. */
+  archiveAfterHours: number;
   privacy: PrivacySettings;
 }
 
@@ -86,6 +92,8 @@ export interface TabInfo {
   folderId: string | null;
   /** The page was given camera, microphone or screen access since it loaded. */
   live: boolean;
+  /** For a pinned tab, the page it returns to when closed. */
+  pinnedUrl: string | null;
   url: string;
   title: string;
   favicon: string;
@@ -128,10 +136,16 @@ export interface ShellState {
   /** Sidebar rows for the active Space. */
   sidebar: SidebarRow[];
   activeTabId: number | null;
+  /** The find bar for the active tab, when open. */
+  find?: { tabId: number; text: string; matches: number; active: number };
+  /** Zoom factor of the active tab (1 = 100%). */
+  zoom: number;
   /** The research topic recording in the active Space. */
   research?: { id: string; name: string; count: number };
   /** A camera / microphone / screen request waiting on the active tab. */
   permissionPrompt?: { id: number; host: string; kinds: ('camera' | 'microphone' | 'screen')[] };
+  /** Downloads in progress, for the toolbar. Progress is null when a size is unknown. */
+  downloads?: { active: number; progress: number | null };
   devServers: DevServer[];
   preview: boolean;
   phoneStatus: PhoneStatus;
@@ -155,9 +169,10 @@ export type SuggestionAction =
   | { type: 'copy'; text: string }
   | { type: 'boost'; name: string }
   | { type: 'env'; target: EnvBadge; url: string }
-  | { type: 'internal'; page: 'boosts' | 'settings' | 'research' }
+  | { type: 'internal'; page: 'boosts' | 'settings' | 'research' | 'downloads' }
   | { type: 'activate-tab'; target: TabCommandTarget }
   | { type: 'browser'; command: BrowserCommand }
+  | { type: 'unarchive'; url: string; archivedAt: number }
   | { type: 'research'; op: 'start'; name: string }
   | { type: 'research'; op: 'resume' | 'open'; topicId: string }
   | { type: 'research'; op: 'stop' }
@@ -166,7 +181,9 @@ export type SuggestionAction =
 
 export type BrowserCommand =
   | 'command-new' | 'close-tab' | 'reopen-tab' | 'reload' | 'back' | 'forward' | 'next-tab' | 'prev-tab'
-  | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings';
+  | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings' | 'downloads'
+  | 'find' | 'zoom-in' | 'zoom-out' | 'zoom-reset'
+  | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space';
 
 export interface Suggestion {
   kind: string;
@@ -227,4 +244,27 @@ export interface ParseContext {
   searchEngine: string;
   envGroups: EnvGroup[];
   currentUrl?: string;
+}
+
+export type DownloadState = 'progressing' | 'completed' | 'cancelled' | 'interrupted';
+
+export interface DownloadInfo {
+  id: string;
+  url: string;
+  filename: string;
+  savePath: string;
+  state: DownloadState;
+  paused: boolean;
+  received: number;
+  total: number;
+  /** Bytes per second, smoothed. */
+  speed: number;
+  startedAt: number;
+  endedAt: number;
+  mime: string;
+  canResume: boolean;
+  /** Opening it can run code (executables, scripts, shortcuts, disk images). */
+  risky: boolean;
+  /** A finished file that is no longer on disk. */
+  missing?: boolean;
 }

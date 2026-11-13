@@ -15,14 +15,14 @@ export function tabSearchQuery(text: string): string | undefined {
 }
 
 export function tabCommandTarget(
-  tab: { id: number; spaceId: string; title: string; titleIsExplicit: boolean; commandRevision: number; internalPage?: 'newtab' | 'settings' | 'boosts' | 'research' },
+  tab: { id: number; spaceId: string; title: string; titleIsExplicit: boolean; commandRevision: number; internalPage?: 'newtab' | 'settings' | 'boosts' | 'research' | 'downloads' },
   url: string,
   spaceName: string,
   envGroups: EnvGroup[],
 ): TabCommandTarget {
   const parsed = URL.parse(url);
   const host = parsed?.protocol === 'http:' || parsed?.protocol === 'https:' ? parsed.host.slice(0, 260) : '';
-  const fallback = tab.internalPage === 'settings' ? 'Settings' : tab.internalPage === 'boosts' ? 'Boosts' : tab.internalPage === 'research' ? 'Research'
+  const fallback = tab.internalPage === 'settings' ? 'Settings' : tab.internalPage === 'boosts' ? 'Boosts' : tab.internalPage === 'research' ? 'Research' : tab.internalPage === 'downloads' ? 'Downloads'
     : tab.internalPage === 'newtab' ? 'New Tab' : parsed?.protocol === 'file:' ? 'Local file' : host || 'Untitled tab';
   const title = tab.titleIsExplicit ? normalizeTabTitle(tab.title, url) : '';
   return {

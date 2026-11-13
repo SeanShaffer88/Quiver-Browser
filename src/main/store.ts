@@ -8,6 +8,7 @@ import type { Bookmark, Settings, Space } from '../shared/types';
 import { validBookmarkUndo, type BookmarkUndo } from './bookmark-import';
 import { normalizeBookmarks } from './bookmarks';
 import { normalizeSitePermissions } from './site-permissions';
+import { DEFAULT_ARCHIVE_HOURS, normalizeArchive, normalizeArchiveHours, type ArchivedTab } from './archive';
 import { normalizeSyncState, type SyncState } from './sync-service';
 import { normalizePrivacy } from './privacy';
 import { normalizeFolders } from './tab-tree';
@@ -19,6 +20,8 @@ export interface PersistedTab {
   title?: string;
   pinned?: true;
   folderId?: string;
+  pinnedUrl?: string;
+  lastActiveAt?: number;
   automaticPlaceholder?: true;
 }
 
@@ -33,6 +36,8 @@ export interface PersistedState {
   bookmarks: Bookmark[];
   bookmarkUndo?: BookmarkUndo;
   sessionOpen?: boolean;
+  downloads?: unknown[];
+  archive?: ArchivedTab[];
   topics?: Topic[];
   sync?: SyncState;
   activeTopicBySpace?: Record<string, string>;
@@ -46,6 +51,9 @@ export function defaultSettings(): Settings {
     devServerScan: true,
     sidebarCollapsed: false,
     sitePermissions: {},
+    rememberHistory: true,
+    askWhereToSave: true,
+    archiveAfterHours: DEFAULT_ARCHIVE_HOURS,
     privacy: normalizePrivacy(undefined, process.platform),
   };
 }
@@ -116,6 +124,9 @@ export class Store {
           devServerScan: raw.settings?.devServerScan ?? base.settings.devServerScan,
           sidebarCollapsed: raw.settings?.sidebarCollapsed ?? base.settings.sidebarCollapsed,
           sitePermissions: normalizeSitePermissions(raw.settings?.sitePermissions),
+          rememberHistory: typeof raw.settings?.rememberHistory === 'boolean' ? raw.settings.rememberHistory : true,
+          askWhereToSave: typeof raw.settings?.askWhereToSave === 'boolean' ? raw.settings.askWhereToSave : true,
+          archiveAfterHours: normalizeArchiveHours(raw.settings?.archiveAfterHours),
           privacy: normalizePrivacy(raw.settings?.privacy, process.platform),
         },
       } as PersistedState;
@@ -125,6 +136,7 @@ export class Store {
       state.activeTopicBySpace = Object.fromEntries(Object.entries(raw.activeTopicBySpace ?? {})
         .filter(([space, topic]) => knownSpaces.has(space) && state.topics!.some((t) => t.id === topic && t.spaceId === space)));
       state.sync = normalizeSyncState(raw.sync, os.hostname());
+      state.archive = normalizeArchive(raw.archive, new Set(state.spaces.map(({ id }) => id)));
       state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);
       const spaceIds = new Set(state.spaces.map(({ id }) => id));
       const soleNewTabSpaces = new Set([...spaceIds].filter((id) => hasSavedNewTabPlaceholder(state.tabsBySpace?.[id])));

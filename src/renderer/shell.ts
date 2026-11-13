@@ -396,7 +396,13 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
   if (t.live) kids.push(h('span', { class: 'live', title: 'Using camera, microphone or screen sharing', 'aria-label': 'live' }, '●'));
-  if (t.local && t.errors > 0) kids.push(h('span', { class: 'err', title: `${t.errors} console error(s) since last navigation` }, String(t.errors > 99 ? '99+' : t.errors)));
+  if (t.local && t.errors > 0) {
+    kids.push(h('span', {
+      class: 'err', title: `${t.errors} console error(s) since last navigation. Click to open the console`,
+      // Not a nested button: the tab row is the control; this is a mouse shortcut, also in the tab's right-click menu.
+      onClick: (e: MouseEvent) => { e.stopPropagation(); void call('tab:console', t.id); },
+    }, String(t.errors > 99 ? '99+' : t.errors)));
+  }
   const select = h('button', {
     class: 'tab-select',
     role: 'treeitem',
@@ -410,8 +416,8 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
   }, ...kids);
   const close = h('button', {
     class: 'close',
-    title: 'Close tab (Ctrl+W)',
-    'aria-label': 'Close ' + t.title,
+    title: t.pinned ? 'Back to the pinned page (Ctrl+W). Right-click to remove the pinned tab' : 'Close tab (Ctrl+W)',
+    'aria-label': (t.pinned ? 'Return to pinned page: ' : 'Close ') + t.title,
     dataset: { focusKey: 'close-tab-' + t.id },
     onClick: () => call('tab:close', t.id),
   }, '×');
@@ -497,7 +503,24 @@ function renderRecovery(s: ShellState): HTMLElement[] {
   return cards;
 }
 
+// The whole sidebar is rebuilt from state, so rebuilding it when nothing it shows changed only costs CPU, resets
+// hover and moves screen-reader and UI Automation elements out from under people and tests. Skip those rebuilds.
+let lastSidebarKey = '';
+
+function sidebarKey(s: ShellState): string {
+  const { tabs: _tabs, devServers, ...rest } = s;
+  return JSON.stringify([
+    s.tabs.filter((t) => t.spaceId === s.activeSpaceId),
+    devServers,
+    rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.recentlyClosed, rest.recoveryNotice, rest.localServerStatus,
+    rest.settings.sidebarCollapsed, rest.settings.devServerScan, addingSpace, renamingSpace, renamingFolder,
+  ]);
+}
+
 function renderSidebar(s: ShellState): void {
+  const key = sidebarKey(s);
+  if (key === lastSidebarKey && sidebar.childElementCount) return;
+  lastSidebarKey = key;
   const spaceTabs = s.tabs.filter((t) => t.spaceId === s.activeSpaceId);
   const brand = h('div', { class: 'brand' });
   const logo = h('img', { src: 'quiver-icon.png', width: 22, height: 22, alt: '' });
@@ -580,8 +603,38 @@ function renderLocalServerStatus(status: LocalServerStatus): HTMLElement {
   return card;
 }
 
+function findCount(f: NonNullable<ShellState['find']>): string {
+  if (!f.text) return '';
+  return f.matches ? `${f.active} of ${f.matches}` : 'No matches';
+}
+
+function renderFindBar(f: NonNullable<ShellState['find']>): HTMLElement {
+  const input = h('input', {
+    type: 'search', value: f.text, placeholder: 'Find in page', 'aria-label': 'Find in page', spellcheck: false,
+    dataset: { focusKey: 'find-input' },
+    onInput: () => call('find:query', input.value, true, false),
+    onKeydown: (e: KeyboardEvent) => {
+      if (e.key === 'Enter') { e.preventDefault(); void call('find:query', input.value, !e.shiftKey, true); }
+      if (e.key === 'Escape') { e.preventDefault(); void call('find:close'); }
+    },
+  });
+  const count = h('span', { class: 'find-count', role: 'status', 'aria-live': 'polite' }, findCount(f));
+  return h('div', { class: 'find-bar' },
+    input, count,
+    h('button', { class: 'icon-btn', title: 'Previous match (Shift+Enter, Shift+F3)', 'aria-label': 'Previous match', onClick: () => call('find:query', input.value, false, true) }, '↑'),
+    h('button', { class: 'icon-btn', title: 'Next match (Enter, F3)', 'aria-label': 'Next match', onClick: () => call('find:query', input.value, true, true) }, '↓'),
+    h('button', { class: 'icon-btn', title: 'Close (Esc)', 'aria-label': 'Close find', onClick: () => call('find:close') }, '×'));
+}
+
 function renderToolbar(s: ShellState): void {
   const t = activeTab(s);
+  // Typing in the find box must not rebuild it (that would drop the caret); only its count changes.
+  const findInput = toolbar.querySelector<HTMLInputElement>('.find-bar input');
+  if (s.find && findInput && document.activeElement === findInput && !s.permissionPrompt) {
+    const count = toolbar.querySelector('.find-count');
+    if (count) count.textContent = findCount(s.find);
+    return;
+  }
   const addr = h('button', { id: 'address', title: 'Search or enter a command (Ctrl+K / Ctrl+L)', 'aria-label': 'Address and command bar', dataset: { focusKey: 'address' }, onClick: () => call('cmd:open', undefined, 'current', 'address') });
   if (t?.env) addr.append(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env));
   addr.append(h('span', { class: 'url' + (t?.url ? '' : ' placeholder') }, t?.url || 'Search, paste a URL, JWT, or type gh / npm / mdn / env / boost…'), h('span', { class: 'hint' }, 'Ctrl+K'));
@@ -619,17 +672,28 @@ function renderToolbar(s: ShellState): void {
     h('button', { class: 'btn primary', dataset: { focusKey: 'permission-once' }, onClick: () => call('permission:decide', prompt.id, 'once') }, 'Allow this time'),
     h('button', { class: 'btn', dataset: { focusKey: 'permission-always' }, title: `Always allow on ${prompt.host} (change in Settings)`, onClick: () => call('permission:decide', prompt.id, 'always') }, 'Always allow'),
     h('button', { class: 'btn', dataset: { focusKey: 'permission-block' }, title: `Block on ${prompt.host} (change in Settings)`, onClick: () => call('permission:decide', prompt.id, 'block') }, 'Block'));
+  const dl = s.downloads;
+  const downloadsButton = dl && dl.active > 0 && h('button', {
+    class: 'downloads-chip',
+    title: `${dl.active} download${dl.active === 1 ? '' : 's'} in progress (Ctrl+J)`,
+    'aria-label': `${dl.active} download${dl.active === 1 ? '' : 's'} in progress${dl.progress === null ? '' : `, ${Math.floor(dl.progress * 100)} percent`}. Open downloads`,
+    dataset: { focusKey: 'downloads' },
+    onClick: () => call('cmd:run', { type: 'internal', page: 'downloads' }),
+  }, h('span', { 'aria-hidden': 'true' }, '↓'), h('span', {}, dl.progress === null ? String(dl.active) : `${Math.floor(dl.progress * 100)}%`));
   toolbar.replaceChildren(
     icon(ICON.back, 'Back (Alt+←)', () => call('tab:back'), { disabled: !t?.canGoBack }),
     icon(ICON.forward, 'Forward (Alt+→)', () => call('tab:forward'), { disabled: !t?.canGoForward }),
     icon(ICON.reload, 'Reload (Ctrl+R)', () => call('tab:reload')),
-    permissionBar || addr,
+    permissionBar || (s.find ? renderFindBar(s.find) : null) || addr,
+    ...(s.zoom !== 1 && Number.isFinite(s.zoom) ? [h('button', { class: 'zoom-chip', title: 'Reset zoom (Ctrl+0)', 'aria-label': `Zoom ${Math.round(s.zoom * 100)} percent. Reset zoom`, dataset: { focusKey: 'zoom' }, onClick: () => call('zoom:reset') }, `${Math.round(s.zoom * 100)}%`)] : []),
     ...(research ? [research] : []),
+    ...(downloadsButton ? [downloadsButton] : []),
     icon(ICON.env, 'Switch environment: local → staging → prod (Ctrl+Alt+E)', () => call('env:switch'), { disabled: !t?.env }),
     phone,
     boost,
     icon(ICON.gear, 'Settings', () => call('cmd:run', { type: 'internal', page: 'settings' })),
   );
+  if (focusFindPending && s.find) focusFindPending = !focusFind();
 }
 
 function render(): void {
@@ -668,6 +732,18 @@ quiver.on('folder:rename-start', (id: string) => {
   if (index >= 0) revealRow(index);
   paintTabs();
   focusShellControl('rename-folder:' + id);
+});
+let focusFindPending = false;
+function focusFind(): boolean {
+  const input = toolbar.querySelector<HTMLInputElement>('.find-bar input');
+  if (!input) return false;
+  input.focus();
+  input.select();
+  return true;
+}
+// The bar may not exist yet: the state that opens it can arrive just after this message.
+quiver.on('find:focus', () => {
+  focusFindPending = !focusFind();
 });
 quiver.on('space:rename-start', (id: string) => {
   renamingSpace = id;
