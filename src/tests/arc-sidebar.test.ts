@@ -1,15 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ARC_SIDEBAR_MAX_BYTES, parseArcSidebar } from '../renderer/arc-sidebar.js';
+import { ARC_SIDEBAR_MAX_BYTES, parseArcSidebar, previewOf } from '../main/arc-sidebar';
 
 function sidebar(spaces: unknown[], items: unknown[], topAppsContainerIDs: unknown[] = []): string {
   return JSON.stringify({ sidebar: { containers: [{ global: {} }, { spaces, items, topAppsContainerIDs }] } });
 }
 
-function review(text: string) {
+function parsed(text: string) {
   const result = parseArcSidebar(text);
   if (typeof result === 'string') assert.fail(result);
   return result;
+}
+
+/** The host-only preview Settings receives. */
+function review(text: string) {
+  return previewOf(parsed(text));
 }
 
 test('joins spaces by their ordered roots, preserves nested pinned items, and counts Today panes', () => {
@@ -108,4 +113,13 @@ test('distinguishes invalid, unrecognized, oversized, and empty sidebars', () =>
   assert.equal(parseArcSidebar('{"tabs":[]}'), 'unrecognized-sidebar');
   assert.equal(parseArcSidebar(' '.repeat(ARC_SIDEBAR_MAX_BYTES + 1)), 'too-large');
   assert.deepEqual(review(sidebar([], [])), { spaces: [], profiles: [], skipped: 0, limited: false });
+});
+
+test('keeps the full URL for import while the Settings preview carries hosts only', () => {
+  const text = sidebar(
+    ['space', { title: 'Work', containerIDs: ['pinned', 'root'] }],
+    ['root', { childrenIds: ['tab'] }, 'tab', { data: { tab: { savedURL: 'https://one.test/private?key=secret#part' } } }],
+  );
+  assert.deepEqual(parsed(text).spaces[0].pinned, [{ kind: 'tab', title: 'one.test', host: 'one.test', url: 'https://one.test/private?key=secret#part' }]);
+  assert.doesNotMatch(JSON.stringify(review(text)), /private|secret/);
 });

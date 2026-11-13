@@ -130,6 +130,8 @@ export interface RecoveryNotice {
 export interface ShellState {
   recentlyClosed?: { id: number; spaceId: string; title: string };
   recoveryNotice?: RecoveryNotice;
+  /** First launch found an Arc sidebar; the sidebar offers to import it until the person acts on it. */
+  arcImportOffer?: boolean;
   spaces: Space[];
   activeSpaceId: string;
   tabs: TabInfo[];
@@ -278,3 +280,59 @@ export interface DownloadInfo {
 }
 
 export type NativeKind = 'ftp' | 'hls' | 'dash' | 'metalink';
+
+/** An Arc sidebar entry as Settings previews it: titles and hosts, never full URLs. */
+export type ArcNode =
+  | { kind: 'tab'; title: string; host: string }
+  | { kind: 'folder' | 'split'; title: string; children: ArcNode[] };
+
+export interface ArcSpace {
+  title: string;
+  profile: number;
+  pinned: ArcNode[];
+  pinnedTabs: number;
+  todayTabs: number;
+}
+
+export interface ArcProfile {
+  label: string;
+  favorites: ArcNode[];
+  favoriteTabs: number;
+}
+
+export interface ArcSidebarPreview {
+  spaces: ArcSpace[];
+  profiles: ArcProfile[];
+  skipped: number;
+  limited: boolean;
+}
+
+/** What importing a reviewed Arc sidebar would add to Quiver right now. */
+export interface ArcImportCounts {
+  /** Quiver Spaces that receive tabs or folders (new and merged). */
+  spaces: number;
+  newSpaces: number;
+  mergedSpaces: number;
+  pinned: number;
+  favorites: number;
+  folders: number;
+  /** Tabs whose URL that Space already has. */
+  duplicates: number;
+  /** Entries left out by Quiver's limits (folder count, depth, tab count) or because the URL cannot be restored. */
+  dropped: number;
+}
+
+export interface ArcReview {
+  id: number;
+  source: string;
+  preview: ArcSidebarPreview;
+  counts: ArcImportCounts;
+}
+
+export interface ArcImportStatus {
+  /** An Arc sidebar exists at the usual Windows location. */
+  detected: boolean;
+  /** The first-launch offer is still waiting for an answer. */
+  offer: boolean;
+  undo?: { id: number; tabs: number; spaces: number; folders: number };
+}

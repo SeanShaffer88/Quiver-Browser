@@ -1,3 +1,9 @@
+import type { ArcNode, ArcProfile, ArcSidebarPreview, ArcSpace } from '../shared/types';
+
+/**
+ * Parser for Arc's StorableSidebar.json. It runs in the main process so the import trusts only what it parsed itself;
+ * Settings receives `previewOf` (hosts and titles, no full URLs).
+ */
 type RecordData = Record<string, unknown>;
 
 export const ARC_SIDEBAR_MAX_BYTES = 16 * 1024 * 1024;
@@ -6,32 +12,17 @@ const MAX_SPACES = 100;
 const MAX_VISITS = 800;
 const MAX_DEPTH = 12;
 
-export type ArcNode =
-  | { kind: 'tab'; title: string; host: string }
-  | { kind: 'folder' | 'split'; title: string; children: ArcNode[] };
+export type ArcSidebar = Omit<ArcSidebarPreview, 'spaces' | 'profiles'> & {
+  spaces: Array<Omit<ArcSpace, 'pinned'> & { pinned: ArcSourceNode[] }>;
+  profiles: Array<Omit<ArcProfile, 'favorites'> & { favorites: ArcSourceNode[] }>;
+};
 
-interface ArcSpace {
-  title: string;
-  profile: number;
-  pinned: ArcNode[];
-  pinnedTabs: number;
-  todayTabs: number;
-}
+/** A parsed sidebar entry; tabs keep their full URL for import. */
+export type ArcSourceNode =
+  | { kind: 'tab'; title: string; host: string; url: string }
+  | { kind: 'folder' | 'split'; title: string; children: ArcSourceNode[] };
 
-interface ArcProfile {
-  label: string;
-  favorites: ArcNode[];
-  favoriteTabs: number;
-}
-
-export interface ArcSidebarPreview {
-  spaces: ArcSpace[];
-  profiles: ArcProfile[];
-  skipped: number;
-  limited: boolean;
-}
-
-type ArcParseError = 'invalid-json' | 'unrecognized-sidebar' | 'too-large';
+export type ArcParseError = 'invalid-json' | 'unrecognized-sidebar' | 'too-large';
 
 function record(value: unknown): RecordData | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as RecordData : undefined;
@@ -55,17 +46,17 @@ function profileKey(value: unknown): string | undefined {
   return JSON.stringify([directory, machine ?? null]);
 }
 
-function tabHost(value: unknown): string | undefined {
+function tabTarget(value: unknown): { host: string; url: string } | undefined {
   if (typeof value !== 'string' || value.length > 4096 || !/^https?:\/\//i.test(value)) return undefined;
   try {
     const url = new URL(value);
-    return !url.username && !url.password && url.hostname.length <= 253 ? url.hostname : undefined;
+    return !url.username && !url.password && url.hostname.length <= 253 ? { host: url.hostname, url: url.href } : undefined;
   } catch {
     return undefined;
   }
 }
 
-export function parseArcSidebar(text: string): ArcSidebarPreview | ArcParseError {
+export function parseArcSidebar(text: string): ArcSidebar | ArcParseError {
   if (text.length > ARC_SIDEBAR_MAX_BYTES) return 'too-large';
   let source: unknown;
   try {
@@ -78,7 +69,7 @@ export function parseArcSidebar(text: string): ArcSidebarPreview | ArcParseError
   const candidates = containers.map(record).filter((item) => Array.isArray(item?.spaces) && Array.isArray(item?.items));
   if (candidates.length !== 1) return 'unrecognized-sidebar';
   const main = candidates[0]!;
-  const result: ArcSidebarPreview = { spaces: [], profiles: [], skipped: 0, limited: false };
+  const result: ArcSidebar = { spaces: [], profiles: [], skipped: 0, limited: false };
   let visits = 0;
 
   function index(values: unknown[], limit: number): Map<string, RecordData> {
@@ -109,9 +100,9 @@ export function parseArcSidebar(text: string): ArcSidebarPreview | ArcParseError
     return number - 1;
   }
 
-  function walk(root: string | undefined, seen = new Set<string>()): { nodes: ArcNode[]; tabs: number } {
+  function walk(root: string | undefined, seen = new Set<string>()): { nodes: ArcSourceNode[]; tabs: number } {
     let tabs = 0;
-    function visit(key: unknown, depth: number): ArcNode | undefined {
+    function visit(key: unknown, depth: number): ArcSourceNode | undefined {
       visits++;
       const nodeId = id(key);
       const item = nodeId === undefined || seen.has(nodeId) ? undefined : items.get(nodeId);
@@ -123,11 +114,12 @@ export function parseArcSidebar(text: string): ArcSidebarPreview | ArcParseError
       const data = record(item.data);
       const tab = record(data?.tab);
       if (tab) {
-        const host = tabHost(tab.savedURL || tab.url);
-        if (host) {
+        const target = tabTarget(tab.savedURL || tab.url);
+        if (target) {
+          const { host, url } = target;
           const name = title(item.title) || title(tab.savedTitle) || title(tab.title);
           tabs++;
-          return { kind: 'tab', title: /^https?:\/\//i.test(name) ? host : name || host, host };
+          return { kind: 'tab', title: /^https?:\/\//i.test(name) ? host : name || host, host, url };
         }
       } else if (record(data?.list) || record(data?.tabGroup) || record(data?.splitView)) {
         const split = record(data?.splitView) !== undefined;
@@ -138,12 +130,12 @@ export function parseArcSidebar(text: string): ArcSidebarPreview | ArcParseError
       return undefined;
     }
 
-    function childrenOf(item: RecordData, depth: number): ArcNode[] {
+    function childrenOf(item: RecordData, depth: number): ArcSourceNode[] {
       if (!Array.isArray(item.childrenIds)) {
         if (item.childrenIds !== undefined) result.skipped++;
         return [];
       }
-      const nodes: ArcNode[] = [];
+      const nodes: ArcSourceNode[] = [];
       for (const child of item.childrenIds) {
         if (visits >= MAX_VISITS || depth > MAX_DEPTH) {
           result.limited = true;
@@ -232,4 +224,19 @@ export function parseArcSidebar(text: string): ArcSidebarPreview | ArcParseError
   }
   result.spaces.forEach((space, index) => { space.todayTabs = walk(todayRoots[index]).tabs; });
   return result;
+}
+
+function hostsOnly(nodes: ArcSourceNode[]): ArcNode[] {
+  return nodes.map((node) => node.kind === 'tab'
+    ? { kind: 'tab', title: node.title, host: node.host }
+    : { kind: node.kind, title: node.title, children: hostsOnly(node.children) });
+}
+
+/** The review Settings shows: titles and hosts only, so paths and query strings never reach the page. */
+export function previewOf(sidebar: ArcSidebar): ArcSidebarPreview {
+  return {
+    ...sidebar,
+    spaces: sidebar.spaces.map((space) => ({ ...space, pinned: hostsOnly(space.pinned) })),
+    profiles: sidebar.profiles.map((profile) => ({ ...profile, favorites: hostsOnly(profile.favorites) })),
+  };
 }

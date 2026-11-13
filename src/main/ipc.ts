@@ -2,7 +2,11 @@ import { clipboard, dialog, ipcMain, Menu, session, shell as electronShell, type
 import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
 import { detectEnv } from '../shared/env';
 import { parseCommand } from '../shared/parser';
-import type { BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, Settings, Suggestion } from '../shared/types';
+import type { ArcImportStatus, ArcReview, BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, Settings, Suggestion } from '../shared/types';
+import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import { findArcSidebar, planArcImport, type ArcImportUndo } from './arc-import';
+import { ARC_SIDEBAR_MAX_BYTES, parseArcSidebar, previewOf, type ArcSidebar } from './arc-sidebar';
 import { BookmarkImports } from './bookmark-import';
 import { isValidBoostName, type Boosts } from './boosts';
 import { BookmarkProfileReadError, bookmarkProfileLabel, discoverBookmarkProfiles, readChromiumBookmarkCandidates } from './chromium-bookmarks';
@@ -68,6 +72,12 @@ export function downloadSuggestions(text: string, currentUrl = ''): Suggestion[]
   const leaf = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() ?? url.host);
   return [{ kind: 'download', label: kind ? `Download ${KIND_LABEL[kind]}: ${leaf}` : `Download ${leaf}`, detail: url.host, action: { type: 'download', url: url.href } }];
 }
+/** The base name of a file the page picked, for display only (the page cannot be trusted to send just a name). */
+function fileLabel(name: unknown): string {
+  if (typeof name !== 'string') return '';
+  return name.slice(0, 260).split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 120) ?? '';
+}
+
 type AuthorizedInvokeEvent = IpcMainInvokeEvent & { senderFrame: WebFrameMain };
 
 export function sanitizeEnvGroups(input: unknown): EnvGroup[] {
@@ -571,7 +581,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('settings', 'bookmarks:review-file', (event, name: unknown, input: unknown, scanLimited: unknown) => {
     const frame = event.senderFrame;
     const generation = beginBookmarkReview(event, frame);
-    const file = typeof name === 'string' ? name.slice(0, 260).split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 120) : '';
+    const file = fileLabel(name);
     return imports.finish(frame, generation, file || 'HTML bookmark export', input, scanLimited === true);
   });
   handle('settings', 'bookmarks:cancel-review', (event) => clearBookmarkReview(event.senderFrame));
@@ -590,6 +600,82 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     const bookmark = store.state.bookmarks.find((item) => item.url === url);
     if (bookmark) tabs.openTab(bookmark.url);
   });
+
+  // Arc sidebar import. Settings sends a file (picked, or found where Arc for Windows keeps it) for review, then
+  // confirms that review by id. The import is planned again at confirm time so it reflects the current tabs.
+  const ARC_ERRORS = {
+    'too-large': 'Choose an Arc sidebar file no larger than 16 MiB.',
+    'invalid-json': 'This file contains invalid JSON. Choose a copy of StorableSidebar.json.',
+    'unrecognized-sidebar': 'Quiver could not recognize this Arc sidebar. Choose a copy of StorableSidebar.json.',
+  } as const;
+  let arcReview: { id: number; frame: WebFrameMain; sidebar: ArcSidebar } | null = null;
+  let arcUndo: ArcImportUndo | null = null;
+  let nextArcId = 0;
+  const arcFolderId = () => `arc-${randomUUID()}`;
+  const detectedArcSidebar = () => findArcSidebar(process.env.LOCALAPPDATA ?? '');
+  const settleArcOffer = () => {
+    if (store.state.arcImportOffer === 'pending') {
+      store.state.arcImportOffer = 'dismissed';
+      store.save();
+    }
+    if (tabs.arcImportOffer) {
+      tabs.arcImportOffer = false;
+      tabs.emit();
+    }
+  };
+  const reviewArc = (frame: WebFrameMain, text: unknown, source: string): ArcReview | { error: string } => {
+    arcReview = null;
+    const sidebar = typeof text === 'string' ? parseArcSidebar(text) : 'unrecognized-sidebar';
+    if (typeof sidebar === 'string') return { error: ARC_ERRORS[sidebar] };
+    const id = ++nextArcId;
+    arcReview = { id, frame, sidebar };
+    return { id, source, preview: previewOf(sidebar), counts: planArcImport(sidebar, tabs.importTargets(), arcFolderId).counts };
+  };
+  handle('settings', 'arc:status', (): ArcImportStatus => ({
+    detected: detectedArcSidebar() !== undefined,
+    offer: store.state.arcImportOffer === 'pending',
+    ...(arcUndo ? { undo: {
+      id: arcUndo.id, tabs: arcUndo.tabIds.length, spaces: arcUndo.createdSpaceIds.length,
+      folders: arcUndo.folders.reduce((total, entry) => total + entry.ids.length, 0),
+    } } : {}),
+  }));
+  handle('settings', 'arc:review-detected', async (event) => {
+    const file = detectedArcSidebar();
+    if (!file) return { error: 'Quiver could not find Arc’s sidebar on this PC. Choose the file instead.' };
+    try {
+      if ((await fs.promises.stat(file)).size > ARC_SIDEBAR_MAX_BYTES) return { error: ARC_ERRORS['too-large'] };
+      return reviewArc(event.senderFrame, await fs.promises.readFile(file, 'utf8'), 'Arc on this PC');
+    } catch {
+      return { error: 'Quiver could not read Arc’s sidebar file. Close Arc and try again, or choose a copy.' };
+    }
+  });
+  handle('settings', 'arc:review-file', (event, name: unknown, text: unknown) => {
+    const file = fileLabel(name);
+    return reviewArc(event.senderFrame, text, file || 'StorableSidebar.json');
+  });
+  handle('settings', 'arc:cancel-review', (event) => {
+    if (arcReview?.frame === event.senderFrame) arcReview = null;
+  });
+  handle('settings', 'arc:import', (event, id: unknown) => {
+    const review = arcReview;
+    if (!review || review.id !== id || review.frame !== event.senderFrame) return { error: 'Review the Arc sidebar again before importing.' };
+    arcReview = null;
+    const plan = planArcImport(review.sidebar, tabs.importTargets(), arcFolderId);
+    arcUndo = tabs.importArc(plan, ++nextArcId);
+    settleArcOffer();
+    return { counts: plan.counts, undoId: arcUndo.id };
+  });
+  handle('settings', 'arc:undo', (_event, id: unknown) => {
+    if (!arcUndo || arcUndo.id !== id) return { error: 'There is no Arc import to undo.' };
+    const removed = tabs.undoArcImport(arcUndo);
+    arcUndo = null;
+    return { removed };
+  });
+  handle('shell', 'arc:offer-open', () => {
+    settleArcOffer();
+    tabs.navigate('quiver://settings?import=arc');
+  });
+  handle('shell', 'arc:offer-dismiss', () => settleArcOffer());
 
   // boosts
   handle('boosts', 'boost:list', () => boosts.list());

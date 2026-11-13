@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME, SHARED_PARTITION } from '../shared/constants';
 import type { Settings } from '../shared/types';
+import { findArcSidebar } from './arc-import';
 import { normalizeBookmarks } from './bookmarks';
 import { Boosts, isValidBoostName } from './boosts';
 import { configureSitePermissions } from './browser-policy';
@@ -419,6 +420,9 @@ async function main(): Promise<void> {
   await Promise.all([shell.webContents.loadURL('quiver://app/shell.html'), overlay.webContents.loadURL('quiver://app/commandbar.html')]);
   const interrupted = store.state.sessionOpen === true;
   const restored = tabs.restore();
+  // Offer the Arc import once, on the first launch of this profile, when Arc for Windows has a sidebar to bring over.
+  if (store.firstRun && findArcSidebar(process.env.LOCALAPPDATA ?? '')) store.state.arcImportOffer = 'pending';
+  tabs.arcImportOffer = store.state.arcImportOffer === 'pending';
   if (interrupted && restored.tabs > 0) tabs.showSessionRecovery(restored);
   if (launchPlacement.relocated) tabs.showWindowRecovery();
   store.state.bounds = { ...launchPlacement.bounds, maximized: launchPlacement.maximized };
