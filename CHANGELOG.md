@@ -6,9 +6,8 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 - HLS downloads fetch a separate audio playlist (`#EXT-X-MEDIA`, preferring `DEFAULT=YES`) and combine fragmented-MP4 video and audio into one `.mp4`, so the best variant is no longer passed over for a lower one with audio inside.
 - Local servers in the sidebar are named after their project folder (`package.json` name, else the folder name), found from the listening process's command line.
-- Split view: two tabs of a Space side by side (tab menu, `split …` in the command bar, `Ctrl+Shift+=` / `Ctrl+Shift+-`), with a draggable divider (20–80%, remembered per pair), the active pane followed by the address bar, find, zoom and phone preview, and both tabs marked in the sidebar.
+- Split view: two tabs of a Space side by side (tab menu, `split …` in the command bar, `Ctrl+Shift+\` / `Ctrl+Shift+-`), with a draggable divider (20–80%, remembered per pair), the active pane followed by the address bar, find, zoom and phone preview, and both tabs marked in the sidebar.
 - Peek: links pinned tabs open in a new tab or window show in a floating preview with *Open as tab* and *Close* (Esc). Setting in Settings → Tabs, on by default.
-- `Ctrl+Shift+=` now starts split view instead of zooming in; `Ctrl+=` still zooms.
 - Light and dark themes: **Settings → Appearance** chooses System (follows Windows, the default), Light or Dark for every Quiver page, native menus and dialogs, and websites' `prefers-color-scheme`. Both palettes meet WCAG AA for text; high-contrast mode is unchanged.
 - Settings has a section list (beside the page on wide windows, above it on narrow ones) that highlights the section you are reading, and a search box that filters sections.
 - Collapsed sidebar opens over the page while you hover it and closes when the pointer leaves; the page does not resize. `Ctrl+B` still pins it open or closed.

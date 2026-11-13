@@ -67,6 +67,25 @@
       </div>
     </div>
   </section>
+  <section class="settings-section" id="section-arc" aria-labelledby="arc-import-title">
+    <h2 id="arc-import-title" tabindex="-1">Import from Arc</h2>
+    <p class="note" id="arc-sidebar-help">Bring Arc’s Spaces, pinned tabs, folders and Favorites into Quiver from <code>StorableSidebar.json</code>. Arc for Windows keeps it in <code>%LOCALAPPDATA%\Packages\TheBrowserCompany.Arc_…\LocalCache\Local\Arc</code>. You review everything before Quiver changes anything.</p>
+    <div class="row">
+      <button type="button" class="btn" id="arc-sidebar-detected" hidden>Review Arc sidebar on this PC</button>
+      <button type="button" class="btn" id="arc-sidebar-choose" aria-describedby="arc-sidebar-help">Choose Arc sidebar file…</button>
+      <input id="arc-sidebar-file" type="file" accept=".json,application/json" hidden>
+      <button type="button" class="btn" id="arc-sidebar-clear" hidden>Cancel review</button>
+      <button type="button" class="btn" id="arc-sidebar-undo" hidden>Undo Arc import</button>
+    </div>
+    <p class="status" id="arc-sidebar-status" role="status"></p>
+    <section class="group arc-sidebar-review" id="arc-sidebar-review" aria-labelledby="arc-sidebar-heading" hidden>
+      <h3 id="arc-sidebar-heading" tabindex="-1">Review Arc sidebar</h3>
+      <p id="arc-sidebar-summary"></p>
+      <div id="arc-sidebar-content"></div>
+      <p class="note">Spaces with the same name are merged and tabs already in that Space are skipped. Imported tabs are pinned and load when you open them. Quiver has not changed anything yet.</p>
+      <div class="row"><button type="button" class="btn primary" id="arc-sidebar-import">Import</button></div>
+    </section>
+  </section>
   <section class="settings-section" id="section-environments" aria-labelledby="environments-heading">
     <h2 id="environments-heading" tabindex="-1">Environments</h2>
     <p class="note">Group the origins of one app once. Then <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>) cycles local → staging → production, keeping path, query and hash. Leave an origin empty to skip it.</p>
@@ -111,7 +130,10 @@
   </section>
   <section class="settings-section" id="section-privacy" aria-labelledby="privacy-heading">
     <h2 id="privacy-heading" tabindex="-1">Privacy</h2>
-    <p class="note">Quiver sends no telemetry, has no account and does not check for updates. Crash reports stay on this device. These settings apply to all Spaces.</p>
+    <p class="note">Quiver sends no telemetry, has no account and checks for updates only if you turn that on under Updates. Crash reports stay on this device. These settings apply to all Spaces.</p>
+    <div class="row"><label for="privacy-block">Block ads and trackers</label><input id="privacy-block" type="checkbox"><span class="note">Cancel requests from other sites to a built-in list of well-known ad and tracker hosts. The list ships with Quiver and is never downloaded. The shield in the toolbar shows how many were blocked on the page; click it to allow ads on that site.</span></div>
+    <p class="note" id="privacy-allow-heading">Sites where ads are allowed:</p>
+    <ul class="site-permissions" id="privacy-allow-list" aria-labelledby="privacy-allow-heading"></ul>
     <div class="row"><label for="privacy-gpc">Global Privacy Control</label><input id="privacy-gpc" type="checkbox"><span class="note">Tell sites not to sell or share your data (<code>Sec-GPC</code> and <code>DNT</code> headers).</span></div>
     <div class="row"><label for="privacy-webrtc">Hide local IP</label><input id="privacy-webrtc" type="checkbox"><span class="note">Keep WebRTC calls from revealing addresses on your local network.</span></div>
     <div class="row">
@@ -131,6 +153,20 @@
     <div class="row"><label for="privacy-clear">Clear on exit</label><input id="privacy-clear" type="checkbox"><span class="note">Delete cookies, site storage and cache in every Space when Quiver closes. You will be signed out of sites; tabs, bookmarks and notes are kept.</span></div>
     <p class="status" id="privacy-status" role="status"></p>
   </section>
+  <section class="settings-section" id="section-shortcuts" aria-labelledby="shortcuts-heading">
+    <h2 id="shortcuts-heading" tabindex="-1">Shortcuts</h2>
+    <p class="note">Choose Change, then press the new key combination (Esc cancels). Keys marked “page first” go to the web page first, as in Chrome: in an editor such as Google Docs, <kbd>Ctrl+B</kbd> is bold and <kbd>Ctrl+F</kbd> is the editor’s own find. Quiver always keeps <kbd>Ctrl+T</kbd>, <kbd>Ctrl+W</kbd>, <kbd>Ctrl+L</kbd>, <kbd>Ctrl+K</kbd>, <kbd>Ctrl+R</kbd>/<kbd>F5</kbd>, <kbd>F12</kbd>, <kbd>Ctrl+J</kbd>, <kbd>Ctrl+Tab</kbd>, <kbd>Ctrl+PageUp/PageDown</kbd> (with or without Shift), <kbd>Ctrl+Shift+T/N/I</kbd>, <kbd>Ctrl+1–9</kbd> and <kbd>Alt+1–9</kbd>.</p>
+    <table class="shortcuts" aria-labelledby="shortcuts-heading">
+      <thead><tr><th scope="col">Action</th><th scope="col">Keys</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody id="shortcut-rows"></tbody>
+    </table>
+    <div class="row"><button class="btn" id="shortcuts-reset-all">Reset all shortcuts</button><span class="status" id="shortcut-status" role="status"></span></div>
+  </section>
+  <section class="settings-section" id="section-updates" aria-labelledby="updates-heading">
+    <h2 id="updates-heading" tabindex="-1">Updates</h2>
+    <div class="row"><label for="updates-on">Check for new versions</label><input id="updates-on" type="checkbox"><span class="note">Off by default. When on, Quiver asks GitHub (<code>api.github.com</code>) once a day for the latest release and shows a notice in the sidebar when a newer one exists. Nothing is downloaded or installed; the notice opens the release page.</span></div>
+    <div class="row"><button class="btn" id="updates-check" disabled>Check now</button><span class="status" id="updates-status" role="status"></span></div>
+  </section>
   <section class="settings-section" id="section-downloads" aria-labelledby="downloads-heading">
     <h2 id="downloads-heading" tabindex="-1">Downloads</h2>
     <div class="row"><label for="ask-save">Ask where to save</label><input id="ask-save" type="checkbox"><span class="note">Show Save As for every download. When off, files go straight to your Downloads folder (the Data folder in Quiver Portable) and get a number if the name is taken.</span></div>
@@ -147,6 +183,7 @@
         <option value="720">After 30 days</option>
       </select>
     </div>
+    <div class="row"><label for="peek-pinned">Open links from pinned tabs in Peek</label><input id="peek-pinned" type="checkbox"><span class="note">A link a pinned tab would open in a new tab or window shows in a floating preview over the page instead. Press Esc to close it or choose Open as tab to keep it.</span></div>
     <p class="note">Tabs below the divider that you haven't looked at for this long move to the archive. Pinned tabs, the tab you're on in each Space and tabs playing sound stay. Type <kbd>archive</kbd> in the command bar to search and reopen them. Closing a pinned tab takes it back to its pinned page instead of removing it.</p>
   </section>
   <section class="settings-section" id="section-local-servers" aria-labelledby="local-servers-heading">
@@ -154,114 +191,6 @@
     <div class="row"><label for="scan">Detect servers</label><input id="scan" type="checkbox"><span class="note">Lists HTTP servers listening on this machine (netstat + a local request for the page title). Pauses while the window is in the background.</span></div>
   </section>
   </div>
-
-  <h2 id="arc-import-title" tabindex="-1">Import from Arc</h2>
-  <p class="note" id="arc-sidebar-help">Bring Arc’s Spaces, pinned tabs, folders and Favorites into Quiver from <code>StorableSidebar.json</code>. Arc for Windows keeps it in <code>%LOCALAPPDATA%\Packages\TheBrowserCompany.Arc_…\LocalCache\Local\Arc</code>. You review everything before Quiver changes anything.</p>
-  <div class="row">
-    <button type="button" class="btn" id="arc-sidebar-detected" hidden>Review Arc sidebar on this PC</button>
-    <button type="button" class="btn" id="arc-sidebar-choose" aria-describedby="arc-sidebar-help">Choose Arc sidebar file…</button>
-    <input id="arc-sidebar-file" type="file" accept=".json,application/json" hidden>
-    <button type="button" class="btn" id="arc-sidebar-clear" hidden>Cancel review</button>
-    <button type="button" class="btn" id="arc-sidebar-undo" hidden>Undo Arc import</button>
-  </div>
-  <p class="status" id="arc-sidebar-status" role="status"></p>
-  <section class="group arc-sidebar-review" id="arc-sidebar-review" aria-labelledby="arc-sidebar-heading" hidden>
-    <h3 id="arc-sidebar-heading" tabindex="-1">Review Arc sidebar</h3>
-    <p id="arc-sidebar-summary"></p>
-    <div id="arc-sidebar-content"></div>
-    <p class="note">Spaces with the same name are merged and tabs already in that Space are skipped. Imported tabs are pinned and load when you open them. Quiver has not changed anything yet.</p>
-    <div class="row"><button type="button" class="btn primary" id="arc-sidebar-import">Import</button></div>
-  </section>
-
-  <h2>Environments</h2>
-  <p class="note">Group the origins of one app once. Then <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>) cycles local → staging → production, keeping path, query and hash. Leave an origin empty to skip it.</p>
-  <div id="groups"></div>
-  <div class="row"><button class="btn" id="addgroup">Add environment group</button><span class="status" id="envstatus" role="status"></span></div>
-
-  <h2>Command bar</h2>
-  <div class="row"><label for="engine">Search engine</label><input id="engine" type="text" spellcheck="false" placeholder="https://duckduckgo.com/?q=%s"></div>
-  <p class="note">Must start with http(s):// and contain <code>%s</code> for the query. Search text is only sent when you press Enter on a search result.</p>
-
-  <h2>Camera, microphone and screen sharing</h2>
-  <p class="note">Sites ask before using your camera, microphone or screen; Quiver shows the question in the toolbar. Known meeting sites (Google Meet, Zoom, Microsoft Teams, Webex, Jitsi, Whereby) can ask; other sites are denied until they ask and you agree. Choices you saved:</p>
-  <ul class="site-permissions" id="site-permissions" aria-label="Saved site permissions"></ul>
-  <h2 id="sync-heading">Sync</h2>
-  <p class="note">Sync through a folder you already sync, such as OneDrive, Dropbox or Syncthing. Each device writes only its own file in <code>Quiver Sync</code>; no Quiver server is involved. For each part, the most recent change on any device wins. Sync never deletes Spaces or closes tabs.</p>
-  <div class="row">
-    <label>Folder</label>
-    <span class="mono" id="sync-folder">Not syncing</span>
-    <button class="btn primary" id="sync-choose">Choose folder…</button>
-    <button class="btn" id="sync-now" hidden>Sync now</button>
-    <button class="btn danger" id="sync-disconnect" hidden>Stop syncing</button>
-  </div>
-  <div class="row"><label for="sync-device">This device</label><input id="sync-device" type="text" maxlength="60"></div>
-  <fieldset class="sync-parts">
-    <legend>Sync</legend>
-    <label><input type="checkbox" data-sync="settings"> Settings (environments, search engine, local servers)</label>
-    <label><input type="checkbox" data-sync="bookmarks"> Bookmarks</label>
-    <label><input type="checkbox" data-sync="spaces"> Spaces, folders and pinned tabs</label>
-    <label><input type="checkbox" data-sync="research"> Research topics and notes</label>
-    <label><input type="checkbox" data-sync="boosts"> Boosts. Off by default: Boosts run code on websites, so only turn this on if no one else can write to the sync folder.</label>
-  </fieldset>
-  <p class="status" id="sync-status" role="status"></p>
-  <h2>History</h2>
-  <div class="row"><label for="history-on">Remember history</label><input id="history-on" type="checkbox"><span class="note">Keeps up to 5,000 visited web pages on this device so <kbd>Ctrl+K</kbd> can find them (<code>h</code> <i>words</i> searches only history).</span></div>
-  <div class="row"><label>Saved pages</label><span id="history-count" class="note">…</span><button class="btn danger" id="history-clear">Clear history</button></div>
-  <h2>Privacy</h2>
-  <p class="note">Quiver sends no telemetry, has no account and checks for updates only if you turn that on under Updates. Crash reports stay on this device. These settings apply to all Spaces.</p>
-  <p class="note">Quiver sends no telemetry, has no account and does not check for updates. Crash reports stay on this device. These settings apply to all Spaces.</p>
-  <div class="row"><label for="privacy-block">Block ads and trackers</label><input id="privacy-block" type="checkbox"><span class="note">Cancel requests from other sites to a built-in list of well-known ad and tracker hosts. The list ships with Quiver and is never downloaded. The shield in the toolbar shows how many were blocked on the page; click it to allow ads on that site.</span></div>
-  <p class="note" id="privacy-allow-heading">Sites where ads are allowed:</p>
-  <ul class="site-permissions" id="privacy-allow-list" aria-labelledby="privacy-allow-heading"></ul>
-  <div class="row"><label for="privacy-gpc">Global Privacy Control</label><input id="privacy-gpc" type="checkbox"><span class="note">Tell sites not to sell or share your data (<code>Sec-GPC</code> and <code>DNT</code> headers).</span></div>
-  <div class="row"><label for="privacy-webrtc">Hide local IP</label><input id="privacy-webrtc" type="checkbox"><span class="note">Keep WebRTC calls from revealing addresses on your local network.</span></div>
-  <div class="row">
-    <label for="privacy-dns">Secure DNS</label>
-    <select id="privacy-dns">
-      <option value="automatic">Automatic: encrypt when your DNS provider supports it</option>
-      <option value="off">Off: use your system DNS</option>
-      <option value="custom">Custom DNS-over-HTTPS server</option>
-    </select>
-  </div>
-  <div class="row" id="privacy-doh-row" hidden>
-    <label for="privacy-doh">DoH server</label>
-    <input id="privacy-doh" type="text" spellcheck="false" placeholder="https://dns.example/dns-query{?dns}">
-    <button class="btn" id="privacy-doh-save">Save</button>
-  </div>
-  <div class="row"><label for="privacy-spell">Spell check</label><input id="privacy-spell" type="checkbox"><span class="note" id="privacy-spell-note">Uses the Windows spell checker; nothing is downloaded.</span></div>
-  <div class="row"><label for="privacy-clear">Clear on exit</label><input id="privacy-clear" type="checkbox"><span class="note">Delete cookies, site storage and cache in every Space when Quiver closes. You will be signed out of sites; tabs, bookmarks and notes are kept.</span></div>
-  <p class="status" id="privacy-status" role="status"></p>
-
-  <h2 id="shortcuts-heading">Shortcuts</h2>
-  <p class="note">Choose Change, then press the new key combination (Esc cancels). Keys marked “page first” go to the web page first, as in Chrome: in an editor such as Google Docs, <kbd>Ctrl+B</kbd> is bold and <kbd>Ctrl+F</kbd> is the editor’s own find. Quiver always keeps <kbd>Ctrl+T</kbd>, <kbd>Ctrl+W</kbd>, <kbd>Ctrl+L</kbd>, <kbd>Ctrl+K</kbd>, <kbd>Ctrl+R</kbd>/<kbd>F5</kbd>, <kbd>F12</kbd>, <kbd>Ctrl+J</kbd>, <kbd>Ctrl+Tab</kbd>, <kbd>Ctrl+PageUp/PageDown</kbd> (with or without Shift), <kbd>Ctrl+Shift+T/N/I</kbd>, <kbd>Ctrl+1–9</kbd> and <kbd>Alt+1–9</kbd>.</p>
-  <table class="shortcuts" aria-labelledby="shortcuts-heading">
-    <thead><tr><th scope="col">Action</th><th scope="col">Keys</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
-    <tbody id="shortcut-rows"></tbody>
-  </table>
-  <div class="row"><button class="btn" id="shortcuts-reset-all">Reset all shortcuts</button><span class="status" id="shortcut-status" role="status"></span></div>
-
-  <h2 id="updates-heading">Updates</h2>
-  <div class="row"><label for="updates-on">Check for new versions</label><input id="updates-on" type="checkbox"><span class="note">Off by default. When on, Quiver asks GitHub (<code>api.github.com</code>) once a day for the latest release and shows a notice in the sidebar when a newer one exists. Nothing is downloaded or installed; the notice opens the release page.</span></div>
-  <div class="row"><button class="btn" id="updates-check" disabled>Check now</button><span class="status" id="updates-status" role="status"></span></div>
-
-  <h2>Downloads</h2>
-  <div class="row"><label for="ask-save">Ask where to save</label><input id="ask-save" type="checkbox"><span class="note">Show Save As for every download. When off, files go straight to your Downloads folder (the Data folder in Quiver Portable) and get a number if the name is taken.</span></div>
-  <h2>Tabs</h2>
-  <div class="row">
-    <label for="archive-after">Archive unused tabs</label>
-    <select id="archive-after">
-      <option value="0">Never</option>
-      <option value="12">After 12 hours</option>
-      <option value="24">After 1 day</option>
-      <option value="168">After 7 days</option>
-      <option value="720">After 30 days</option>
-    </select>
-  </div>
-  <div class="row"><label for="peek-pinned">Open links from pinned tabs in Peek</label><input id="peek-pinned" type="checkbox"><span class="note">A link a pinned tab would open in a new tab or window shows in a floating preview over the page instead. Press Esc to close it or choose Open as tab to keep it.</span></div>
-  <p class="note">Tabs below the divider that you haven't looked at for this long move to the archive. Pinned tabs, the tab you're on in each Space and tabs playing sound stay. Type <kbd>archive</kbd> in the command bar to search and reopen them. Closing a pinned tab takes it back to its pinned page instead of removing it.</p>
-
-  <h2>Local servers</h2>
-  <div class="row"><label for="scan">Detect servers</label><input id="scan" type="checkbox"><span class="note">Lists HTTP servers listening on this machine (netstat + a local request for the page title). Pauses while the window is in the background.</span></div>
 </div>
 <script type="module" src="settings.js"></script>
 </body>

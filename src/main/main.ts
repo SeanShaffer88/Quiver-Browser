@@ -1,5 +1,4 @@
-import { app, BaseWindow, clipboard, crashReporter, dialog, desktopCapturer, Menu, nativeTheme, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
-import { app, BaseWindow, clipboard, net, crashReporter, dialog, desktopCapturer, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
+import { app, BaseWindow, clipboard, crashReporter, dialog, desktopCapturer, Menu, nativeTheme, net, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME, SHARED_PARTITION } from '../shared/constants';
@@ -143,7 +142,6 @@ async function main(): Promise<void> {
   // Privacy settings must reach every session before anything (including the internal protocol) creates one.
   const store = new Store();
   setShortcutOverrides(store.state.settings.shortcuts);
-  const privacy = new PrivacyController(() => store.state.settings.privacy, (options) => app.configureHostResolver(options));
   // Quiver's own pages (settings, command bar) are not ad-blocked. Blocked counts reach the toolbar once tabs exist.
   let onBlockedChanged = () => {};
   const privacy = new PrivacyController(() => store.state.settings.privacy, (options) => app.configureHostResolver(options), {

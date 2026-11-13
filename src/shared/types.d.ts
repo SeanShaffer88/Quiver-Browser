@@ -270,8 +270,7 @@ export type BrowserCommand =
   | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings' | 'downloads'
   | 'find' | 'zoom-in' | 'zoom-out' | 'zoom-reset'
   | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space'
-  | 'split' | 'unsplit';
-  | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space' | 'private-space';
+  | 'split' | 'unsplit' | 'private-space';
 
 export interface Suggestion {
   kind: string;

@@ -66,6 +66,9 @@ export const REBINDABLE: readonly { action: ShortcutAction; label: string; defau
   { action: 'console', label: 'Open the console', defaults: [], pageFirst: true },
   { action: 'next-space', label: 'Next Space', defaults: [], pageFirst: true },
   { action: 'prev-space', label: 'Previous Space', defaults: [], pageFirst: true },
+  // Not Ctrl+Shift+=: that is Ctrl+Plus (zoom in) on US layouts.
+  { action: 'split', label: 'Open split view', defaults: ['Ctrl+Shift+Backslash'], pageFirst: true },
+  { action: 'unsplit', label: 'Exit split view', defaults: ['Ctrl+Shift+Minus'], pageFirst: true },
 ];
 
 /** Keys every page needs for editing; binding them would take copy/paste/undo away from non-editable selections. */
@@ -115,20 +118,6 @@ function reservedAction(binding: Binding): ShortcutAction | null {
   }
   if (!ctrl) return null;
 
-  if (code === 'KeyE' && (alt || shift)) return 'env';
-  if (code === 'KeyP' && shift && !alt) return 'preview';
-  if (code === 'KeyT' && shift && !alt) return 'reopen-tab';
-  if (code === 'KeyI' && shift && !alt) return 'devtools';
-  if (code === 'KeyB' && shift && !alt) return 'boosts';
-  // Before zoom: Ctrl+Shift+= is the split shortcut, Ctrl+= (with or without Shift on other layouts' Plus) zooms.
-  if (shift && !alt && code === 'Equal') return 'split';
-  if (shift && !alt && code === 'Minus') return 'unsplit';
-  if (code === 'KeyN' && shift && !alt) return 'private-space';
-  if (code === 'Tab' && !alt) return shift ? 'recent-tab-back' : 'recent-tab';
-  if (!alt && (code === 'Equal' || code === 'NumpadAdd')) return 'zoom-in';
-  if (!alt && !shift && (code === 'Minus' || code === 'NumpadSubtract')) return 'zoom-out';
-  if (!alt && !shift && (code === 'Digit0' || code === 'Numpad0')) return 'zoom-reset';
-  if ((code === 'PageUp' || code === 'PageDown') && !alt) {
   if (!ctrl || alt) return null;
   if (code === 'Tab') return shift ? 'recent-tab-back' : 'recent-tab';
   if (code === 'PageUp' || code === 'PageDown') {
@@ -138,7 +127,7 @@ function reservedAction(binding: Binding): ShortcutAction | null {
   if (shift) {
     if (code === 'KeyT') return 'reopen-tab';
     if (code === 'KeyI') return 'devtools';
-    // Ctrl+Shift+N has no Quiver action yet but is reserved so it stays free for a private window.
+    if (code === 'KeyN') return 'private-space';
     return null;
   }
   switch (code) {
@@ -163,7 +152,7 @@ function reservedAction(binding: Binding): ShortcutAction | null {
 
 /** True for a binding that belongs to Quiver's reserved set and so can't be reassigned. */
 export function isReservedBinding(binding: Binding): boolean {
-  return reservedAction(binding) !== null || binding === 'Ctrl+Shift+KeyN';
+  return reservedAction(binding) !== null;
 }
 
 export type ShortcutOverrides = Partial<Record<ShortcutAction, Binding>>;

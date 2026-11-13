@@ -2,12 +2,11 @@ import { clipboard, dialog, ipcMain, Menu, session, shell as electronShell, type
 import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
 import { detectEnv } from '../shared/env';
 import { parseCommand } from '../shared/parser';
-import type { ArcImportStatus, ArcReview, BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, Settings, Suggestion } from '../shared/types';
+import type { ArcImportStatus, ArcReview, BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, Settings, ShortcutRow, Suggestion } from '../shared/types';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { findArcSidebar, planArcImport, type ArcImportUndo } from './arc-import';
 import { ARC_SIDEBAR_MAX_BYTES, parseArcSidebar, previewOf, type ArcSidebar } from './arc-sidebar';
-import type { BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, Settings, ShortcutRow, Suggestion } from '../shared/types';
 import { BookmarkImports } from './bookmark-import';
 import { isValidBoostName, type Boosts } from './boosts';
 import { BookmarkProfileReadError, bookmarkProfileLabel, discoverBookmarkProfiles, readChromiumBookmarkCandidates } from './chromium-bookmarks';
@@ -541,6 +540,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (patch.theme !== undefined) {
       s.theme = normalizeTheme(patch.theme);
       d.onThemeChanged();
+    }
     if (patch.shortcuts !== undefined) {
       s.shortcuts = normalizeShortcutOverrides(patch.shortcuts) as Record<string, string>;
       setShortcutOverrides(s.shortcuts);
