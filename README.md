@@ -66,6 +66,8 @@ This section describes the current source. See the release notes for the feature
 
 Right-click a tab to pin it or file it in a folder. Pinned tabs and folders sit above the **Tabs** divider; folders nest, collapse (click, or `←` / `→`), rename (double-click or `F2`) and can be dragged onto other folders. Drop a tab on a folder to pin it there, or on the divider to unpin it. Drag a tab in the sidebar to reorder it within its Space; the order is saved with the session. In the tab list, `↑` / `↓` / `Home` / `End` move focus between tabs. The list only draws the rows in view, so Spaces with hundreds of tabs stay responsive.
 
+Right-click a tab to copy its link or a Markdown link (`[title](url)`), or to open the console; clicking a local tab's red error count opens the console too. In the command bar, `?` lists every action and its shortcut.
+
 Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a title or hostname to narrow the results. Use the arrow keys and Enter to switch directly to a tab in its Space. Each result shows its Space and, when available, its environment.
 
 | Keys | Action |
@@ -80,7 +82,9 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `Ctrl+Shift+B` | Boosts page |
 | `Ctrl+W` | Close tab |
 | `Ctrl+Shift+T` | Reopen the latest closed tab in its original Space |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab`, `Ctrl+PageDown` / `Ctrl+PageUp` | Next / previous tab |
+| `Ctrl+Tab` | Back to the tab you used last; keep holding `Ctrl` and press `Tab` again to go further back |
+| `Ctrl+PageDown` / `Ctrl+PageUp` | Next / previous tab in sidebar order |
+| `Alt+1…9` | Switch to Space 1–9 |
 | `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown` | Move the active tab up / down in its Space |
 | `Ctrl+1…9` | Jump to tab |
 | `Ctrl+R` / `F5` | Reload |

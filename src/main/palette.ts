@@ -8,8 +8,14 @@ export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string
   { command: 'reload', label: 'Reload page', keys: 'Ctrl+R', keywords: 'refresh' },
   { command: 'back', label: 'Go back', keys: 'Alt+←', keywords: 'history previous' },
   { command: 'forward', label: 'Go forward', keys: 'Alt+→', keywords: 'history next' },
-  { command: 'next-tab', label: 'Next tab', keys: 'Ctrl+Tab' },
-  { command: 'prev-tab', label: 'Previous tab', keys: 'Ctrl+Shift+Tab' },
+  { command: 'recent-tab', label: 'Switch to the last tab you used', keys: 'Ctrl+Tab', keywords: 'recent previous back' },
+  { command: 'next-tab', label: 'Next tab in the sidebar', keys: 'Ctrl+PageDown' },
+  { command: 'prev-tab', label: 'Previous tab in the sidebar', keys: 'Ctrl+PageUp' },
+  { command: 'copy-link', label: 'Copy link', keys: '', keywords: 'url address clipboard share' },
+  { command: 'copy-markdown-link', label: 'Copy Markdown link', keys: '', keywords: 'url title clipboard md share' },
+  { command: 'console', label: 'Open the console', keys: '', keywords: 'devtools errors log' },
+  { command: 'next-space', label: 'Next Space', keys: '', keywords: 'switch' },
+  { command: 'prev-space', label: 'Previous Space', keys: '', keywords: 'switch' },
   { command: 'move-tab-up', label: 'Move tab up', keys: 'Ctrl+Shift+PageUp', keywords: 'reorder' },
   { command: 'move-tab-down', label: 'Move tab down', keys: 'Ctrl+Shift+PageDown', keywords: 'reorder' },
   { command: 'toggle-sidebar', label: 'Toggle sidebar', keys: 'Ctrl+B', keywords: 'collapse expand' },
@@ -85,7 +91,7 @@ export type PaletteScope = 'all' | 'actions' | 'bookmarks';
 
 export function paletteQuery(text: string): { scope: PaletteScope; query: string } | undefined {
   const trimmed = text.trim();
-  if (trimmed.startsWith('>')) return { scope: 'actions', query: trimmed.slice(1).trim() };
+  if (trimmed.startsWith('>') || trimmed.startsWith('?')) return { scope: 'actions', query: trimmed.slice(1).trim() };
   const bm = /^(?:bm|bookmarks?)(?:\s+([\s\S]*))?$/i.exec(trimmed);
   if (bm) return { scope: 'bookmarks', query: (bm[1] ?? '').trim() };
   if (/^\S+$/.test(trimmed) && /^(?:bm|bookmarks?)\S/i.test(trimmed)) return undefined;

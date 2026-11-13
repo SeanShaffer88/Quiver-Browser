@@ -34,6 +34,7 @@ import {
   type ClosedTab,
 } from './session-recovery';
 import { moveInGroup } from './tab-order';
+import { markdownLink, recentOrder } from './keyboard-workflows';
 import { canNest, deleteFolder, displayOrder, folderName, placeRelative, sidebarRows } from './tab-tree';
 
 interface Tab {
@@ -294,6 +295,9 @@ export class TabManager {
 
   attachShortcuts(wc: WebContents): void {
     wc.on('before-input-event', (event, input) => {
+      // A Ctrl+Tab walk ends when Ctrl is no longer held. Switching tabs moves focus, and Chromium can drop
+      // the Ctrl release in the newly focused page, so any key event without Ctrl ends it too (plus a timeout).
+      if (this.recentWalk && (!input.control && !input.meta || input.key === 'Control' && input.type === 'keyUp')) this.endRecentWalk();
       const action = shortcutFor(input);
       if (action) {
         event.preventDefault();
@@ -506,10 +510,12 @@ export class TabManager {
     }
     this.activeTabId = id;
     this.lastActive[tab.spaceId] = id;
+    if (!this.recentWalk) this.touchRecent(id);
     if (tab.pendingUrl) this.load(tab, tab.pendingUrl);
     this.layout();
     this.syncPhone();
-    if (!this.overlayOpen) tab.view.webContents.focus();
+    // During a Ctrl+Tab walk focus stays put, so the Ctrl release reaches the view that saw Ctrl pressed.
+    if (!this.overlayOpen && !this.recentWalk) tab.view.webContents.focus();
     this.persist();
     this.emit();
   }
@@ -694,6 +700,75 @@ export class TabManager {
     this.setFolders(spaceId, result.folders);
     this.persist();
     this.emit();
+  }
+
+  // ───────── recent tabs, Spaces by number, links and console ─────────
+  private recent: number[] = [];
+  private recentWalk: { order: number[]; index: number } | null = null;
+  private recentWalkTimer: NodeJS.Timeout | null = null;
+
+  private touchRecent(id: number): void {
+    this.recent = [id, ...this.recent.filter((r) => r !== id && this.tabs.has(r))].slice(0, 50);
+  }
+
+  /** Ctrl+Tab: step through the active Space's tabs by most recent use while Ctrl is held. */
+  cycleRecent(delta: number): void {
+    if (!this.recentWalk) {
+      const sidebar = this.orderedSpaceTabs().map((t) => t.id);
+      this.recentWalk = { order: recentOrder(this.recent, sidebar, this.activeTabId), index: 0 };
+    }
+    const { order } = this.recentWalk;
+    if (order.length < 2) return;
+    this.recentWalk.index = (this.recentWalk.index + delta + order.length) % order.length;
+    this.activateTab(order[this.recentWalk.index]);
+    if (this.recentWalkTimer) clearTimeout(this.recentWalkTimer);
+    this.recentWalkTimer = setTimeout(() => this.endRecentWalk(), 1500);
+  }
+
+  endRecentWalk(): void {
+    if (this.recentWalkTimer) clearTimeout(this.recentWalkTimer);
+    this.recentWalkTimer = null;
+    if (!this.recentWalk) return;
+    this.recentWalk = null;
+    if (this.activeTabId !== null) {
+      this.touchRecent(this.activeTabId);
+      const wc = this.tabs.get(this.activeTabId)?.view.webContents;
+      if (wc && !wc.isDestroyed() && !this.overlayOpen) wc.focus();
+    }
+  }
+
+  spaceByIndex(n: number): void {
+    const space = this.spaces[n - 1];
+    if (space) this.activateSpace(space.id);
+  }
+
+  cycleSpace(delta: number): void {
+    if (this.spaces.length < 2) return;
+    const i = this.spaces.findIndex((s) => s.id === this.activeSpaceId);
+    this.activateSpace(this.spaces[(i + delta + this.spaces.length) % this.spaces.length].id);
+  }
+
+  /** The active web tab's address, optionally as a Markdown link. Credentials are never copied. */
+  activeLink(markdown: boolean): string | null {
+    const tab = this.activeTab;
+    if (!tab || tab.internal) return null;
+    const url = URL.parse(this.tabUrl(tab));
+    if (!url || !/^(?:https?|file):$/.test(url.protocol)) return null;
+    url.username = '';
+    url.password = '';
+    return markdown ? markdownLink(tab.titleIsExplicit ? tab.title : '', url.href) : url.href;
+  }
+
+  /** Open DevTools on the Console panel (from the console-error badge). */
+  openConsole(id: number): void {
+    const wc = this.tabs.get(id)?.view.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    const show = () => void wc.devToolsWebContents?.executeJavaScript("DevToolsAPI.showPanel('console')").catch(() => undefined);
+    if (wc.isDevToolsOpened()) show();
+    else {
+      wc.once('devtools-opened', show);
+      wc.openDevTools({ mode: 'right' });
+    }
   }
 
   cycleTab(delta: number): void {

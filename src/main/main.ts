@@ -1,4 +1,4 @@
-import { app, BaseWindow, crashReporter, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
+import { app, BaseWindow, clipboard, crashReporter, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME, SHARED_PARTITION } from '../shared/constants';
@@ -209,6 +209,27 @@ async function main(): Promise<void> {
       case 'next-tab':
         tabs.cycleTab(1);
         break;
+      case 'recent-tab':
+        tabs.cycleRecent(1);
+        break;
+      case 'recent-tab-back':
+        tabs.cycleRecent(-1);
+        break;
+      case 'copy-link':
+      case 'copy-markdown-link': {
+        const link = tabs.activeLink(a === 'copy-markdown-link');
+        if (link) clipboard.writeText(link);
+        break;
+      }
+      case 'console':
+        if (tabs.activeTabId !== null) tabs.openConsole(tabs.activeTabId);
+        break;
+      case 'next-space':
+        tabs.cycleSpace(1);
+        break;
+      case 'prev-space':
+        tabs.cycleSpace(-1);
+        break;
       case 'prev-tab':
         tabs.cycleTab(-1);
         break;
@@ -233,6 +254,8 @@ async function main(): Promise<void> {
       default: {
         const m = a.match(/^tab-(\d)$/);
         if (m) tabs.tabByIndex(Number(m[1]));
+        const sp = a.match(/^space-(\d)$/);
+        if (sp) tabs.spaceByIndex(Number(sp[1]));
       }
     }
   };

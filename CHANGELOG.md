@@ -4,6 +4,9 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+- `Ctrl+Tab` returns to the most recently used tab (hold `Ctrl` to go further back); `Ctrl+PageUp/PageDown` keep sidebar order. `Alt+1…9` switch Spaces.
+- Copy link and Copy Markdown link (tab menu and command bar), open the console from a local tab's error count, and `?` in the command bar lists actions with their shortcuts.
+- Fix: Markdown links in research exports now escape parentheses in URLs.
 - Privacy settings: Global Privacy Control, WebRTC local-IP hiding, Secure DNS (automatic, off or custom DoH), spell check without dictionary downloads off Windows, and clearing site data on exit.
 - Research topics: `research <name>` records command-bar searches and visited pages in the Space, `note <text>` annotates the current page, and `quiver://research` keeps topic notes, the trail and a Markdown export.
 - Command palette: `Ctrl+K` fuzzy-matches browser actions, open tabs and bookmarks beneath the address result; `>` lists actions, `bm` lists bookmarks, and `tab` search is now fuzzy.

@@ -3,7 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 // The main process checks the page role and sender for every invocation.
 const INVOKE = new Set([
   'state:get',
-  'tab:close', 'tab:activate', 'tab:place', 'tab:menu', 'tab:back', 'tab:forward', 'tab:reload',
+  'tab:close', 'tab:activate', 'tab:place', 'tab:menu', 'tab:console', 'tab:back', 'tab:forward', 'tab:reload',
   'tab:reopen', 'tab:retry-crash', 'recovery:dismiss',
   'space:create', 'space:menu', 'space:rename', 'space:activate',
   'folder:toggle', 'folder:rename', 'folder:move', 'folder:menu',

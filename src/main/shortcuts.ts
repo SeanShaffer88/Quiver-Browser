@@ -17,7 +17,15 @@ export type ShortcutAction =
   | 'forward'
   | 'devtools'
   | 'boosts'
-  | `tab-${number}`;
+  | 'recent-tab'
+  | 'recent-tab-back'
+  | 'copy-link'
+  | 'copy-markdown-link'
+  | 'console'
+  | 'next-space'
+  | 'prev-space'
+  | `tab-${number}`
+  | `space-${number}`;
 
 /** Map a key event to a browser shortcut. Uses physical key codes so keyboard layouts (incl. AltGr) don't matter. */
 export function shortcutFor(input: Input): ShortcutAction | null {
@@ -30,6 +38,9 @@ export function shortcutFor(input: Input): ShortcutAction | null {
   if (alt && !ctrl && !shift) {
     if (code === 'ArrowLeft') return 'back';
     if (code === 'ArrowRight') return 'forward';
+    // Alt alone: Ctrl+Alt is AltGr on many layouts, where it types characters such as { and [.
+    const space = code.match(/^Digit([1-9])$/);
+    if (space) return `space-${Number(space[1])}`;
   }
   if (!ctrl) return null;
 
@@ -38,7 +49,7 @@ export function shortcutFor(input: Input): ShortcutAction | null {
   if (code === 'KeyT' && shift && !alt) return 'reopen-tab';
   if (code === 'KeyI' && shift && !alt) return 'devtools';
   if (code === 'KeyB' && shift && !alt) return 'boosts';
-  if (code === 'Tab' && !alt) return shift ? 'prev-tab' : 'next-tab';
+  if (code === 'Tab' && !alt) return shift ? 'recent-tab-back' : 'recent-tab';
   if ((code === 'PageUp' || code === 'PageDown') && !alt) {
     if (shift) return code === 'PageUp' ? 'move-tab-up' : 'move-tab-down';
     return code === 'PageUp' ? 'prev-tab' : 'next-tab';
