@@ -57,6 +57,10 @@
   <div class="row"><label for="engine">Search engine</label><input id="engine" type="text" spellcheck="false" placeholder="https://duckduckgo.com/?q=%s"></div>
   <p class="note">Must start with http(s):// and contain <code>%s</code> for the query. Search text is only sent when you press Enter on a search result.</p>
 
+  <h2>History</h2>
+  <div class="row"><label for="history-on">Remember history</label><input id="history-on" type="checkbox"><span class="note">Keeps up to 5,000 visited web pages on this device so <kbd>Ctrl+K</kbd> can find them (<code>h</code> <i>words</i> searches only history).</span></div>
+  <div class="row"><label>Saved pages</label><span id="history-count" class="note">…</span><button class="btn danger" id="history-clear">Clear history</button></div>
+
   <h2>Local servers</h2>
   <div class="row"><label for="scan">Detect servers</label><input id="scan" type="checkbox"><span class="note">Lists HTTP servers listening on this machine (netstat + a local request for the page title). Pauses while the window is in the background.</span></div>
 </div>

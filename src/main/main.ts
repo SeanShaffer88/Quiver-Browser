@@ -5,6 +5,7 @@ import { INTERNAL_PARTITION, INTERNAL_SCHEME } from '../shared/constants';
 import { Boosts } from './boosts';
 import { configureSitePermissions } from './browser-policy';
 import { DevServerWatcher } from './devservers';
+import { History } from './history';
 import { registerIpc } from './ipc';
 import { Research } from './research';
 import { parseLaunchArgs } from './launch-args';
@@ -242,13 +243,18 @@ async function main(): Promise<void> {
     }
   });
   research.prune(new Set(tabs.spaces.map(({ id }) => id)));
-  tabs.onVisit = (spaceId, url, title) => research.recordPage(spaceId, url, title);
+  const history = new History(path.join(app.getPath('userData'), 'history.json'), () => store.state.settings.rememberHistory);
+  tabs.onVisit = (spaceId, url, title, kind) => {
+    research.recordPage(spaceId, url, title);
+    if (kind === 'title') history.title(url, title);
+    else history.visit(url, title);
+  };
   tabs.researchStatus = (spaceId) => {
     const topic = research.active(spaceId);
     return topic && { id: topic.id, name: topic.name, count: topic.items.length };
   };
   actions = registerIpc({
-    tabs, store, boosts, devWatcher, overlay, shell, research,
+    tabs, store, boosts, devWatcher, overlay, shell, research, history,
     runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings') : onShortcut(command)),
   });
 
@@ -339,6 +345,7 @@ async function main(): Promise<void> {
     tabs.persist();
     store.state.sessionOpen = false;
     store.flush();
+    history.flush();
     devWatcher.stop();
     boosts.stopWatching();
   });

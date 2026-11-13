@@ -99,10 +99,11 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | a JWT (optionally with `Bearer `) | Header, payload, `exp`/`iat` relative times; copy any value. Signature is **not** verified |
 | 10 or 13 digit number | Unix seconds/ms → ISO UTC, local time |
 | `localhost:3000`, `:8080`, `example.com/x` | Navigate |
-| anything else | Web search (engine configurable), with fuzzy-matched browser actions, open tabs and bookmarks listed below it |
+| anything else | Web search (engine configurable), with fuzzy-matched browser actions, open tabs, bookmarks and history listed below it |
 | `> reload` · `> phone` | Browser actions only (tab, navigation, sidebar, preview, environment, DevTools, Boosts, Settings) |
 | `tab orders` | Open tabs across Spaces |
 | `bm react` · `bookmarks` | Bookmarks |
+| `h rust book` · `history` | Browsing history, ranked by match, visit count and recency |
 | `research webgpu` · `research` · `note read later` | Start or continue a research topic · list topics · note on this page |
 
 Matching is fuzzy: letters must start words (`rct` → *Reopen closed tab*) or follow each other (`dash` → *dashboard*), and all words must match in any order.
@@ -177,7 +178,7 @@ Quiver currently covers these Flecha workflows. Archives and general split view 
 | 8 | Coding-agent browser automation | Omitted from the Windows build | Unavailable |
 | 9 | Local-first / no telemetry | No analytics, no accounts, atomic local JSON | Included |
 | 10 | Windows installer / build script | Branded Windows setup, offline PortableApps.com installer, optional MSI | Build targets configured |
-| – | Other browser features | Chrome Web Store extensions, sync, bookmark editing, history UI, downloads UI, permission prompts, password manager, auto-update | Unavailable |
+| – | Other browser features | Chrome Web Store extensions, sync, bookmark editing, full history page, downloads UI, permission prompts, password manager, auto-update | Unavailable |
 
 ## Verification
 

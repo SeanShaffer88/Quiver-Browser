@@ -1,4 +1,5 @@
 import type { Bookmark, BrowserCommand, Suggestion, TabCommandTarget } from '../shared/types';
+import type { HistoryEntry } from './history';
 
 /** Browser actions the command palette can run. Each maps to an existing shortcut handler. */
 export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string; keys: string; keywords?: string }[] = [
@@ -81,13 +82,15 @@ export function fuzzyScore(query: string, text: string): number {
   return total - Math.min(text.length, 200) / 20;
 }
 
-export type PaletteScope = 'all' | 'actions' | 'bookmarks';
+export type PaletteScope = 'all' | 'actions' | 'bookmarks' | 'history';
 
 export function paletteQuery(text: string): { scope: PaletteScope; query: string } | undefined {
   const trimmed = text.trim();
   if (trimmed.startsWith('>')) return { scope: 'actions', query: trimmed.slice(1).trim() };
   const bm = /^(?:bm|bookmarks?)(?:\s+([\s\S]*))?$/i.exec(trimmed);
   if (bm) return { scope: 'bookmarks', query: (bm[1] ?? '').trim() };
+  const history = /^(?:h|history)(?:\s+([\s\S]*))?$/i.exec(trimmed);
+  if (history) return { scope: 'history', query: (history[1] ?? '').trim() };
   if (/^\S+$/.test(trimmed) && /^(?:bm|bookmarks?)\S/i.test(trimmed)) return undefined;
   return trimmed ? { scope: 'all', query: trimmed } : undefined;
 }
@@ -104,6 +107,7 @@ export interface PaletteSources {
   activeSpaceId: string;
   tabs: Iterable<TabCommandTarget>;
   bookmarks: readonly Bookmark[];
+  history?: readonly HistoryEntry[];
 }
 
 type Scored = { score: number; order: number; suggestion: Suggestion };
@@ -142,13 +146,34 @@ export function paletteSuggestions(scope: PaletteScope, query: string, sources: 
       if (s >= 0) bookmarks.push({ score: s, order, suggestion: { kind: 'bookmark', label: title, action: { type: 'navigate', url: b.url } } });
     });
   }
+  const history: Scored[] = [];
+  if ((scope === 'history' || (scope === 'all' && query.length >= 2)) && sources.history) {
+    // URLs already offered as an open tab or a bookmark are not repeated.
+    const offered = new Set([...tabs.map((t) => (t.suggestion.action as { target: TabCommandTarget }).target.url), ...bookmarks.map((b) => (b.suggestion.action as { url: string }).url)]);
+    const now = Date.now();
+    sources.history.forEach((entry, order) => {
+      if (scope === 'all' && offered.has(entry.url)) return;
+      const url = URL.parse(entry.url);
+      const where = url ? url.host + url.pathname : entry.url;
+      const s = query ? score(entry.title, where) : 0;
+      if (s < 0) return;
+      const age = now - entry.lastVisit;
+      // Pages visited often and recently outrank a closer text match on a page seen once long ago.
+      const frecency = Math.min(30, Math.log2(entry.visits + 1) * 8) + (age < 86_400_000 ? 15 : age < 7 * 86_400_000 ? 8 : age < 30 * 86_400_000 ? 3 : 0);
+      history.push({ score: s * 0.5 + frecency, order, suggestion: { kind: 'history', label: safeLabel(entry.title) || where, detail: where, action: { type: 'navigate', url: entry.url } } });
+    });
+  }
+  if (scope === 'history') {
+    const list = best(history, TOTAL).map((x) => x.suggestion);
+    return list.length ? list : [{ kind: 'history', label: query ? 'No matching history' : 'No history yet', action: { type: 'noop' } }];
+  }
   if (scope === 'actions') return best(actions, TOTAL).map((x) => x.suggestion);
   if (scope === 'bookmarks') {
     const list = best(bookmarks, TOTAL).map((x) => x.suggestion);
     return list.length ? list : [{ kind: 'bookmark', label: 'No matching bookmarks', action: { type: 'noop' } }];
   }
-  const priority = { action: 0, tab: 1, bookmark: 2 } as Record<string, number>;
-  return [...best(actions, PER_KIND), ...best(tabs, PER_KIND), ...best(bookmarks, PER_KIND)]
+  const priority = { action: 0, tab: 1, bookmark: 2, history: 3 } as Record<string, number>;
+  return [...best(actions, PER_KIND), ...best(tabs, PER_KIND), ...best(bookmarks, PER_KIND), ...best(history, 5)]
     .sort((a, b) => b.score - a.score || priority[a.suggestion.kind] - priority[b.suggestion.kind])
     .slice(0, TOTAL).map((x) => x.suggestion);
 }

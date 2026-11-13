@@ -9,7 +9,7 @@ const INVOKE = new Set([
   'folder:toggle', 'folder:rename', 'folder:move', 'folder:menu',
   'sidebar:toggle', 'preview:toggle', 'env:switch',
   'cmd:open', 'cmd:close', 'cmd:suggest', 'cmd:commit', 'cmd:run',
-  'settings:get', 'settings:set',
+  'settings:get', 'settings:set', 'history:clear', 'history:count',
   'bookmarks:list', 'bookmarks:profiles', 'bookmarks:review-profile', 'bookmarks:review-file',
   'bookmarks:cancel-review', 'bookmarks:confirm', 'bookmarks:undo', 'bookmarks:open',
   'boost:list', 'boost:read', 'boost:save', 'boost:create', 'boost:delete', 'boost:dir',

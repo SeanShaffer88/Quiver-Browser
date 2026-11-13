@@ -40,6 +40,7 @@ export function defaultSettings(): Settings {
     searchEngine: DEFAULT_SEARCH,
     devServerScan: true,
     sidebarCollapsed: false,
+    rememberHistory: true,
   };
 }
 
@@ -108,6 +109,7 @@ export class Store {
           searchEngine: raw.settings?.searchEngine ?? base.settings.searchEngine,
           devServerScan: raw.settings?.devServerScan ?? base.settings.devServerScan,
           sidebarCollapsed: raw.settings?.sidebarCollapsed ?? base.settings.sidebarCollapsed,
+          rememberHistory: typeof raw.settings?.rememberHistory === 'boolean' ? raw.settings.rememberHistory : true,
         },
       } as PersistedState;
       state.spaces = state.spaces.map((space) => ({ ...space, folders: normalizeFolders(space.folders) }));

@@ -34,6 +34,8 @@ export interface Settings {
   searchEngine: string;
   devServerScan: boolean;
   sidebarCollapsed: boolean;
+  /** Keep a local browsing history for command-bar search. */
+  rememberHistory: boolean;
 }
 
 export interface Bookmark {

@@ -295,6 +295,8 @@ function renderGroups(): void {
   renderGroups();
   $<HTMLInputElement>('engine').value = settings.searchEngine;
   $<HTMLInputElement>('scan').checked = settings.devServerScan;
+  $<HTMLInputElement>('history-on').checked = settings.rememberHistory;
+  void showHistoryCount();
 })();
 
 $('addgroup').addEventListener('click', () => {
@@ -305,3 +307,14 @@ $<HTMLInputElement>('engine').addEventListener('change', async (e) => {
   await quiver.invoke('settings:set', { searchEngine: (e.target as HTMLInputElement).value.trim() });
 });
 $<HTMLInputElement>('scan').addEventListener('change', (e) => void quiver.invoke('settings:set', { devServerScan: (e.target as HTMLInputElement).checked }));
+
+async function showHistoryCount(): Promise<void> {
+  const count = (await quiver.invoke('history:count')) as number;
+  $('history-count').textContent = count === 1 ? '1 page' : `${count.toLocaleString()} pages`;
+}
+$<HTMLInputElement>('history-on').addEventListener('change', (e) => void quiver.invoke('settings:set', { rememberHistory: (e.target as HTMLInputElement).checked }));
+$('history-clear').addEventListener('click', async () => {
+  if (!confirm('Clear all saved history on this device?')) return;
+  await quiver.invoke('history:clear');
+  await showHistoryCount();
+});

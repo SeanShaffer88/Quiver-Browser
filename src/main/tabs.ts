@@ -126,7 +126,7 @@ export class TabManager {
   preview = false;
   devServers: DevServer[] = [];
   /** Called for each main-frame page a web tab shows (research recording). */
-  onVisit?: (spaceId: string, url: string, title: string) => void;
+  onVisit?: (spaceId: string, url: string, title: string, kind: 'navigate' | 'title') => void;
   /** The research topic recording in a Space, for the toolbar. */
   researchStatus?: (spaceId: string) => ShellState['research'];
   private readonly endpointStatus = new EndpointStatus();
@@ -406,13 +406,13 @@ export class TabManager {
     const wc = tab.view.webContents;
     this.attachShortcuts(wc);
     const touch = () => this.emit();
-    const visit = () => {
-      if (!tab.internal && !wc.isDestroyed()) this.onVisit?.(tab.spaceId, wc.getURL(), tab.titleIsExplicit ? tab.title : '');
+    const visit = (kind: 'navigate' | 'title' = 'navigate') => {
+      if (!tab.internal && !wc.isDestroyed()) this.onVisit?.(tab.spaceId, wc.getURL(), tab.titleIsExplicit ? tab.title : '', kind);
     };
     wc.on('page-title-updated', (_e, title, explicitSet) => {
       tab.title = title;
       tab.titleIsExplicit = explicitSet;
-      visit();
+      visit('title');
       touch();
       this.persist();
     });
