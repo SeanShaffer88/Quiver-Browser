@@ -130,7 +130,79 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   // tabs
   handle('shell', 'tab:close', (_e, id: number) => tabs.closeTab(Number(id)));
   handle('shell', 'tab:activate', (_e, id: number) => tabs.activateTab(Number(id)));
-  handle('shell', 'tab:move', (_e, id: number, index: number) => tabs.moveTab(Number(id), Number(index)));
+  handle('shell', 'tab:place', (_e, id: number, where: unknown) => {
+    const w = (where && typeof where === 'object' ? where : {}) as Record<string, unknown>;
+    tabs.placeTab(Number(id), {
+      pinned: w.pinned === true,
+      folderId: typeof w.folderId === 'string' ? w.folderId : null,
+      targetId: typeof w.targetId === 'number' && Number.isInteger(w.targetId) ? w.targetId : null,
+      after: w.after === true,
+    });
+  });
+  handle('shell', 'tab:menu', (_e, id: number) => {
+    const tab = tabs.tabs.get(Number(id));
+    if (!tab) return;
+    const folders = tabs.folders(tab.spaceId);
+    const depth = (folderId: string | null): number => {
+      let d = 0;
+      for (let at = folderId; at; at = folders.find((f) => f.id === at)?.parentId ?? null) d++;
+      return d;
+    };
+    const newFolder = (parentId: string | null) => {
+      const folderId = tabs.createFolder(tab.spaceId, parentId);
+      if (!folderId) return;
+      tabs.setPinned(tab.id, true, folderId);
+      shell.webContents.send('folder:rename-start', folderId);
+    };
+    Menu.buildFromTemplate([
+      tab.pinned
+        ? { label: 'Unpin tab', click: () => tabs.setPinned(tab.id, false) }
+        : { label: 'Pin tab', click: () => tabs.setPinned(tab.id, true) },
+      {
+        label: 'Move to folder',
+        submenu: [
+          { label: 'Pinned, no folder', type: 'radio', checked: tab.pinned && tab.folderId === null, click: () => tabs.setPinned(tab.id, true) },
+          ...folders.map((f) => ({
+            label: '  '.repeat(Math.max(0, depth(f.id) - 1)) + f.name,
+            type: 'radio' as const,
+            checked: tab.folderId === f.id,
+            click: () => tabs.setPinned(tab.id, true, f.id),
+          })),
+          { type: 'separator' },
+          { label: 'New folder', click: () => newFolder(null) },
+        ],
+      },
+      { type: 'separator' },
+      { label: 'Close tab', click: () => tabs.closeTab(tab.id) },
+    ]).popup();
+  });
+
+  // pinned-tab folders
+  const folderId = (id: unknown) => (typeof id === 'string' ? id : '');
+  handle('shell', 'folder:toggle', (_e, id: string, collapsed?: boolean) =>
+    tabs.toggleFolder(folderId(id), typeof collapsed === 'boolean' ? collapsed : undefined));
+  handle('shell', 'folder:rename', (_e, id: string, name: string) => tabs.renameFolder(folderId(id), String(name ?? '')));
+  handle('shell', 'folder:move', (_e, id: string, parentId: string | null) =>
+    tabs.moveFolder(folderId(id), typeof parentId === 'string' ? parentId : null));
+  handle('shell', 'folder:menu', (_e, id: string) => {
+    const spaceId = tabs.spaces.find((s) => s.folders?.some((f) => f.id === id))?.id;
+    const folder = spaceId && tabs.folders(spaceId).find((f) => f.id === id);
+    if (!spaceId || !folder) return;
+    Menu.buildFromTemplate([
+      { label: 'Rename folder', click: () => shell.webContents.send('folder:rename-start', folder.id) },
+      {
+        label: 'New subfolder',
+        click: () => {
+          const child = tabs.createFolder(spaceId, folder.id);
+          if (child) shell.webContents.send('folder:rename-start', child);
+        },
+      },
+      { label: folder.collapsed ? 'Expand' : 'Collapse', click: () => tabs.toggleFolder(folder.id) },
+      { label: 'Move to top level', enabled: folder.parentId !== null, click: () => tabs.moveFolder(folder.id, null) },
+      { type: 'separator' },
+      { label: 'Delete folder (keep its tabs)', click: () => tabs.deleteFolder(folder.id) },
+    ]).popup();
+  });
   handle('shell', 'tab:back', () => tabs.goBack());
   handle('shell', 'tab:forward', () => tabs.goForward());
   handle('shell', 'tab:reload', () => tabs.reload());

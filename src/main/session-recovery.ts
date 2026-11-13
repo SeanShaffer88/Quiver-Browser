@@ -1,4 +1,4 @@
-type SessionEntry = { url: string; title?: string };
+type SessionEntry = { url: string; title?: string; pinned?: boolean; folderId?: string | null };
 type LiveEntry = SessionEntry & { id: number };
 export type ClosedTab = LiveEntry & { title: string; spaceId: string; index: number; placeholderId?: number };
 export type PersistedClosedTab = Omit<ClosedTab, 'id' | 'placeholderId'> & { replacePlaceholder?: true };
@@ -41,9 +41,9 @@ export function restoreSelection<T extends SessionEntry>(entries: readonly T[], 
 export function snapshotSpace(entries: readonly LiveEntry[], activeId: number | undefined) {
   const selected = entries.findIndex((entry) => entry.id === activeId);
   const { entries: available, activeIndex } = restoreSelection(entries, selected);
-  const tabs = available.map(({ url, title }) => {
+  const tabs = available.map(({ url, title, pinned, folderId }) => {
     const label = normalizeTabTitle(title, url);
-    return label ? { url, title: label } : { url };
+    return { url, ...(label ? { title: label } : {}), ...(pinned ? { pinned: true as const } : {}), ...(pinned && folderId ? { folderId } : {}) };
   });
   return { tabs, activeIndex };
 }

@@ -64,7 +64,7 @@ This section describes the current source. See the release notes for the feature
 
 ### Shortcuts
 
-Drag a tab in the sidebar to reorder it within its Space; the order is saved with the session. In the tab list, `↑` / `↓` / `Home` / `End` move focus between tabs. The list only draws the rows in view, so Spaces with hundreds of tabs stay responsive.
+Right-click a tab to pin it or file it in a folder. Pinned tabs and folders sit above the **Tabs** divider; folders nest, collapse (click, or `←` / `→`), rename (double-click or `F2`) and can be dragged onto other folders. Drop a tab on a folder to pin it there, or on the divider to unpin it. Drag a tab in the sidebar to reorder it within its Space; the order is saved with the session. In the tab list, `↑` / `↓` / `Home` / `End` move focus between tabs. The list only draws the rows in view, so Spaces with hundreds of tabs stay responsive.
 
 Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a title or hostname to narrow the results. Use the arrow keys and Enter to switch directly to a tab in its Space. Each result shows its Space and, when available, its environment.
 
@@ -157,12 +157,13 @@ Quiver-Browser/
 
 ## Feature-parity checklist
 
-Quiver currently covers these Flecha workflows. Pinned tabs, tab folders, archives, and general split view are outside this build’s scope.
+Quiver currently covers these Flecha workflows. Archives and general split view are outside this build’s scope.
 
 | # | Flecha feature | Quiver (Windows) | Status |
 |---|---|---|---|
 | 1 | Chromium rendering | Electron 45.3.1 (Chromium) | Included |
 | 2 | Vertical sidebar | Collapsible sidebar, tab list, favicons, close, middle-click close, drag and keyboard reorder | Included |
+| 2 | Pinned tabs and folders | Pin, nested folders, collapse, drag between pinned and temporary, saved per Space | Included |
 | 2 | Spaces | Create / rename / delete, per-Space partition (cookies, storage) | Included |
 | 3 | Command bar | `Ctrl+K` / `Ctrl+L` / `Ctrl+T` overlay | Included |
 | 3 | `gh` `npm` `mdn` `caniuse` `so` | Offline parser → URL | Included |
