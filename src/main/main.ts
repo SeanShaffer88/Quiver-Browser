@@ -2,12 +2,16 @@ import { app, BaseWindow, crashReporter, Menu, protocol, screen, session, WebCon
 import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME, SHARED_PARTITION } from '../shared/constants';
-import { Boosts } from './boosts';
+import type { Settings } from '../shared/types';
+import { normalizeBookmarks } from './bookmarks';
+import { Boosts, isValidBoostName } from './boosts';
 import { configureSitePermissions } from './browser-policy';
 import { DevServerWatcher } from './devservers';
 import { registerIpc } from './ipc';
 import { clearSessions, PrivacyController } from './privacy';
-import { Research } from './research';
+import { normalizeTopics, Research } from './research';
+import { normalizeSyncState, SyncService } from './sync-service';
+import os from 'node:os';
 import { parseLaunchArgs } from './launch-args';
 import type { ShortcutAction } from './shortcuts';
 import { Store } from './store';
@@ -263,8 +267,42 @@ async function main(): Promise<void> {
     const topic = research.active(spaceId);
     return topic && { id: topic.id, name: topic.name, count: topic.items.length };
   };
+  const MAX_SYNCED_BOOST = 256 * 1024;
+  const sync = new SyncService(store.state.sync ??= normalizeSyncState(undefined, os.hostname()), {
+    settings: {
+      get: () => ({ envGroups: store.state.settings.envGroups, searchEngine: store.state.settings.searchEngine, devServerScan: store.state.settings.devServerScan }),
+      set: (data) => actions?.applySettings((data && typeof data === 'object' ? data : {}) as Partial<Settings>),
+    },
+    bookmarks: {
+      get: () => store.state.bookmarks,
+      set: (data) => {
+        store.state.bookmarks = normalizeBookmarks(data);
+        delete store.state.bookmarkUndo;
+        store.save();
+      },
+    },
+    spaces: { get: () => tabs.syncedSpaces(), set: (data) => tabs.applySyncedSpaces(data) },
+    research: {
+      get: () => research.all(),
+      set: (data) => research.replaceAll(normalizeTopics(data, new Set(tabs.spaces.map(({ id }) => id)))),
+    },
+    boosts: {
+      get: () => Object.fromEntries(boosts.list().map(({ name }) => [name, boosts.read(name)])),
+      set: (data) => {
+        // Boosts run in every matching page, so only well-formed files are accepted and sync of them is opt-in.
+        const files = data && typeof data === 'object' ? Object.entries(data as Record<string, unknown>) : [];
+        const wanted = new Map(files.filter(([name, content]) => isValidBoostName(name) && typeof content === 'string' && content.length <= MAX_SYNCED_BOOST) as [string, string][]);
+        for (const { name } of boosts.list()) if (!wanted.has(name)) boosts.remove(name);
+        for (const [name, content] of wanted) if (boosts.readIfExists(name) !== content) boosts.save(name, content);
+      },
+    },
+  }, () => store.save(), () => {
+    for (const tab of tabs.tabs.values()) {
+      if (tab.internalPage === 'settings' && !tab.view.webContents.isDestroyed()) tab.view.webContents.send('sync:changed');
+    }
+  });
   actions = registerIpc({
-    tabs, store, boosts, devWatcher, overlay, shell, research,
+    tabs, store, boosts, devWatcher, overlay, shell, research, sync,
     onPrivacyChanged: () => privacy.apply(),
     runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings') : onShortcut(command)),
   });
@@ -282,6 +320,7 @@ async function main(): Promise<void> {
     if (importBookmarks) tabs.navigate('quiver://settings?import=bookmarks');
   };
   openLaunchTargets(parseLaunchArgs(process.argv));
+  sync.start();
   tabs.layout();
   win.show();
   handleSecondInstance = (targets) => {

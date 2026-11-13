@@ -132,6 +132,14 @@ The sidebar lists IPv4 and IPv6 HTTP servers reachable over loopback. Quiver use
 ### Boosts
 `Ctrl+Shift+B` or `boost` in the command bar. Files are named after a hostname (`github.com.css`, `github.com.ts`, `localhost.css`) or `all.css` / `all.ts`; `www.` is ignored; subdomains need their own file. CSS is injected on load and updated live on save. TypeScript is transpiled on this device and run in the page; saving reloads matching tabs. Files are stored in the profile folder under `boosts\`. External edits to those files are picked up too. The toolbar counts Boosts applied to the current page and names them in the button tooltip.
 
+### Sync
+
+In **Settings → Sync**, choose a folder you already sync with OneDrive, Dropbox, Syncthing or similar. Quiver keeps a `Quiver Sync` subfolder there in which each device writes only its own file, so sync clients never create conflict copies. No Quiver server is involved.
+
+- **What syncs:** settings (environments, search engine, local-server scanning), bookmarks, Spaces with their folders and pinned tabs, and research topics. Boosts can also sync, but that is off by default because they run code on websites.
+- **When:** at launch, every minute, and on **Sync now**. For each part, the most recent change on any device wins.
+- **First sync:** a device syncing for the first time merges its bookmarks, topics, Spaces and pinned tabs with what is already shared.
+- **What sync never does:** delete a Space or close a tab. A pinned tab removed on another device becomes a regular tab. Cookies, open regular tabs and privacy settings stay per device.
 ### Privacy
 
 Quiver sends no telemetry, has no account and does not check for updates; crash reports stay on the device. **Settings → Privacy** controls what pages and Chromium can send:
@@ -187,7 +195,7 @@ Quiver currently covers these Flecha workflows. Archives and general split view 
 | 8 | Coding-agent browser automation | Omitted from the Windows build | Unavailable |
 | 9 | Local-first / no telemetry | No analytics, no accounts, atomic local JSON | Included |
 | 10 | Windows installer / build script | Branded Windows setup, offline PortableApps.com installer, optional MSI | Build targets configured |
-| – | Other browser features | Chrome Web Store extensions, sync, bookmark editing, history UI, downloads UI, permission prompts, third-party cookie blocking, password manager, auto-update | Unavailable |
+| – | Other browser features | Chrome Web Store extensions, account-based sync, bookmark editing, history UI, downloads UI, permission prompts, third-party cookie blocking, password manager, auto-update | Unavailable |
 
 ## Verification
 

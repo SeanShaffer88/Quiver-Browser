@@ -57,6 +57,25 @@
   <div class="row"><label for="engine">Search engine</label><input id="engine" type="text" spellcheck="false" placeholder="https://duckduckgo.com/?q=%s"></div>
   <p class="note">Must start with http(s):// and contain <code>%s</code> for the query. Search text is only sent when you press Enter on a search result.</p>
 
+  <h2 id="sync-heading">Sync</h2>
+  <p class="note">Sync through a folder you already sync, such as OneDrive, Dropbox or Syncthing. Each device writes only its own file in <code>Quiver Sync</code>; no Quiver server is involved. For each part, the most recent change on any device wins. Sync never deletes Spaces or closes tabs.</p>
+  <div class="row">
+    <label>Folder</label>
+    <span class="mono" id="sync-folder">Not syncing</span>
+    <button class="btn primary" id="sync-choose">Choose folder…</button>
+    <button class="btn" id="sync-now" hidden>Sync now</button>
+    <button class="btn danger" id="sync-disconnect" hidden>Stop syncing</button>
+  </div>
+  <div class="row"><label for="sync-device">This device</label><input id="sync-device" type="text" maxlength="60"></div>
+  <fieldset class="sync-parts">
+    <legend>Sync</legend>
+    <label><input type="checkbox" data-sync="settings"> Settings (environments, search engine, local servers)</label>
+    <label><input type="checkbox" data-sync="bookmarks"> Bookmarks</label>
+    <label><input type="checkbox" data-sync="spaces"> Spaces, folders and pinned tabs</label>
+    <label><input type="checkbox" data-sync="research"> Research topics and notes</label>
+    <label><input type="checkbox" data-sync="boosts"> Boosts. Off by default: Boosts run code on websites, so only turn this on if no one else can write to the sync folder.</label>
+  </fieldset>
+  <p class="status" id="sync-status" role="status"></p>
   <h2>Privacy</h2>
   <p class="note">Quiver sends no telemetry, has no account and does not check for updates. Crash reports stay on this device. These settings apply to all Spaces.</p>
   <div class="row"><label for="privacy-gpc">Global Privacy Control</label><input id="privacy-gpc" type="checkbox"><span class="note">Tell sites not to sell or share your data (<code>Sec-GPC</code> and <code>DNT</code> headers).</span></div>

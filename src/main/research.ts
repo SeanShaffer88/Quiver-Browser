@@ -291,6 +291,18 @@ export class Research {
     this.commit();
   }
 
+  /** All topics, for sync. */
+  all(): Topic[] {
+    return this.topics;
+  }
+
+  /** Replace every topic (from sync); recording state stays per device. */
+  replaceAll(topics: Topic[]): void {
+    this.state.topics = topics;
+    for (const [spaceId, id] of Object.entries(this.activeBySpace)) if (!this.get(id)) delete this.activeBySpace[spaceId];
+    this.commit();
+  }
+
   /** Drop topics whose Space no longer exists. */
   prune(spaceIds: ReadonlySet<string>): void {
     const before = this.topics.length;

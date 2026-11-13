@@ -1,11 +1,13 @@
 import { app } from 'electron';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_SEARCH } from '../shared/constants';
 import type { Bookmark, Settings, Space } from '../shared/types';
 import { validBookmarkUndo, type BookmarkUndo } from './bookmark-import';
 import { normalizeBookmarks } from './bookmarks';
+import { normalizeSyncState, type SyncState } from './sync-service';
 import { normalizePrivacy } from './privacy';
 import { normalizeFolders } from './tab-tree';
 import { normalizeTopics, type Topic } from './research';
@@ -31,6 +33,7 @@ export interface PersistedState {
   bookmarkUndo?: BookmarkUndo;
   sessionOpen?: boolean;
   topics?: Topic[];
+  sync?: SyncState;
   activeTopicBySpace?: Record<string, string>;
   bounds?: { x?: number; y?: number; width: number; height: number; maximized: boolean };
 }
@@ -118,6 +121,7 @@ export class Store {
       state.topics = normalizeTopics(raw.topics, knownSpaces);
       state.activeTopicBySpace = Object.fromEntries(Object.entries(raw.activeTopicBySpace ?? {})
         .filter(([space, topic]) => knownSpaces.has(space) && state.topics!.some((t) => t.id === topic && t.spaceId === space)));
+      state.sync = normalizeSyncState(raw.sync, os.hostname());
       state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);
       const spaceIds = new Set(state.spaces.map(({ id }) => id));
       const soleNewTabSpaces = new Set([...spaceIds].filter((id) => hasSavedNewTabPlaceholder(state.tabsBySpace?.[id])));
