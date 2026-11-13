@@ -36,6 +36,7 @@ import {
 } from './session-recovery';
 import { moveInGroup } from './tab-order';
 import type { MediaPermissions } from './site-permissions';
+import { addArchived, tabsToArchive, type ArchivedTab } from './archive';
 import { normalizeSyncedSpaces, type SyncedSpace } from './sync';
 import { canNest, deleteFolder, displayOrder, folderName, normalizeFolders, placeRelative, sidebarRows } from './tab-tree';
 import type { Downloads } from './downloads';
@@ -47,6 +48,10 @@ interface Tab {
   spaceId: string;
   pinned: boolean;
   folderId: string | null;
+  /** Where a pinned tab returns when closed. */
+  pinnedUrl: string | null;
+  /** When the tab was last shown, for auto-archive. */
+  lastActiveAt: number;
   partition: string;
   view: WebContentsView;
   internal: boolean;
@@ -222,6 +227,7 @@ export class TabManager {
       id: t.id,
       spaceId: t.spaceId,
       pinned: t.pinned,
+      pinnedUrl: t.pinned ? t.pinnedUrl : null,
       folderId: t.folderId,
       url: displayUrl(url),
       title: t.title || displayUrl(url) || 'New Tab',
@@ -337,7 +343,7 @@ export class TabManager {
   }
 
   // ───────── tabs ─────────
-  openTab(rawUrl: string, opts: { spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null } = {}): Tab {
+  openTab(rawUrl: string, opts: { spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null; pinnedUrl?: string | null; lastActiveAt?: number } = {}): Tab {
     const spaceId = opts.spaceId ?? this.activeSpaceId;
     const internal = rawUrl.startsWith('quiver://') || rawUrl === '';
     const url = internal ? toInternalUrl(rawUrl || 'quiver://newtab') : rawUrl;
@@ -349,6 +355,8 @@ export class TabManager {
       id: this.nextId++,
       spaceId,
       pinned: !!opts.pinned,
+      pinnedUrl: opts.pinned ? (opts.pinnedUrl && restorableUrl(opts.pinnedUrl) ? opts.pinnedUrl : null) : null,
+      lastActiveAt: opts.lastActiveAt ?? Date.now(),
       folderId: opts.pinned && opts.folderId && this.folders(spaceId).some((f) => f.id === opts.folderId) ? opts.folderId : null,
       partition,
       view,
@@ -529,6 +537,10 @@ export class TabManager {
       this.store.state.activeSpaceId = tab.spaceId;
       this.store.save();
     }
+    const previous = this.activeTabId !== null ? this.tabs.get(this.activeTabId) : undefined;
+    const now = Date.now();
+    if (previous) previous.lastActiveAt = now;
+    tab.lastActiveAt = now;
     this.activeTabId = id;
     this.lastActive[tab.spaceId] = id;
     if (!this.recentWalk) this.touchRecent(id);
@@ -541,9 +553,14 @@ export class TabManager {
     this.emit();
   }
 
-  closeTab(id: number): void {
+  /** Close a tab. A pinned tab is not removed: it returns to its pinned page and Quiver moves to the next tab. */
+  closeTab(id: number, opts: { remove?: boolean } = {}): void {
     const tab = this.tabs.get(id);
     if (!tab) return;
+    if (tab.pinned && !opts.remove) {
+      this.resetPinned(tab);
+      return;
+    }
     const sameSpace = [...this.tabs.values()].filter((other) => other.spaceId === tab.spaceId);
     const index = sameSpace.findIndex((other) => other.id === id);
     const url = this.tabUrl(tab);
@@ -567,6 +584,73 @@ export class TabManager {
     this.syncPhone();
     this.persist();
     this.emit();
+  }
+
+  private resetPinned(tab: Tab): void {
+    const home = tab.pinnedUrl;
+    if (home && this.tabUrl(tab) !== home) this.load(tab, home);
+    if (this.activeTabId === tab.id) {
+      const next = this.orderedSpaceTabs().filter((t) => t.id !== tab.id);
+      const index = this.orderedSpaceTabs().findIndex((t) => t.id === tab.id);
+      const neighbor = next[Math.min(Math.max(index, 0), next.length - 1)];
+      if (neighbor) this.activateTab(neighbor.id);
+    }
+    this.persist();
+    this.emit();
+  }
+
+  /** Make the tab's current page the one it returns to when closed. */
+  setPinnedPage(id: number): void {
+    const tab = this.tabs.get(id);
+    if (!tab?.pinned) return;
+    const url = this.tabUrl(tab);
+    if (restorableUrl(url)) tab.pinnedUrl = url;
+    this.persist();
+    this.emit();
+  }
+
+  // ───────── auto-archive ─────────
+  archive: ArchivedTab[] = [];
+
+  /** Archive temporary tabs nobody has looked at for the configured time (Arc's Today). */
+  archiveStale(now = Date.now()): void {
+    const hours = this.settings.archiveAfterHours;
+    const active = new Set(this.spaces.map((sp) => this.lastActive[sp.id]));
+    const candidates = [...this.tabs.values()].map((t) => ({
+      id: t.id, pinned: t.pinned, active: t.id === this.activeTabId || active.has(t.id),
+      // Playing sound or in a call (camera, microphone or screen) keeps a tab.
+      audible: !t.view.webContents.isDestroyed() && (t.view.webContents.isCurrentlyAudible() || !!this.media?.isLive(t.view.webContents.id)),
+      lastActiveAt: t.lastActiveAt,
+    }));
+    const ids = tabsToArchive(candidates, now, hours);
+    if (!ids.length) return;
+    for (const id of ids) {
+      const tab = this.tabs.get(id)!;
+      const url = this.tabUrl(tab);
+      if (restorableUrl(url) && url !== CANONICAL_NEW_TAB_URL) {
+        this.archive = addArchived(this.archive, { url, title: tab.titleIsExplicit ? normalizeTabTitle(tab.title, url) : '', spaceId: tab.spaceId, archivedAt: now });
+      }
+      this.discardTab(tab);
+    }
+    this.store.state.archive = this.archive;
+    this.persist();
+    this.emit();
+  }
+
+  /** Reopen an archived tab in its Space. */
+  unarchive(url: string, archivedAt: number): boolean {
+    const entry = this.archive.find((e) => e.url === url && e.archivedAt === archivedAt);
+    if (!entry) return false;
+    this.archive = this.archive.filter((e) => e !== entry);
+    this.store.state.archive = this.archive;
+    const spaceId = this.spaces.some((sp) => sp.id === entry.spaceId) ? entry.spaceId : this.activeSpaceId;
+    const tab = this.openTab(entry.url, { spaceId, activate: false });
+    if (entry.title) {
+      tab.title = entry.title;
+      tab.titleIsExplicit = true;
+    }
+    this.activateTab(tab.id);
+    return true;
   }
 
   private discardTab(tab: Tab): void {
@@ -674,6 +758,9 @@ export class TabManager {
     const folderId = pinned && where.folderId !== null && this.folders(tab.spaceId).some((f) => f.id === where.folderId) ? where.folderId : null;
     const target = where.targetId === null ? undefined : this.tabs.get(where.targetId);
     const sameSpaceTarget = target && target.spaceId === tab.spaceId && target.id !== tab.id ? target : undefined;
+    // A tab remembers the page it was pinned on; closing it later returns there.
+    if (pinned && !tab.pinned) tab.pinnedUrl = restorableUrl(this.tabUrl(tab)) ? this.tabUrl(tab) : null;
+    if (!pinned) tab.pinnedUrl = null;
     tab.pinned = pinned;
     tab.folderId = folderId;
     let anchor = sameSpaceTarget?.id ?? null;
@@ -949,7 +1036,7 @@ export class TabManager {
     return this.spaces.map((sp) => ({
       id: sp.id, name: sp.name, color: sp.color, isolated: sp.isolated, folders: this.folders(sp.id),
       pinned: this.spaceTabs(sp.id).filter((t) => t.pinned).flatMap((t) => {
-        const url = this.tabUrl(t);
+        const url = t.pinnedUrl ?? this.tabUrl(t);
         if (!restorableUrl(url)) return [];
         const title = t.titleIsExplicit ? normalizeTabTitle(t.title, url) : '';
         return [{ url, ...(title ? { title } : {}), ...(t.folderId ? { folderId: t.folderId } : {}) }];
@@ -979,7 +1066,7 @@ export class TabManager {
       const desired: Tab[] = [];
       for (const pin of remote.pinned) {
         const folderId = pin.folderId && known.has(pin.folderId) ? pin.folderId : null;
-        let tab = [...unmatched].find((t) => t.pinned && this.tabUrl(t) === pin.url) ?? [...unmatched].find((t) => this.tabUrl(t) === pin.url);
+        let tab = [...unmatched].find((t) => t.pinned && (t.pinnedUrl ?? this.tabUrl(t)) === pin.url) ?? [...unmatched].find((t) => this.tabUrl(t) === pin.url);
         if (!tab) {
           tab = this.openTab(pin.url, { spaceId: space.id, activate: false, lazy: true, pinned: true, folderId });
           if (pin.title) {
@@ -989,11 +1076,13 @@ export class TabManager {
         }
         unmatched.delete(tab);
         tab.pinned = true;
+        tab.pinnedUrl = pin.url;
         tab.folderId = folderId;
         desired.push(tab);
       }
       for (const tab of unmatched) {
         tab.pinned = false;
+        tab.pinnedUrl = null;
         tab.folderId = null;
       }
       const others = [...this.tabs.values()].filter((t) => t.spaceId !== space!.id);
@@ -1442,7 +1531,7 @@ export class TabManager {
     for (const space of this.spaces) {
       const list = [...this.tabs.values()]
         .filter((tab) => tab.spaceId === space.id)
-        .map((tab) => ({ id: tab.id, url: this.tabUrl(tab), title: tab.titleIsExplicit ? tab.title : undefined, pinned: tab.pinned, folderId: tab.folderId }));
+        .map((tab) => ({ id: tab.id, url: this.tabUrl(tab), title: tab.titleIsExplicit ? tab.title : undefined, pinned: tab.pinned, folderId: tab.folderId, pinnedUrl: tab.pinnedUrl, lastActiveAt: tab.lastActiveAt }));
       if (list.length === 1 && list[0].url === CANONICAL_NEW_TAB_URL) soleNewTabs.set(space.id, list[0].id);
       const { tabs, activeIndex } = snapshotSpace(list, this.lastActive[space.id]);
       st.tabsBySpace[space.id] = tabs;
@@ -1457,6 +1546,7 @@ export class TabManager {
 
   restore(): { tabs: number; spaces: number } {
     const { tabsBySpace, activeIndexBySpace, activeSpaceId, recentlyClosed } = this.store.state;
+    this.archive = this.store.state.archive ?? [];
     const soleNewTabs = new Map<string, number>();
     const restored = { tabs: 0, spaces: 0 };
     this.restoring = true;
@@ -1467,8 +1557,12 @@ export class TabManager {
         const { entries, activeIndex } = restoreSelection(saved, activeIndexBySpace?.[space.id] ?? 0);
         if (entries.length) restored.spaces++;
         restored.tabs += entries.length;
-        entries.forEach(({ url, title, pinned, folderId }, index) => {
-          const tab = this.openTab(url, { spaceId: space.id, activate: false, lazy: true, pinned: pinned === true, folderId: typeof folderId === 'string' ? folderId : null });
+        entries.forEach(({ url, title, pinned, folderId, pinnedUrl, lastActiveAt }, index) => {
+          const tab = this.openTab(url, {
+            spaceId: space.id, activate: false, lazy: true, pinned: pinned === true, folderId: typeof folderId === 'string' ? folderId : null,
+            pinnedUrl: typeof pinnedUrl === 'string' ? pinnedUrl : url,
+            lastActiveAt: typeof lastActiveAt === 'number' && Number.isFinite(lastActiveAt) && lastActiveAt <= Date.now() ? lastActiveAt : Date.now(),
+          });
           tab.title = normalizeTabTitle(title, url);
           tab.titleIsExplicit = !!tab.title;
           if (index === activeIndex) this.lastActive[space.id] = tab.id;

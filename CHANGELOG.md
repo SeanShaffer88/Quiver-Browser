@@ -5,6 +5,8 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 ## [Unreleased]
 
 - Meetings: camera, microphone and screen-share prompts (allow once, always or block per site), a screen/window picker, a live indicator on tabs, `meet` commands to start or join Meet, Zoom (web client), Teams, Webex, Jitsi and Whereby, and saved choices in Settings.
+- Auto-archive: temporary tabs unused for 12 hours (configurable, or never) move to a searchable archive (`archive` in the command bar). Pinned, current and audible tabs stay.
+- Closing a pinned tab returns it to its pinned page instead of removing it; the tab menu can update the pinned page or remove the tab.
 - Folder sync: settings, bookmarks, Spaces with folders and pinned tabs, research topics and (opt-in) Boosts sync through a folder you already sync, one file per device, newest change wins, first sync merges.
 - History search: Quiver keeps up to 5,000 visited web pages locally (Settings → History to turn off or clear); `Ctrl+K` lists matches below other results and `h …` searches only history.
 - Downloads: `quiver://downloads` (`Ctrl+J`) with progress, speed, pause, resume (also after restart), cancel, retry, open (with a warning for executables), show in folder and remove; a toolbar progress indicator; and an option to save without asking, with unique file names.

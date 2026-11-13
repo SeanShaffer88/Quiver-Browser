@@ -40,6 +40,8 @@ export interface Settings {
   rememberHistory: boolean;
   /** Show Save As for each download instead of saving straight to the downloads folder. */
   askWhereToSave: boolean;
+  /** Archive temporary tabs unused for this many hours; 0 never. */
+  archiveAfterHours: number;
   privacy: PrivacySettings;
 }
 
@@ -90,6 +92,8 @@ export interface TabInfo {
   folderId: string | null;
   /** The page was given camera, microphone or screen access since it loaded. */
   live: boolean;
+  /** For a pinned tab, the page it returns to when closed. */
+  pinnedUrl: string | null;
   url: string;
   title: string;
   favicon: string;
@@ -168,6 +172,7 @@ export type SuggestionAction =
   | { type: 'internal'; page: 'boosts' | 'settings' | 'research' | 'downloads' }
   | { type: 'activate-tab'; target: TabCommandTarget }
   | { type: 'browser'; command: BrowserCommand }
+  | { type: 'unarchive'; url: string; archivedAt: number }
   | { type: 'research'; op: 'start'; name: string }
   | { type: 'research'; op: 'resume' | 'open'; topicId: string }
   | { type: 'research'; op: 'stop' }

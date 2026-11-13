@@ -14,6 +14,7 @@ import { normalizePrivacy } from './privacy';
 import { topicMarkdown, type Research } from './research';
 import { researchSuggestions } from './research-commands';
 import { meetSuggestions } from './meetings';
+import { archiveSuggestions, normalizeArchiveHours } from './archive';
 import type { SyncService } from './sync-service';
 import type { History } from './history';
 import type { DownloadAction, Downloads } from './downloads';
@@ -126,6 +127,8 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (meet) return meet;
     const topics = researchSuggestions(text, research.inSpace(context.spaceId), research.active(context.spaceId), context.internal ? '' : context.url);
     if (topics) return topics;
+    const archived = /^archive(?:\s+([\s\S]*))?$/i.exec(text.trim());
+    if (archived) return archiveSuggestions((archived[1] ?? '').trim(), tabs.archive);
     const tabQuery = tabSearchQuery(text);
     if (tabQuery !== undefined) return tabSearchSuggestions(tabQuery, context.spaceId, openTabTargets());
     const palette = paletteQuery(text);
@@ -190,7 +193,11 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       { label: 'Copy Markdown link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(true); if (link) clipboard.writeText(link); } },
       { label: 'Open the console', enabled: !tab.internal, click: () => tabs.openConsole(tab.id) },
       { type: 'separator' },
-      { label: 'Close tab', click: () => tabs.closeTab(tab.id) },
+      ...(tab.pinned ? [
+        { label: 'Make this page the pinned page', enabled: !tab.internal, click: () => tabs.setPinnedPage(tab.id) },
+        { label: 'Back to pinned page (Ctrl+W)', click: () => tabs.closeTab(tab.id) },
+        { label: 'Remove pinned tab', click: () => tabs.closeTab(tab.id, { remove: true }) },
+      ] : [{ label: 'Close tab', click: () => tabs.closeTab(tab.id) }]),
     ]).popup();
   });
 
@@ -338,6 +345,9 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       case 'internal':
         tabs.navigate(`quiver://${action.page}`);
         break;
+      case 'unarchive':
+        if (!tabs.unarchive(action.url, action.archivedAt)) return 'stale';
+        break;
       case 'browser':
         closeOverlay(true);
         d.runCommand(action.command);
@@ -417,6 +427,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (typeof patch.devServerScan === 'boolean') s.devServerScan = patch.devServerScan;
     if (typeof patch.rememberHistory === 'boolean') s.rememberHistory = patch.rememberHistory;
     if (typeof patch.askWhereToSave === 'boolean') s.askWhereToSave = patch.askWhereToSave;
+    if (patch.archiveAfterHours !== undefined) s.archiveAfterHours = normalizeArchiveHours(patch.archiveAfterHours);
     if (patch.privacy !== undefined && typeof patch.privacy === 'object') {
       s.privacy = normalizePrivacy({ ...s.privacy, ...patch.privacy }, process.platform);
       d.onPrivacyChanged();
