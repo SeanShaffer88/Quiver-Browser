@@ -90,6 +90,7 @@ body { display: grid; grid-template-columns: var(--sb, 264px) minmax(0, 1fr); gr
 .recovery-notice { flex-wrap: nowrap; }
 .recovery-notice .recovery-copy { flex: 1; }
 .recovery-notice .icon-btn { width: 24px; height: 24px; flex: none; }
+.arc-offer .icon-btn { width: 24px; height: 24px; flex: none; margin-inline-start: auto; }
 .recovery-compact { display: none; }
 .collapsed .recovery-card { justify-content: center; margin-inline: 5px; padding: 3px; }
 .collapsed .recovery-compact { display: inline; }

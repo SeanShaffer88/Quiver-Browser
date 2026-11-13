@@ -28,6 +28,12 @@ kbd, code { font: 12px var(--mono); background: var(--panel-2); border: 1px soli
 .bookmark-sample { padding-inline-start: 20px; margin: 8px 0 12px; overflow-wrap: anywhere; }
 .bookmark-sample .note { margin-inline-start: 8px; }
 .bookmark-result .status { margin: 4px 0; }
+.arc-sidebar-review { overflow-wrap: anywhere; }
+.arc-sidebar-review h3 { font-size: 14px; margin: 0 0 4px; }
+.arc-sidebar-review p, #arc-sidebar-status { margin: 4px 0 8px; }
+.arc-sidebar-review details { margin: 8px 0; }
+.arc-sidebar-review summary { cursor: pointer; }
+.arc-sidebar-review ul { margin: 4px 0; padding-inline-start: 12px; }
 @media (forced-colors: active) {
   .bookmark-review { border-color: CanvasText; }
   .bookmark-counts li:first-child, .bookmark-result .status { color: CanvasText; }

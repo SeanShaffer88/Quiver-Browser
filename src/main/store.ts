@@ -42,6 +42,8 @@ export interface PersistedState {
   topics?: Topic[];
   sync?: SyncState;
   activeTopicBySpace?: Record<string, string>;
+  /** The first-launch Arc import offer: shown while pending, never again once dismissed or used. */
+  arcImportOffer?: 'pending' | 'dismissed';
   bounds?: { x?: number; y?: number; width: number; height: number; maximized: boolean };
 }
 
@@ -105,6 +107,8 @@ const WINDOWS_RENAME_BACKOFFS_MS = [75, 150, 300] as const;
 export class Store {
   readonly file: string;
   state: PersistedState;
+  /** No state file existed when Quiver started: this is the first launch on this profile. */
+  firstRun = false;
   private timer: NodeJS.Timeout | null = null;
 
   constructor(file = path.join(app.getPath('userData'), 'quiver-state.json')) {
@@ -143,6 +147,7 @@ export class Store {
       state.sync = normalizeSyncState(raw.sync, os.hostname());
       state.archive = normalizeArchive(raw.archive, new Set(state.spaces.map(({ id }) => id)));
       state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);
+      if (state.arcImportOffer !== 'pending' && state.arcImportOffer !== 'dismissed') delete state.arcImportOffer;
       const spaceIds = new Set(state.spaces.map(({ id }) => id));
       const soleNewTabSpaces = new Set([...spaceIds].filter((id) => hasSavedNewTabPlaceholder(state.tabsBySpace?.[id])));
       state.recentlyClosed = normalizeRecentlyClosed(raw.recentlyClosed, spaceIds, soleNewTabSpaces);
@@ -150,7 +155,8 @@ export class Store {
       return state;
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
-      if (e.code !== 'ENOENT') {
+      if (e.code === 'ENOENT') this.firstRun = true;
+      else {
         // Quarantine unparseable data instead of silently discarding it.
         try {
           fs.renameSync(this.file, `${this.file}.corrupt-${Date.now()}`);

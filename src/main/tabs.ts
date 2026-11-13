@@ -35,6 +35,7 @@ import {
   type ClosedTab,
 } from './session-recovery';
 import { moveInGroup } from './tab-order';
+import type { ArcImportPlan, ArcImportUndo, ExistingSpace } from './arc-import';
 import type { MediaPermissions } from './site-permissions';
 import { addArchived, tabsToArchive, type ArchivedTab } from './archive';
 import { normalizeSyncedSpaces, type SyncedSpace } from './sync';
@@ -150,6 +151,8 @@ export class TabManager {
   private recentlyClosed: ClosedTab[] = [];
   private recoveryNotice?: RecoveryNotice;
   private restoring = false;
+  /** Shown in the sidebar until the person reviews or dismisses the first-launch Arc import. */
+  arcImportOffer = false;
   preview = false;
   devServers: DevServer[] = [];
   /** Called for each main-frame page a web tab shows (research recording). */
@@ -275,6 +278,7 @@ export class TabManager {
     return {
       recentlyClosed: recent ? { id: recent.id, spaceId: recent.spaceId, title: recent.title } : undefined,
       recoveryNotice: this.recoveryNotice,
+      ...(this.arcImportOffer ? { arcImportOffer: true } : {}),
       spaces: this.spaces,
       activeSpaceId: this.activeSpaceId,
       tabs: [...this.tabs.values()].map((t) => this.info(t)),
@@ -1155,6 +1159,112 @@ export class TabManager {
     }
     this.persist();
     this.emit();
+  }
+
+  // ───────── Arc import ─────────
+  /** Each Space with its folders and the URLs it already holds, for planning an import against. */
+  importTargets(): ExistingSpace[] {
+    return this.spaces.map((space) => {
+      const urls = new Set<string>();
+      for (const tab of this.spaceTabs(space.id)) {
+        urls.add(this.tabUrl(tab));
+        if (tab.pinnedUrl) urls.add(tab.pinnedUrl);
+      }
+      return { id: space.id, name: space.name, folders: this.folders(space.id), urls };
+    });
+  }
+
+  /**
+   * Apply a planned import: new Spaces use the shared partition, folders are added after the Space's own, and every
+   * tab is pinned and opened lazily so nothing loads until it is selected. Returns what undo needs to remove.
+   */
+  importArc(plan: ArcImportPlan, undoId: number): ArcImportUndo {
+    const undo: ArcImportUndo = { id: undoId, createdSpaceIds: [], folders: [], tabIds: [] };
+    this.restoring = true;
+    try {
+      for (const planned of plan.spaces) {
+        let space = planned.spaceId === null ? undefined : this.spaces.find((s) => s.id === planned.spaceId);
+        if (planned.spaceId !== null && !space) continue;
+        if (!space) {
+          space = {
+            id: `space-${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`,
+            name: planned.name,
+            color: SPACE_COLORS[this.spaces.length % SPACE_COLORS.length],
+            isolated: false,
+            folders: [],
+          };
+          this.store.state.spaces.push(space);
+          undo.createdSpaceIds.push(space.id);
+        }
+        const before = new Set(this.folders(space.id).map((f) => f.id));
+        // normalizeFolders re-checks ids, names, depth and the folder limit against the merged list.
+        space.folders = normalizeFolders([...this.folders(space.id), ...planned.folders]);
+        const added = space.folders.filter((f) => !before.has(f.id)).map((f) => f.id);
+        if (added.length) undo.folders.push({ spaceId: space.id, ids: added });
+        for (const entry of planned.tabs) {
+          if (!restorableUrl(entry.url)) continue;
+          const tab = this.openTab(entry.url, { spaceId: space.id, activate: false, lazy: true, pinned: true, folderId: entry.folderId, pinnedUrl: entry.url });
+          const title = normalizeTabTitle(entry.title, entry.url);
+          if (title) {
+            tab.title = title;
+            tab.titleIsExplicit = true;
+          }
+          undo.tabIds.push(tab.id);
+        }
+      }
+    } finally {
+      this.restoring = false;
+    }
+    this.persist();
+    this.emit();
+    return undo;
+  }
+
+  /**
+   * Remove what an import added. Tabs the person opened since stay: folders they used are removed with their tabs moved
+   * up a level, and a created Space is only removed when nothing but imported tabs is left in it.
+   */
+  undoArcImport(undo: ArcImportUndo): { tabs: number; spaces: number } {
+    let removedTabs = 0;
+    for (const id of undo.tabIds) {
+      const tab = this.tabs.get(id);
+      if (!tab) continue;
+      if (this.activeTabId === id) this.activeTabId = null;
+      if (this.lastActive[tab.spaceId] === id) delete this.lastActive[tab.spaceId];
+      this.discardTab(tab);
+      removedTabs++;
+    }
+    for (const { spaceId, ids } of undo.folders) {
+      let folders = this.folders(spaceId);
+      let list = this.spaceTabs(spaceId);
+      for (const id of ids) {
+        const result = deleteFolder(folders, list, id);
+        folders = result.folders;
+        list = result.tabs;
+      }
+      for (const t of list) {
+        const live = this.tabs.get(t.id);
+        if (live) live.folderId = t.folderId;
+      }
+      const space = this.spaces.find((s) => s.id === spaceId);
+      if (space) space.folders = folders;
+    }
+    let removedSpaces = 0;
+    for (const id of undo.createdSpaceIds) {
+      if (this.spaces.length < 2 || this.spaceTabs(id).length) continue;
+      this.store.state.spaces = this.spaces.filter((s) => s.id !== id);
+      delete this.store.state.tabsBySpace[id];
+      delete this.store.state.activeIndexBySpace[id];
+      delete this.lastActive[id];
+      this.recentlyClosed = this.recentlyClosed.filter((tab) => tab.spaceId !== id);
+      removedSpaces++;
+    }
+    if (!this.spaces.some((s) => s.id === this.activeSpaceId)) this.activateSpace(this.spaces[0].id);
+    else if (this.activeTabId === null) this.activateSpace(this.activeSpaceId);
+    this.layout();
+    this.persist();
+    this.emit();
+    return { tabs: removedTabs, spaces: removedSpaces };
   }
 
   createSpace(name: string, isolated: boolean): Space {
