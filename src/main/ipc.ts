@@ -109,6 +109,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   // tabs
   handle('shell', 'tab:close', (_e, id: number) => tabs.closeTab(Number(id)));
   handle('shell', 'tab:activate', (_e, id: number) => tabs.activateTab(Number(id)));
+  handle('shell', 'tab:move', (_e, id: number, index: number) => tabs.moveTab(Number(id), Number(index)));
   handle('shell', 'tab:back', () => tabs.goBack());
   handle('shell', 'tab:forward', () => tabs.goForward());
   handle('shell', 'tab:reload', () => tabs.reload());

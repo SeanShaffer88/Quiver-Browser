@@ -195,6 +195,12 @@ async function main(): Promise<void> {
       case 'prev-tab':
         tabs.cycleTab(-1);
         break;
+      case 'move-tab-up':
+        tabs.shiftActiveTab(-1);
+        break;
+      case 'move-tab-down':
+        tabs.shiftActiveTab(1);
+        break;
       case 'back':
         tabs.goBack();
         break;

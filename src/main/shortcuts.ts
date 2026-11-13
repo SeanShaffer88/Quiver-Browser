@@ -11,6 +11,8 @@ export type ShortcutAction =
   | 'env'
   | 'next-tab'
   | 'prev-tab'
+  | 'move-tab-up'
+  | 'move-tab-down'
   | 'back'
   | 'forward'
   | 'devtools'
@@ -37,6 +39,10 @@ export function shortcutFor(input: Input): ShortcutAction | null {
   if (code === 'KeyI' && shift && !alt) return 'devtools';
   if (code === 'KeyB' && shift && !alt) return 'boosts';
   if (code === 'Tab' && !alt) return shift ? 'prev-tab' : 'next-tab';
+  if ((code === 'PageUp' || code === 'PageDown') && !alt) {
+    if (shift) return code === 'PageUp' ? 'move-tab-up' : 'move-tab-down';
+    return code === 'PageUp' ? 'prev-tab' : 'next-tab';
+  }
   if (alt || shift) return null;
 
   switch (code) {

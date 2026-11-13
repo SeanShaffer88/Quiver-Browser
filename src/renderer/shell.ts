@@ -143,7 +143,19 @@ function renderAddForm(): HTMLElement {
   );
 }
 
-function renderTab(t: TabInfo, active: boolean): HTMLElement {
+let draggingTab: { id: number; from: number } | null = null;
+
+function clearDropMarks(): void {
+  for (const el of sidebar.querySelectorAll('.drop-before, .drop-after')) el.classList.remove('drop-before', 'drop-after');
+}
+
+/** Final index for a tab dropped before or after the tab at `over`, once the moving tab leaves its slot. */
+function dropIndex(from: number, over: number, after: boolean): number {
+  if (from < over) return after ? over : over - 1;
+  return after ? over + 1 : over;
+}
+
+function renderTab(t: TabInfo, active: boolean, index: number): HTMLElement {
   const fav = t.favicon ? h('img', { class: 'fav', src: t.favicon, alt: '' }) : h('span', { class: 'fav' });
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
@@ -154,7 +166,7 @@ function renderTab(t: TabInfo, active: boolean): HTMLElement {
     'aria-label': t.title,
     'aria-selected': String(active),
     dataset: { focusKey: 'tab-' + t.id },
-    title: t.title + '\n' + t.url,
+    title: t.title + '\n' + t.url + '\nDrag or press Ctrl+Shift+PageUp/PageDown to move',
     onClick: () => call('tab:activate', t.id),
   }, ...kids);
   const close = h('button', {
@@ -164,10 +176,39 @@ function renderTab(t: TabInfo, active: boolean): HTMLElement {
     dataset: { focusKey: 'close-tab-' + t.id },
     onClick: () => call('tab:close', t.id),
   }, '×');
+  const lowerHalf = (e: DragEvent) => {
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    return e.clientY > box.top + box.height / 2;
+  };
   return h('div', {
     class: 'tab' + (active ? ' active' : '') + (t.loading ? ' loading' : ''),
+    draggable: true,
     onAuxclick: (e: MouseEvent) => {
       if (e.button === 1) void call('tab:close', t.id);
+    },
+    onDragstart: (e: DragEvent) => {
+      draggingTab = { id: t.id, from: index };
+      e.dataTransfer?.setData('application/x-quiver-tab', String(t.id));
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+    },
+    onDragover: (e: DragEvent) => {
+      if (!draggingTab) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      clearDropMarks();
+      if (draggingTab.id !== t.id) (e.currentTarget as HTMLElement).classList.add(lowerHalf(e) ? 'drop-after' : 'drop-before');
+    },
+    onDragleave: (e: DragEvent) => (e.currentTarget as HTMLElement).classList.remove('drop-before', 'drop-after'),
+    onDrop: (e: DragEvent) => {
+      e.preventDefault();
+      clearDropMarks();
+      const drag = draggingTab;
+      draggingTab = null;
+      if (drag && drag.id !== t.id) void call('tab:move', drag.id, dropIndex(drag.from, index, lowerHalf(e)));
+    },
+    onDragend: () => {
+      draggingTab = null;
+      clearDropMarks();
     },
   }, select, close);
 }
@@ -250,7 +291,7 @@ function renderSidebar(s: ShellState): void {
   const previousTabs = sidebar.querySelector<HTMLElement>('.tabs');
   const previousScroll = previousTabs?.dataset.spaceId === s.activeSpaceId ? previousTabs.scrollTop : 0;
   const tabsEl = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Tabs', dataset: { spaceId: s.activeSpaceId } },
-    ...spaceTabs.map((t) => renderTab(t, t.id === s.activeTabId)));
+    ...spaceTabs.map((t, i) => renderTab(t, t.id === s.activeTabId, i)));
 
   const servers = h('section', { class: 'servers', 'aria-label': 'Local servers' }, h('h3', {}, h('span', {}, 'Local servers'), h('button', { class: 'icon-btn', disabled: !s.settings.devServerScan, title: 'Rescan now', 'aria-label': 'Rescan local servers', dataset: { focusKey: 'rescan' }, onClick: () => call('devserver:refresh') }, '↻')));
   if (!s.settings.devServerScan) servers.append(h('div', { class: 'empty' }, 'Scanning is off (Settings).'));
