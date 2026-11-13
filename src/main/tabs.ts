@@ -12,7 +12,7 @@ import {
   TOOLBAR_H,
 } from '../shared/constants';
 import { badgeFor, isLocalHost, switchEnv } from '../shared/env';
-import type { DevServer, EnvBadge, LocalServerStatus, PhoneStatus, RecoveryNotice, ShellState, Space, TabInfo } from '../shared/types';
+import type { DevServer, EnvBadge, Folder, LocalServerStatus, PhoneStatus, RecoveryNotice, ShellState, Space, TabInfo } from '../shared/types';
 import { boostKind, boostMatchesHost, transpileBoost, wrapScript, type Boosts } from './boosts';
 import {
   allowsInternalNavigation, allowsWebNavigation, configureSitePermissions, internalTabUrl, isInternalTabPage, type InternalTabPage,
@@ -34,10 +34,13 @@ import {
   type ClosedTab,
 } from './session-recovery';
 import { moveInGroup } from './tab-order';
+import { canNest, deleteFolder, displayOrder, folderName, placeRelative, sidebarRows } from './tab-tree';
 
 interface Tab {
   id: number;
   spaceId: string;
+  pinned: boolean;
+  folderId: string | null;
   partition: string;
   view: WebContentsView;
   internal: boolean;
@@ -206,6 +209,8 @@ export class TabManager {
     return {
       id: t.id,
       spaceId: t.spaceId,
+      pinned: t.pinned,
+      folderId: t.folderId,
       url: displayUrl(url),
       title: t.title || displayUrl(url) || 'New Tab',
       favicon: t.favicon,
@@ -229,6 +234,7 @@ export class TabManager {
       spaces: this.spaces,
       activeSpaceId: this.activeSpaceId,
       tabs: [...this.tabs.values()].map((t) => this.info(t)),
+      sidebar: sidebarRows(this.spaceTabs(this.activeSpaceId), this.folders(this.activeSpaceId)),
       activeTabId: this.activeTabId,
       research: this.researchStatus?.(this.activeSpaceId),
       devServers: this.devServers,
@@ -319,7 +325,7 @@ export class TabManager {
   }
 
   // ───────── tabs ─────────
-  openTab(rawUrl: string, opts: { spaceId?: string; activate?: boolean; lazy?: boolean; index?: number } = {}): Tab {
+  openTab(rawUrl: string, opts: { spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null } = {}): Tab {
     const spaceId = opts.spaceId ?? this.activeSpaceId;
     const internal = rawUrl.startsWith('quiver://') || rawUrl === '';
     const url = internal ? toInternalUrl(rawUrl || 'quiver://newtab') : rawUrl;
@@ -330,6 +336,8 @@ export class TabManager {
     const tab: Tab = {
       id: this.nextId++,
       spaceId,
+      pinned: !!opts.pinned,
+      folderId: opts.pinned && opts.folderId && this.folders(spaceId).some((f) => f.id === opts.folderId) ? opts.folderId : null,
       partition,
       view,
       internal,
@@ -559,32 +567,144 @@ export class TabManager {
     this.emit();
   }
 
-  cycleTab(delta: number): void {
-    const list = [...this.tabs.values()].filter((t) => t.spaceId === this.activeSpaceId);
-    if (list.length < 2) return;
-    const i = list.findIndex((t) => t.id === this.activeTabId);
-    this.activateTab(list[(i + delta + list.length) % list.length].id);
+  // ───────── organization: pinned tabs and folders ─────────
+  private spaceTabs(spaceId: string): Tab[] {
+    return [...this.tabs.values()].filter((t) => t.spaceId === spaceId);
   }
 
-  /** Move a tab to `toIndex` within its Space. */
-  moveTab(id: number, toIndex: number): void {
-    const order = moveInGroup([...this.tabs.values()], id, toIndex, (t) => t.spaceId);
-    if (!order) return;
+  folders(spaceId: string): Folder[] {
+    return this.spaces.find((s) => s.id === spaceId)?.folders ?? [];
+  }
+
+  private setFolders(spaceId: string, folders: Folder[]): void {
+    const space = this.spaces.find((s) => s.id === spaceId);
+    if (space) space.folders = folders;
+  }
+
+  private reorder(order: Tab[]): void {
     this.tabs.clear();
     for (const t of order) this.tabs.set(t.id, t);
     this.persist();
     this.emit();
   }
 
+  /** Tabs of the active Space in sidebar order. */
+  private orderedSpaceTabs(): Tab[] {
+    const list = this.spaceTabs(this.activeSpaceId);
+    const byId = new Map(list.map((t) => [t.id, t]));
+    return displayOrder(list, this.folders(this.activeSpaceId)).map((id) => byId.get(id)!);
+  }
+
+  /** Move a tab among the siblings of its own folder or section (pinned / temporary). */
   shiftActiveTab(delta: number): void {
     const tab = this.activeTab;
     if (!tab) return;
-    const list = [...this.tabs.values()].filter((t) => t.spaceId === tab.spaceId);
-    this.moveTab(tab.id, list.indexOf(tab) + delta);
+    const key = (t: Tab) => `${t.spaceId}|${t.pinned}|${t.folderId ?? ''}`;
+    const siblings = [...this.tabs.values()].filter((t) => key(t) === key(tab));
+    const order = moveInGroup([...this.tabs.values()], tab.id, siblings.indexOf(tab) + delta, key);
+    if (order) this.reorder(order);
+  }
+
+  /**
+   * Put a tab in a section/folder, optionally next to another tab of the same Space.
+   * Every argument comes from the renderer, so each one is checked against current state.
+   */
+  placeTab(id: number, where: { pinned: boolean; folderId: string | null; targetId: number | null; after: boolean }): void {
+    const tab = this.tabs.get(id);
+    if (!tab) return;
+    const pinned = !!where.pinned;
+    const folderId = pinned && where.folderId !== null && this.folders(tab.spaceId).some((f) => f.id === where.folderId) ? where.folderId : null;
+    const target = where.targetId === null ? undefined : this.tabs.get(where.targetId);
+    const sameSpaceTarget = target && target.spaceId === tab.spaceId && target.id !== tab.id ? target : undefined;
+    tab.pinned = pinned;
+    tab.folderId = folderId;
+    let anchor = sameSpaceTarget?.id ?? null;
+    let after = !!where.after;
+    if (anchor === null) {
+      // Without a target, append to the end of the destination folder/section.
+      const peers = this.spaceTabs(tab.spaceId).filter((t) => t !== tab && t.pinned === pinned && t.folderId === folderId);
+      const last = peers.at(-1) ?? this.spaceTabs(tab.spaceId).filter((t) => t !== tab).at(-1);
+      anchor = last?.id ?? null;
+      after = true;
+    }
+    this.reorder(anchor === null ? [...this.tabs.values()] : placeRelative([...this.tabs.values()], tab.id, anchor, after));
+  }
+
+  setPinned(id: number, pinned: boolean, folderId: string | null = null): void {
+    this.placeTab(id, { pinned, folderId, targetId: null, after: true });
+  }
+
+  createFolder(spaceId: string, parentId: string | null, name = 'New folder'): string | null {
+    const folders = this.folders(spaceId);
+    if (!this.spaces.some((s) => s.id === spaceId) || folders.length >= 200) return null;
+    const parent = parentId !== null && folders.some((f) => f.id === parentId) ? parentId : null;
+    const id = `folder-${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+    const folder: Folder = { id, name: folderName(name) || 'New folder', parentId: parent, collapsed: false };
+    if (!canNest([...folders, folder], id, parent)) return null;
+    if (parent) for (const f of folders) if (f.id === parent) f.collapsed = false;
+    this.setFolders(spaceId, [...folders, folder]);
+    this.store.save();
+    this.emit();
+    return id;
+  }
+
+  private folderSpace(id: string): string | undefined {
+    return this.spaces.find((s) => s.folders?.some((f) => f.id === id))?.id;
+  }
+
+  renameFolder(id: string, name: string): void {
+    const spaceId = this.folderSpace(id);
+    const n = folderName(name);
+    const folder = spaceId && this.folders(spaceId).find((f) => f.id === id);
+    if (!folder || !n) return;
+    folder.name = n;
+    this.store.save();
+    this.emit();
+  }
+
+  toggleFolder(id: string, collapsed?: boolean): void {
+    const spaceId = this.folderSpace(id);
+    const folder = spaceId && this.folders(spaceId).find((f) => f.id === id);
+    if (!folder) return;
+    folder.collapsed = collapsed ?? !folder.collapsed;
+    this.store.save();
+    this.emit();
+  }
+
+  moveFolder(id: string, parentId: string | null): void {
+    const spaceId = this.folderSpace(id);
+    if (!spaceId) return;
+    const folders = this.folders(spaceId);
+    if (!canNest(folders, id, parentId)) return;
+    const folder = folders.find((f) => f.id === id)!;
+    if (folder.parentId === parentId) return;
+    folder.parentId = parentId;
+    // Moving a folder appends it after its new siblings.
+    this.setFolders(spaceId, [...folders.filter((f) => f !== folder), folder]);
+    this.store.save();
+    this.emit();
+  }
+
+  deleteFolder(id: string): void {
+    const spaceId = this.folderSpace(id);
+    if (!spaceId) return;
+    const tabs = this.spaceTabs(spaceId);
+    const result = deleteFolder(this.folders(spaceId), tabs, id);
+    result.tabs.forEach((moved, i) => { tabs[i].folderId = moved.folderId; });
+    this.setFolders(spaceId, result.folders);
+    this.persist();
+    this.emit();
+  }
+
+  cycleTab(delta: number): void {
+    const list = this.orderedSpaceTabs();
+    if (list.length < 2) return;
+    const i = list.findIndex((t) => t.id === this.activeTabId);
+    this.activateTab(list[(i + delta + list.length) % list.length].id);
   }
 
   tabByIndex(n: number): void {
-    const list = [...this.tabs.values()].filter((t) => t.spaceId === this.activeSpaceId);
+    const list = this.orderedSpaceTabs();
     const t = n >= 9 ? list[list.length - 1] : list[n - 1];
     if (t) this.activateTab(t.id);
   }
@@ -1079,7 +1199,7 @@ export class TabManager {
     for (const space of this.spaces) {
       const list = [...this.tabs.values()]
         .filter((tab) => tab.spaceId === space.id)
-        .map((tab) => ({ id: tab.id, url: this.tabUrl(tab), title: tab.titleIsExplicit ? tab.title : undefined }));
+        .map((tab) => ({ id: tab.id, url: this.tabUrl(tab), title: tab.titleIsExplicit ? tab.title : undefined, pinned: tab.pinned, folderId: tab.folderId }));
       if (list.length === 1 && list[0].url === CANONICAL_NEW_TAB_URL) soleNewTabs.set(space.id, list[0].id);
       const { tabs, activeIndex } = snapshotSpace(list, this.lastActive[space.id]);
       st.tabsBySpace[space.id] = tabs;
@@ -1104,8 +1224,8 @@ export class TabManager {
         const { entries, activeIndex } = restoreSelection(saved, activeIndexBySpace?.[space.id] ?? 0);
         if (entries.length) restored.spaces++;
         restored.tabs += entries.length;
-        entries.forEach(({ url, title }, index) => {
-          const tab = this.openTab(url, { spaceId: space.id, activate: false, lazy: true });
+        entries.forEach(({ url, title, pinned, folderId }, index) => {
+          const tab = this.openTab(url, { spaceId: space.id, activate: false, lazy: true, pinned: pinned === true, folderId: typeof folderId === 'string' ? folderId : null });
           tab.title = normalizeTabTitle(title, url);
           tab.titleIsExplicit = !!tab.title;
           if (index === activeIndex) this.lastActive[space.id] = tab.id;
