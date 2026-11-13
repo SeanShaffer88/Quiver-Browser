@@ -2,13 +2,14 @@ import { clipboard, ipcMain, Menu, type IpcMainInvokeEvent, type WebContentsView
 import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
 import { detectEnv } from '../shared/env';
 import { parseCommand } from '../shared/parser';
-import type { BookmarkLibraryView, CommandCommitResult, CommandMode, EnvGroup, Settings, Suggestion } from '../shared/types';
+import type { BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, Settings, Suggestion } from '../shared/types';
 import { BookmarkImports } from './bookmark-import';
 import { isValidBoostName, type Boosts } from './boosts';
 import { BookmarkProfileReadError, bookmarkProfileLabel, discoverBookmarkProfiles, readChromiumBookmarkCandidates } from './chromium-bookmarks';
 import type { DevServerWatcher } from './devservers';
 import { internalRole, type InternalPage, type InternalRole } from './internal-access';
 import type { Store } from './store';
+import { paletteQuery, paletteSuggestions } from './palette';
 import { tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
 
@@ -19,6 +20,8 @@ export interface IpcDeps {
   devWatcher: DevServerWatcher;
   overlay: WebContentsView;
   shell: WebContentsView;
+  /** Runs a browser action chosen in the command palette. */
+  runCommand: (command: BrowserCommand) => void;
 }
 
 const MAX_COMMAND_LENGTH = 65536;
@@ -104,6 +107,19 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     }
   }
 
+  /** Tab search (`tab …`), palette scopes (`> …`, `bm …`), else the parser with palette matches below its default result. */
+  const suggestionsFor = (text: string, context: CommandContext): Suggestion[] => {
+    const tabQuery = tabSearchQuery(text);
+    if (tabQuery !== undefined) return tabSearchSuggestions(tabQuery, context.spaceId, openTabTargets());
+    const palette = paletteQuery(text);
+    const sources = () => ({ activeSpaceId: context.spaceId, tabs: openTabTargets(), bookmarks: store.state.bookmarks });
+    if (palette && palette.scope !== 'all') return paletteSuggestions(palette.scope, palette.query, sources());
+    const parsed = parseCommand(text, parseContext(context));
+    const fellThrough = parsed.length === 1 && (parsed[0].kind === 'url' || parsed[0].kind === 'search');
+    if (!palette || !fellThrough || palette.query.length < 2) return parsed;
+    return [...parsed, ...paletteSuggestions('all', palette.query, sources())];
+  };
+
   handle('shell', 'state:get', () => tabs.snapshot());
 
   // tabs
@@ -164,9 +180,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (typeof text !== 'string' || text.length > MAX_COMMAND_LENGTH) return [];
     const context = commandContext(command.mode);
     command.context = context;
-    const query = tabSearchQuery(text);
-    command.suggestions = query === undefined ? parseCommand(text, parseContext(context))
-      : tabSearchSuggestions(query, context.spaceId, openTabTargets());
+    command.suggestions = suggestionsFor(text, context);
     return command.suggestions.map((suggestion) => commandChoice(suggestion, context));
   });
   handle('commandbar', 'cmd:commit', (_e, id: number, request: number, index: number, alternate: boolean): CommandCommitResult => {
@@ -198,6 +212,10 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       case 'internal':
         tabs.navigate(`quiver://${action.page}`);
         break;
+      case 'browser':
+        closeOverlay(true);
+        d.runCommand(action.command);
+        return 'done';
       case 'activate-tab': {
         const tab = tabs.tabs.get(action.target.id);
         const space = tab && tabs.spaces.find(({ id }) => id === tab.spaceId);

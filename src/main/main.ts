@@ -234,7 +234,10 @@ async function main(): Promise<void> {
   );
   tabs.attachShortcuts(shell.webContents);
 
-  actions = registerIpc({ tabs, store, boosts, devWatcher, overlay, shell });
+  actions = registerIpc({
+    tabs, store, boosts, devWatcher, overlay, shell,
+    runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings') : onShortcut(command)),
+  });
 
   await Promise.all([shell.webContents.loadURL('quiver://app/shell.html'), overlay.webContents.loadURL('quiver://app/commandbar.html')]);
   const interrupted = store.state.sessionOpen === true;

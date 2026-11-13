@@ -1,5 +1,6 @@
 import { badgeFor } from '../shared/env';
 import type { EnvGroup, Suggestion, TabCommandTarget } from '../shared/types';
+import { fuzzyScore } from './palette';
 import { normalizeTabTitle } from './session-recovery';
 
 const RESULT_LIMIT = 20;
@@ -31,18 +32,21 @@ export function tabCommandTarget(
 }
 
 export function tabSearchSuggestions(query: string, activeSpaceId: string, targets: Iterable<TabCommandTarget>): Suggestion[] {
-  const current: Suggestion[] = [];
-  const other: Suggestion[] = [];
+  const current: { score: number; order: number; target: TabCommandTarget }[] = [];
+  const other: typeof current = [];
+  let order = 0;
   for (const target of targets) {
-    const matches = target.title.toLowerCase().includes(query) || target.host.toLowerCase().includes(query);
-    if (!matches) continue;
-    const group = target.spaceId === activeSpaceId ? current : other;
-    if (group.length < RESULT_LIMIT) group.push({ kind: 'tab', label: target.title, action: { type: 'activate-tab', target } });
-    if (current.length === RESULT_LIMIT && other.length) break;
+    const score = Math.max(fuzzyScore(query, target.title), fuzzyScore(query, target.host) - 5);
+    if (score < 0) continue;
+    (target.spaceId === activeSpaceId ? current : other).push({ score, order: order++, target });
   }
+  const rank = (list: typeof current) => list.sort((a, b) => b.score - a.score || a.order - b.order);
+  rank(current);
+  rank(other);
   // A busy current Space should still leave room for a matching tab elsewhere.
   const currentLimit = other.length ? RESULT_LIMIT - 1 : RESULT_LIMIT;
-  const results = current.slice(0, currentLimit).concat(other).slice(0, RESULT_LIMIT);
+  const results = current.slice(0, currentLimit).concat(other).slice(0, RESULT_LIMIT)
+    .map(({ target }): Suggestion => ({ kind: 'tab', label: target.title, action: { type: 'activate-tab', target } }));
   return results.length ? results : [{ kind: 'tab', label: 'No matching open tabs', action: { type: 'noop' } }];
 }
 
