@@ -7,6 +7,7 @@ import { DEFAULT_SEARCH } from '../shared/constants';
 import type { Bookmark, Settings, Space } from '../shared/types';
 import { validBookmarkUndo, type BookmarkUndo } from './bookmark-import';
 import { normalizeBookmarks } from './bookmarks';
+import { normalizeSitePermissions } from './site-permissions';
 import { normalizeSyncState, type SyncState } from './sync-service';
 import { normalizePrivacy } from './privacy';
 import { normalizeFolders } from './tab-tree';
@@ -44,6 +45,7 @@ export function defaultSettings(): Settings {
     searchEngine: DEFAULT_SEARCH,
     devServerScan: true,
     sidebarCollapsed: false,
+    sitePermissions: {},
     privacy: normalizePrivacy(undefined, process.platform),
   };
 }
@@ -113,6 +115,7 @@ export class Store {
           searchEngine: raw.settings?.searchEngine ?? base.settings.searchEngine,
           devServerScan: raw.settings?.devServerScan ?? base.settings.devServerScan,
           sidebarCollapsed: raw.settings?.sidebarCollapsed ?? base.settings.sidebarCollapsed,
+          sitePermissions: normalizeSitePermissions(raw.settings?.sitePermissions),
           privacy: normalizePrivacy(raw.settings?.privacy, process.platform),
         },
       } as PersistedState;

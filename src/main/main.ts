@@ -1,4 +1,4 @@
-import { app, BaseWindow, crashReporter, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
+import { app, BaseWindow, crashReporter, desktopCapturer, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME, SHARED_PARTITION } from '../shared/constants';
@@ -8,6 +8,8 @@ import { Boosts, isValidBoostName } from './boosts';
 import { configureSitePermissions } from './browser-policy';
 import { DevServerWatcher } from './devservers';
 import { registerIpc } from './ipc';
+import { meetingProvider } from './meetings';
+import { MediaPermissions } from './site-permissions';
 import { clearSessions, PrivacyController } from './privacy';
 import { normalizeTopics, Research } from './research';
 import { normalizeSyncState, SyncService } from './sync-service';
@@ -254,6 +256,37 @@ async function main(): Promise<void> {
     portableDownloadPath,
   );
   tabs.attachShortcuts(shell.webContents);
+  tabs.media = new MediaPermissions(
+    () => store.state.settings.sitePermissions,
+    (origin, decision) => {
+      if (decision) store.state.settings.sitePermissions[origin] = decision;
+      else delete store.state.settings.sitePermissions[origin];
+      store.save();
+    },
+    () => tabs.emit(),
+    (url) => meetingProvider(url) !== undefined,
+  );
+  tabs.pickScreen = async () => {
+    // A native menu keeps the choice in Quiver's own UI, out of reach of the requesting page.
+    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
+    if (!sources.length || win.isDestroyed()) return null;
+    return new Promise((resolve) => {
+      let chosen: Electron.DesktopCapturerSource | null = null;
+      const screens = sources.filter((s) => s.id.startsWith('screen:'));
+      const windows = sources.filter((s) => !s.id.startsWith('screen:'));
+      const item = (s: Electron.DesktopCapturerSource) => ({ label: s.name.slice(0, 80) || 'Untitled', click: () => { chosen = s; } });
+      const menu = Menu.buildFromTemplate([
+        { label: 'Share your screen', enabled: false },
+        ...screens.map(item),
+        ...(windows.length ? [{ type: 'separator' as const }, { label: 'Share a window', enabled: false }, ...windows.slice(0, 30).map(item)] : []),
+        { type: 'separator' },
+        { label: 'Cancel' },
+      ]);
+      // Electron can report the menu closed before its click handler runs, so settle on the next turn.
+      menu.on('menu-will-close', () => setTimeout(() => resolve(chosen), 0));
+      menu.popup({ window: win });
+    });
+  };
 
   const research = new Research(store.state, () => store.save(), () => {
     tabs.emit();

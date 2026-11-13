@@ -34,6 +34,8 @@ export interface Settings {
   searchEngine: string;
   devServerScan: boolean;
   sidebarCollapsed: boolean;
+  /** Saved camera/microphone/screen decisions by origin. */
+  sitePermissions: Record<string, 'allow' | 'block'>;
   privacy: PrivacySettings;
 }
 
@@ -82,6 +84,8 @@ export interface TabInfo {
   spaceId: string;
   pinned: boolean;
   folderId: string | null;
+  /** The page was given camera, microphone or screen access since it loaded. */
+  live: boolean;
   url: string;
   title: string;
   favicon: string;
@@ -126,6 +130,8 @@ export interface ShellState {
   activeTabId: number | null;
   /** The research topic recording in the active Space. */
   research?: { id: string; name: string; count: number };
+  /** A camera / microphone / screen request waiting on the active tab. */
+  permissionPrompt?: { id: number; host: string; kinds: ('camera' | 'microphone' | 'screen')[] };
   devServers: DevServer[];
   preview: boolean;
   phoneStatus: PhoneStatus;
