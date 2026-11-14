@@ -121,6 +121,11 @@ async function phonePreview(app, shell, desktop, url, label, result) {
   result.desktopOutcome = await waitFor('normal tab synthetic camera grant', () => mediaOutcome(desktop));
   assert.equal(result.desktopOutcome, 'live');
   result.desktopPromptDismissed = await waitFor('normal desktop permission prompt dismissed', async () => !await exists(shell, prompt));
+  if (label === 'saved-allow') {
+    await evaluate(desktop, 'document.cookie="phone_session=; Max-Age=0; Path=/; SameSite=Lax"');
+    result.fixtureCookieRemoved = await waitFor('shared Phone Preview fixture cookie removed', async () =>
+      !await hasSessionCookie(desktop) && !await hasSessionCookie(preview));
+  }
 }
 
 async function main() {
