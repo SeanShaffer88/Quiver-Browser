@@ -165,6 +165,7 @@ export class TabManager {
   private readonly endpointStatus = new EndpointStatus();
 
   private phone: WebContentsView | null = null;
+  private readonly phoneContents = new WeakSet<WebContents>();
   private phonePartition = '';
   private phoneSpaceId = '';
   private phoneUrl = '';
@@ -705,16 +706,27 @@ export class TabManager {
   }
 
   private mediaDelegate(): MediaDelegate {
-    const top = (wc: WebContents) => (wc.isDestroyed() ? undefined : wc.getURL());
+    const top = (wc: WebContents) => (
+      wc.isDestroyed() || this.phoneContents.has(wc) ? undefined : wc.getURL()
+    );
     return {
-      check: (wc, isMainFrame) => !!this.media?.check(wc.id, top(wc), isMainFrame),
-      request: (wc, requestingUrl, isMainFrame, kinds) => this.media?.request(wc.id, top(wc), requestingUrl, isMainFrame, kinds) ?? Promise.resolve(false),
+      check: (wc, isMainFrame) => {
+        const url = top(wc);
+        return url !== undefined && !!this.media?.check(wc.id, url, isMainFrame);
+      },
+      request: (wc, requestingUrl, isMainFrame, kinds) => {
+        const url = top(wc);
+        if (url === undefined) return Promise.resolve(false);
+        return this.media?.request(wc.id, url, requestingUrl, isMainFrame, kinds) ?? Promise.resolve(false);
+      },
       displayMedia: (request, callback) => {
         const deny = () => callback({});
         const wc = request.frame ? webContents.fromFrame(request.frame) : undefined;
         if (!wc || !this.media || !this.pickScreen || !request.videoRequested) return deny();
+        const url = top(wc);
+        if (url === undefined) return deny();
         const isMainFrame = request.frame === wc.mainFrame;
-        void this.media.request(wc.id, top(wc), request.securityOrigin, isMainFrame, ['screen'])
+        void this.media.request(wc.id, url, request.securityOrigin, isMainFrame, ['screen'])
           .then(async (ok) => {
             if (!ok) return deny();
             const source = await this.pickScreen!();
@@ -1336,6 +1348,7 @@ export class TabManager {
       const phone = this.createView(t.partition);
       this.phone = phone;
       const wc = phone.webContents;
+      this.phoneContents.add(wc);
       wc.setUserAgent(MOBILE_UA);
       wc.setWindowOpenHandler(({ url }) => {
         if (this.phone === phone && /^https?:/i.test(url)) this.loadPhone(phone, url);
