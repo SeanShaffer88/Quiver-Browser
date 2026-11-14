@@ -43,7 +43,8 @@ export class MediaPermissions {
   private nextId = 1;
   private readonly pending = new Map<number, PendingPrompt & { resolvers: ((ok: boolean) => void)[] }>();
   private readonly once = new Map<number, string>();
-  private readonly live = new Set<number>();
+  private readonly granted = new Map<number, string>();
+  private readonly grantedSinceNavigation = new Set<number>();
 
   constructor(
     private readonly saved: () => Record<string, SiteDecision>,
@@ -68,7 +69,10 @@ export class MediaPermissions {
     const decision = this.saved()[origin];
     if (decision === 'block') return Promise.resolve(false);
     if (decision === 'allow' || this.once.get(contentsId) === origin) {
-      this.markLive(contentsId);
+      if (this.granted.get(contentsId) !== origin) {
+        this.markGranted(contentsId, origin);
+        this.changed();
+      }
       return Promise.resolve(true);
     }
     return new Promise((resolve) => {
@@ -94,30 +98,42 @@ export class MediaPermissions {
     const prompt = this.pending.get(id);
     if (!prompt) return;
     this.pending.delete(id);
-    const ok = choice !== 'block';
-    if (choice === 'always' || choice === 'block') this.save(prompt.origin, choice === 'always' ? 'allow' : 'block');
-    if (ok) {
-      this.once.set(prompt.contentsId, prompt.origin);
-      this.markLive(prompt.contentsId);
+    if (choice === 'block') {
+      this.save(prompt.origin, 'block');
+      this.clearGrants(prompt.origin);
+      for (const [pendingId, pending] of this.pending) {
+        if (pending.origin !== prompt.origin) continue;
+        this.pending.delete(pendingId);
+        for (const resolve of pending.resolvers) resolve(false);
+      }
+    } else {
+      if (choice === 'always') this.save(prompt.origin, 'allow');
+      if (choice === 'once') this.once.set(prompt.contentsId, prompt.origin);
+      this.markGranted(prompt.contentsId, prompt.origin);
     }
-    for (const resolve of prompt.resolvers) resolve(ok);
+    for (const resolve of prompt.resolvers) resolve(choice !== 'block');
     this.changed();
   }
 
-  isLive(contentsId: number): boolean {
-    return this.live.has(contentsId);
+  hasPageGrant(contentsId: number): boolean {
+    return this.granted.has(contentsId);
   }
 
-  private markLive(contentsId: number): void {
-    if (this.live.has(contentsId)) return;
-    this.live.add(contentsId);
-    this.changed();
+  /** A previously granted stream may still be running after the permission is forgotten. */
+  hadPageGrant(contentsId: number): boolean {
+    return this.grantedSinceNavigation.has(contentsId);
   }
 
-  /** A tab left the page: its one-time grant, live state and open prompts end. */
+  private markGranted(contentsId: number, origin: string): void {
+    this.granted.set(contentsId, origin);
+    this.grantedSinceNavigation.add(contentsId);
+  }
+
+  /** A tab left the page: its one-time permission, status and open prompts end. */
   reset(contentsId: number): void {
-    const had = this.once.delete(contentsId) || this.live.delete(contentsId);
-    this.live.delete(contentsId);
+    this.once.delete(contentsId);
+    this.grantedSinceNavigation.delete(contentsId);
+    const hadGrant = this.granted.delete(contentsId);
     let denied = false;
     for (const [id, p] of this.pending) {
       if (p.contentsId !== contentsId) continue;
@@ -125,11 +141,21 @@ export class MediaPermissions {
       for (const resolve of p.resolvers) resolve(false);
       denied = true;
     }
-    if (had || denied) this.changed();
+    if (hadGrant || denied) this.changed();
   }
 
   forget(origin: string): void {
     this.save(origin, null);
+    this.clearGrants(origin);
     this.changed();
+  }
+
+  private clearGrants(origin: string): void {
+    for (const [contentsId, site] of this.once) {
+      if (site === origin) this.once.delete(contentsId);
+    }
+    for (const [contentsId, site] of this.granted) {
+      if (site === origin) this.granted.delete(contentsId);
+    }
   }
 }

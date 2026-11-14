@@ -397,10 +397,13 @@ function renderFolder(row: Extract<SidebarRow, { kind: 'folder' }>, index: numbe
 }
 
 function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active: boolean, index: number, m: RowMeta): HTMLElement {
+  const permissionStatus = 'Camera, microphone or screen sharing permitted on this page';
   const fav = t.favicon ? h('img', { class: 'fav', src: t.favicon, alt: '' }) : h('span', { class: 'fav' });
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
-  if (t.live) kids.push(h('span', { class: 'live', title: 'Using camera, microphone or screen sharing', 'aria-label': 'live' }, '●'));
+  if (t.mediaPermissionGranted) {
+    kids.push(h('span', { class: 'media-permission', title: permissionStatus, 'aria-hidden': 'true' }, 'i'));
+  }
   if (t.local && t.errors > 0) {
     kids.push(h('span', {
       class: 'err', title: `${t.errors} console error(s) since last navigation. Click to open the console`,
@@ -411,12 +414,13 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
   const select = h('button', {
     class: 'tab-select',
     role: 'treeitem',
-    'aria-label': t.title + (t.pinned ? ', pinned' : '') + (t.live ? ', using camera or microphone' : ''),
+    'aria-label': t.title + (t.pinned ? ', pinned' : '') + (t.mediaPermissionGranted ? ', ' + permissionStatus : ''),
     'aria-selected': String(active),
     'aria-level': String(m.level), 'aria-setsize': String(m.setsize), 'aria-posinset': String(m.posinset),
     dataset: { focusKey: 'tab-' + t.id },
     onKeydown: (e: KeyboardEvent) => moveRowFocus(e, index),
-    title: t.title + '\n' + t.url + '\nDrag or press Ctrl+Shift+PageUp/PageDown to move · right-click to pin or file in a folder',
+    title: t.title + '\n' + t.url + (t.mediaPermissionGranted ? '\n' + permissionStatus : '') +
+      '\nDrag or press Ctrl+Shift+PageUp/PageDown to move · right-click to pin or file in a folder',
     onClick: () => call('tab:activate', t.id),
   }, ...kids);
   const close = h('button', {
