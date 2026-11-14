@@ -21,7 +21,7 @@ Every view enables context isolation and sandboxing and disables Node.js integra
 | Visual Studio Build Tools | **not required** | No native modules are used |
 | WiX Toolset | only for `build:msi` | electron-builder downloads it automatically on first use |
 
-Pinned dev dependencies: `electron 45.3.1`, `electron-builder 26.18.0`, `typescript 5.9.3` (also a runtime dependency, used to transpile `.ts` Boosts), `@types/node 24.19.2`.
+Pinned dev dependencies: `electron 45.3.2`, `electron-builder 26.18.0`, `typescript 5.9.3` (also a runtime dependency, used to transpile `.ts` Boosts), `@types/node 24.19.2`.
 
 ## Build and run
 
@@ -212,7 +212,7 @@ Quiver currently covers these Flecha workflows. General split view is outside th
 
 | # | Flecha feature | Quiver (Windows) | Status |
 |---|---|---|---|
-| 1 | Chromium rendering | Electron 45.3.1 (Chromium) | Included |
+| 1 | Chromium rendering | Electron 45.3.2 (Chromium) | Included |
 | 2 | Vertical sidebar | Collapsible sidebar, tab list, favicons, close, middle-click close, drag and keyboard reorder | Included |
 | 2 | Pinned tabs and folders | Pin, nested folders, collapse, drag between pinned and temporary, saved per Space | Included |
 | 2 | Spaces | Create / rename / delete, per-Space partition (cookies, storage) | Included |
