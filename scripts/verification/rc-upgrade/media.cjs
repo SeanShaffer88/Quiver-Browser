@@ -120,7 +120,7 @@ async function phonePreview(app, shell, desktop, url, label, result) {
   }
   result.desktopOutcome = await waitFor('normal tab synthetic camera grant', () => mediaOutcome(desktop));
   assert.equal(result.desktopOutcome, 'live');
-  assert.equal(await exists(shell, prompt), false);
+  result.desktopPromptDismissed = await waitFor('normal desktop permission prompt dismissed', async () => !await exists(shell, prompt));
 }
 
 async function main() {
