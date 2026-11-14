@@ -111,7 +111,7 @@ jobs:
           $previousVersion = if ($version -ceq '0.1.0') { '0.1.0-beta.3' } else { '0.1.0-beta.2' }
           $previousName = "QuiverPortable_${previousVersion}_English.paf.exe"
           $previous = Join-Path $env:RUNNER_TEMP $previousName
-          $previousUrl = "https://github.com/SeanShaffer88/Quiver-Browser/releases/download/v$previousVersion/$previousName"
+          $previousUrl = "https://github.com/SeanShaffer88/Quiver-Browser/releases/download/v0.1.0-rc.4/$previousName"
           & curl.exe --fail --location --silent --show-error --proto '=https' --proto-redir '=https' --max-time 120 --retry 2 --output $previous $previousUrl
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           ./scripts/Test-PortableApps.ps1 -Installer $portable -AsarSha256 $env:QUIVER_ASAR_SHA256 -ExeSha256 $env:QUIVER_EXE_SHA256 -PreviousInstaller $previous
