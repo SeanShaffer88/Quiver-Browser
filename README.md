@@ -8,7 +8,7 @@ Quiver keeps settings, tabs and Boosts on this device and has no account or tele
 
 Electron supplies Chromium, native-composited tab views, persistent cookie partitions, and phone emulation through the DevTools protocol. TypeScript runs the desktop shell and its local developer tools. This keeps the Windows build on Node.js and npm. The package includes the Electron runtime.
 
-Every view enables context isolation and sandboxing and disables Node.js integration. Quiver pages use a restrictive Content Security Policy. Each privileged command is available only to the top-level Quiver page that needs it. Regular tabs and Phone Preview share the same navigation and site permission rules. Quiver denies access to camera, microphone, location, notifications, and external app protocols.
+Every view enables context isolation and sandboxing and disables Node.js integration. Quiver pages use a restrictive Content Security Policy. Each privileged command is available only to the top-level Quiver page that needs it. Regular tabs and Phone Preview share the same navigation and site permission rules. Camera, microphone, and screen sharing require permission. Quiver denies location, notifications, and external app protocols.
 
 ## Prerequisites (build)
 
@@ -147,7 +147,7 @@ The sidebar lists IPv4 and IPv6 HTTP servers reachable over loopback. Quiver use
 
 ### Meetings
 
-Type `meet` in the command bar to start a Google Meet or a Jitsi room, or `meet <link>`, a Meet code (`abc-defg-hij`) or a Zoom meeting ID to join. Zoom links open in Zoom's web client, so no app is needed. When a site asks for your camera, microphone or screen, Quiver asks in the toolbar: **Allow this time** (until the tab leaves the page), **Always allow** or **Block** for that site. Screen sharing then shows a menu of screens and windows to share. Tabs using the camera, microphone or screen show a red dot in the sidebar. Saved choices are listed in **Settings → Camera, microphone and screen sharing**.
+Type `meet` in the command bar to start a Google Meet or a Jitsi room, or `meet <link>`, a Meet code (`abc-defg-hij`) or a Zoom meeting ID to join. Zoom links open in Zoom's web client. When a site asks for your camera, microphone or screen, choose **Allow this time** (until the tab leaves the page), **Always allow**, or **Block** in the toolbar. Screen sharing then shows a menu of screens and windows to share. An information icon in the sidebar marks a tab whose current page received permission. **Settings → Camera, microphone and screen sharing** lists saved choices. **Forget** clears the site's saved decision and page grants so the next request prompts again. End an active session from the web page or close its tab.
 
 Only secure pages (`https`, or `http` on localhost) in a tab's main frame can ask. Known meeting sites report the camera and microphone as available so their join screens work; other sites read as denied until they ask and you agree.
 ### Sync

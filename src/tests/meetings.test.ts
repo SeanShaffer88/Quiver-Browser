@@ -73,10 +73,12 @@ test('media requests prompt, remember choices and reset on navigation', async ()
   assert.deepEqual(prompt.kinds, ['microphone', 'camera']);
   m.decide(prompt.id, 'once');
   assert.deepEqual(await Promise.all([first, second]), [true, true]);
-  assert.equal(m.isLive(1), true);
+  assert.equal(m.hasPageGrant(1), true);
+  assert.equal(m.hadPageGrant(1), true);
   assert.equal(await m.request(1, meet, meet, true, ['camera']), true, 'once lasts for the page');
   m.reset(1);
-  assert.equal(m.isLive(1), false);
+  assert.equal(m.hasPageGrant(1), false);
+  assert.equal(m.hadPageGrant(1), false);
 
   const blocked = m.request(1, 'https://spy.example/', 'https://spy.example/', true, ['camera']);
   m.decide(m.promptFor(1)!.id, 'block');
@@ -94,4 +96,67 @@ test('media requests prompt, remember choices and reset on navigation', async ()
   m.reset(6);
   assert.equal(await pending, false, 'navigating away denies');
   assert.ok(changes > 0);
+});
+
+test('forget clears same-origin page grants and prompts again in the same tab', async () => {
+  const { MediaPermissions } = await import('../main/site-permissions');
+  const saved: Record<string, 'allow' | 'block'> = {};
+  const m = new MediaPermissions(() => saved, (origin, decision) => {
+    if (decision) saved[origin] = decision;
+    else delete saved[origin];
+  }, () => undefined, () => false);
+  const page = 'https://calls.example/room';
+  const other = 'https://other.example/room';
+  const grantOnce = m.request(1, page, page, true, ['camera']);
+  m.decide(m.promptFor(1)!.id, 'once');
+  assert.equal(await grantOnce, true);
+  const unrelated = m.request(3, other, other, true, ['camera']);
+  m.decide(m.promptFor(3)!.id, 'once');
+  assert.equal(await unrelated, true);
+  const grantAlways = m.request(2, page, page, true, ['microphone']);
+  m.decide(m.promptFor(2)!.id, 'always');
+  assert.equal(await grantAlways, true);
+  assert.equal(saved['https://calls.example'], 'allow');
+
+  m.forget('https://calls.example');
+  assert.equal(saved['https://calls.example'], undefined);
+  assert.equal(m.hasPageGrant(1), false);
+  assert.equal(m.hasPageGrant(2), false);
+  assert.equal(m.hasPageGrant(3), true);
+  assert.equal(m.hadPageGrant(1), true, 'an existing stream may still be running');
+  assert.equal(m.hadPageGrant(2), true);
+  assert.equal(m.check(1, page, true), false);
+  assert.equal(m.check(2, page, true), false);
+  const afterForget = m.request(2, page, page, true, ['microphone']);
+  assert.ok(m.promptFor(2), 'forget prompts again in the same tab');
+  m.decide(m.promptFor(2)!.id, 'once');
+  assert.equal(await afterForget, true);
+});
+
+test('blocking an origin clears other tabs’ grants and rejects their pending requests', async () => {
+  const { MediaPermissions } = await import('../main/site-permissions');
+  const saved: Record<string, 'allow' | 'block'> = {};
+  const m = new MediaPermissions(() => saved, (origin, decision) => {
+    if (decision) saved[origin] = decision;
+    else delete saved[origin];
+  }, () => undefined, () => false);
+  const page = 'https://calls.example/room';
+  const first = m.request(1, page, page, true, ['camera']);
+  m.decide(m.promptFor(1)!.id, 'once');
+  assert.equal(await first, true);
+  const blocked = m.request(2, page, page, true, ['microphone']);
+  const pending = m.request(3, page, page, true, ['screen']);
+  m.decide(m.promptFor(2)!.id, 'block');
+
+  assert.deepEqual(await Promise.all([blocked, pending]), [false, false]);
+  assert.equal(m.promptFor(3), undefined);
+  assert.equal(m.hasPageGrant(1), false);
+  assert.equal(m.hadPageGrant(1), true);
+  assert.equal(await m.request(1, page, page, true, ['camera']), false);
+  m.forget('https://calls.example');
+  const afterForget = m.request(1, page, page, true, ['camera']);
+  assert.ok(m.promptFor(1), 'the one-time grant did not survive a site block');
+  m.reset(1);
+  assert.equal(await afterForget, false);
+  assert.equal(m.hadPageGrant(1), false);
 });

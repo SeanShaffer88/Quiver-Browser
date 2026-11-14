@@ -255,7 +255,7 @@ export class TabManager {
       errors: t.errors,
       local,
       internal: t.internal,
-      live: !t.view.webContents.isDestroyed() && !!this.media?.isLive(t.view.webContents.id),
+      mediaPermissionGranted: !t.view.webContents.isDestroyed() && !!this.media?.hasPageGrant(t.view.webContents.id),
       env: t.internal ? null : badgeFor(url, this.settings.envGroups),
       activeBoosts: [...t.cssKeys.keys(), ...t.tsBoosts].sort(),
     };
@@ -634,8 +634,8 @@ export class TabManager {
     const active = new Set(this.spaces.map((sp) => this.lastActive[sp.id]));
     const candidates = [...this.tabs.values()].map((t) => ({
       id: t.id, pinned: t.pinned, active: t.id === this.activeTabId || active.has(t.id),
-      // Playing sound or in a call (camera, microphone or screen) keeps a tab.
-      audible: !t.view.webContents.isDestroyed() && (t.view.webContents.isCurrentlyAudible() || !!this.media?.isLive(t.view.webContents.id)),
+      // A page granted media permission may still be capturing, even after the grant is forgotten.
+      audible: !t.view.webContents.isDestroyed() && (t.view.webContents.isCurrentlyAudible() || !!this.media?.hadPageGrant(t.view.webContents.id)),
       lastActiveAt: t.lastActiveAt,
     }));
     const ids = tabsToArchive(candidates, now, hours);
