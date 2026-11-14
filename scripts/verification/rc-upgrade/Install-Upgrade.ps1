@@ -2,8 +2,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('nsis','paf')][string]$Mode,
-    [Parameter(Mandatory)][string]$Rc1Installer,
     [Parameter(Mandatory)][string]$Rc2Installer,
+    [Parameter(Mandatory)][string]$Rc3Installer,
     [Parameter(Mandatory)][string]$Destination,
     [string]$RuntimeScript = (Join-Path $PSScriptRoot 'runtime.cjs'),
     [string]$ResumeScript = (Join-Path $PSScriptRoot 'resume.cjs')
@@ -29,26 +29,26 @@ if ([IO.Path]::IsPathRooted($relativeDestination) -or $relativeDestination -in '
 $metadata = @{
     nsis = @{
         Name = 'Quiver-v0.1.0-x64-Setup.exe'
-        Rc1 = '54D0942F43F494190A925CF8E26E111225A62AD7A55F400CA22D0291756998D4'
         Rc2 = '351C469F0797C147A4AD09D953A3B5C6C86D9BF903D13229D3988A3A7788D036'
+        Rc3 = '9DF94D05A1A582C0614E0B9F317617631587A54518A24EE288D055A67BA32E1C'
     }
     paf = @{
         Name = 'QuiverPortable_0.1.0_English.paf.exe'
-        Rc1 = '10E54F6D7F4A7E7B93C8D02C3FFD6444DA6503DA6D214D294EF1A03F2AB6CDEB'
         Rc2 = '1304D6919D0D5DD98629717879C2687AE4B6D652F54045746572D73816FFAE57'
+        Rc3 = '5F013E2AA93A9CD3C5BF31F621CEB9278FC586B782D42ECF98050830A744B70B'
     }
 }
 $expected = $metadata[$Mode]
 $verified = @(
     @{
-        label = 'RC 1'; file = $Rc1Installer; installer = $expected.Rc1
-        exe = '5A3ACC62C9BFD417B170C6421C383A93CDCA8C19B2C25C67AC26145C16DD2CA8'
-        asar = '528E55EFA0DD8C642E09B39F678A3BF71CAA846F67FA103F2C7854BC65EF096D'
-    }
-    @{
         label = 'RC 2'; file = $Rc2Installer; installer = $expected.Rc2
         exe = 'E3C08E94EC9D654038C43114B1375B37B3AC3DF96D089DB50180943C10430918'
         asar = '367EB9C0E5D1CBF7CCFB3071C8FC2A3780420191EB63B6C8DD7E092369F5AF5A'
+    }
+    @{
+        label = 'RC 3'; file = $Rc3Installer; installer = $expected.Rc3
+        exe = '7B1EB69DFD5312E316ADE43539FEA1DEF52F0A97BAFABBBC756DCE159723171D'
+        asar = '97F53DEBAC51B4E50BAB667D07B2EFF14AEF8B8D5D68D70BB7B1A978496A6862'
     }
 )
 foreach ($package in $verified) {
@@ -274,29 +274,29 @@ function Assert-PassedEvidence([string]$Path) {
 }
 
 try {
-    $evidence.checks.rc1 = Install-PublishedPackage $verified[0]
-    Invoke-NodeFixture 'RC 1 baseline runtime' @($RuntimeScript, 'baseline', $exePath, $profileDir, $baselinePath)
+    $evidence.checks.rc2 = Install-PublishedPackage $verified[0]
+    Invoke-NodeFixture 'RC 2 baseline runtime' @($RuntimeScript, 'baseline', $exePath, $profileDir, $baselinePath)
     Assert-PassedEvidence $baselinePath
     $evidence.checks.before = Get-ProfileTree (Join-Path $destinationPath 'profile-before.json')
 
-    $evidence.checks.rc2 = Install-PublishedPackage $verified[1]
+    $evidence.checks.rc3 = Install-PublishedPackage $verified[1]
     $evidence.checks.after = Get-ProfileTree (Join-Path $destinationPath 'profile-after.json')
     if ($evidence.checks.before.sha256 -cne $evidence.checks.after.sha256) {
-        throw 'Installer changed the closed RC 1 profile before RC 2 launched.'
+        throw 'Installer changed the closed RC 2 profile before RC 3 launched.'
     }
     $evidence.checks.closedProfilePreserved = $true
 
-    Invoke-NodeFixture 'RC 2 restored runtime' @($RuntimeScript, 'reopen', $exePath, $profileDir, $reopenPath, $baselinePath)
+    Invoke-NodeFixture 'RC 3 restored runtime' @($RuntimeScript, 'reopen', $exePath, $profileDir, $reopenPath, $baselinePath)
     Assert-PassedEvidence $reopenPath
     $evidence.checks.reopen = $reopenPath
     foreach ($scenario in 'paused-close','disconnect') {
         $resumePath = Join-Path $destinationPath "resume-$scenario.json"
-        Invoke-NodeFixture "RC 2 $scenario" @($ResumeScript, $exePath, $resumePath, $scenario, $profileDir)
+        Invoke-NodeFixture "RC 3 $scenario" @($ResumeScript, $exePath, $resumePath, $scenario, $profileDir)
         Assert-PassedEvidence $resumePath
         $evidence.checks[$scenario] = $resumePath
     }
     $evidence.passed = $true
-    Write-Host 'PASS: published same-version installer upgrade and restored RC 2 behavior.'
+    Write-Host 'PASS: published same-version installer upgrade and restored RC 3 behavior.'
 } catch {
     $evidence.error = $_.Exception.Message
     throw
