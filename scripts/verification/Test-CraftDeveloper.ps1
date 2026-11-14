@@ -22,7 +22,12 @@ $portPath = Join-Path $workspace 'port.txt'
 $requestPath = Join-Path $workspace 'requests.jsonl'
 $electron = (Resolve-Path -LiteralPath (Join-Path $repo 'node_modules/electron/dist/electron.exe')).Path
 $electronVersion = (Get-Content -LiteralPath (Join-Path $repo 'node_modules/electron/package.json') -Raw | ConvertFrom-Json).version
-if ($electronVersion -cne '45.3.1') { throw "Expected locked Electron 45.3.1 but found $electronVersion." }
+$lockedElectron = (Get-Content -LiteralPath (Join-Path $repo 'package-lock.json') -Raw | ConvertFrom-Json).packages.'node_modules/electron'.version
+$runtimeVersion = (Get-Item -LiteralPath $electron).VersionInfo
+$runtimeElectron = '{0}.{1}.{2}' -f $runtimeVersion.ProductMajorPart, $runtimeVersion.ProductMinorPart, $runtimeVersion.ProductBuildPart
+if (!$lockedElectron -or $electronVersion -cne $lockedElectron -or $runtimeElectron -cne $lockedElectron) {
+    throw "Expected locked Electron $lockedElectron but found npm package $electronVersion and executable $runtimeElectron."
+}
 $node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
 $checks = [Collections.Generic.List[string]]::new()
 $app = $null
