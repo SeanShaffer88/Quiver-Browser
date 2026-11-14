@@ -30,14 +30,21 @@ async function requestMedia(page, kind, keepTrack = false) {
 }
 
 async function closeFixture(shell, url) {
-  const selector = '.tab.active:not(.pinned) > [data-focus-key^=close-tab-]';
-  await waitFor('active media fixture before closing its tab', () => evaluate(shell, `(() => {
-    return document.querySelector('#address .url')?.textContent === ${JSON.stringify(url)}
-      && Boolean(document.querySelector(${JSON.stringify(selector)}));
-  })()`));
-  await click(shell, selector);
-  await waitFor('fixture tab closed', async () => await evaluate(shell,
-    'document.querySelector("#address .url")?.textContent') !== url);
+  const shellInvoke = async (expression) => {
+    const response = await command(shell, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+    if (response.exceptionDetails) throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text);
+    return response.result.value;
+  };
+  const tab = await waitFor('active media fixture in shell state', async () => {
+    const state = await shellInvoke('window.quiver.invoke("state:get")');
+    return state.tabs.find(entry => entry.id === state.activeTabId && entry.url === url && !entry.pinned);
+  });
+  assert.ok(Number.isInteger(tab.id));
+  await shellInvoke(`window.quiver.invoke("tab:close", ${tab.id})`);
+  await waitFor('fixture tab closed', async () => {
+    const state = await shellInvoke('window.quiver.invoke("state:get")');
+    return state.tabs.every(entry => entry.id !== tab.id);
+  });
 }
 
 async function rendererRecovery(app, shell, page, url, label, result) {
@@ -160,6 +167,9 @@ async function main() {
       }
     }
     report.passed = true;
+  } catch (error) {
+    report.error = error.stack;
+    throw error;
   } finally {
     if (app) report.cleanupExit = processTreeKill(app.child);
     server.closeAllConnections();
