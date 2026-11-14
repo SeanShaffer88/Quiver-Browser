@@ -94,8 +94,8 @@ export interface TabInfo {
   spaceId: string;
   pinned: boolean;
   folderId: string | null;
-  /** The page was given camera, microphone or screen access since it loaded. */
-  live: boolean;
+  /** An unrevoked camera, microphone or screen-sharing permission was granted on this page. */
+  mediaPermissionGranted: boolean;
   /** For a pinned tab, the page it returns to when closed. */
   pinnedUrl: string | null;
   url: string;

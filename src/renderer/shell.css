@@ -115,8 +115,8 @@ body { display: grid; grid-template-columns: var(--sb, 264px) minmax(0, 1fr); gr
 .permission-bar { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 2px 4px 2px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel-2); }
 .permission-bar .permission-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .permission-bar .btn { flex: none; padding: 3px 10px; }
-.tab .live { color: var(--prod); font-size: 10px; flex: none; }
-@media (forced-colors: active) { .permission-bar { border-color: Highlight; } .tab .live { color: Highlight; } }
+.tab .media-permission { display: grid; place-items: center; flex: none; width: 14px; height: 14px; border: 1px solid currentColor; border-radius: 50%; color: var(--muted); font-size: 10px; font-weight: 600; line-height: 1; }
+@media (forced-colors: active) { .permission-bar { border-color: Highlight; } .tab .media-permission { color: CanvasText; } }
 .downloads-chip { display: flex; align-items: center; gap: 4px; padding: 3px 8px; border: 1px solid var(--accent); border-radius: 999px; color: var(--text); font-size: 12px; flex: none; font-variant-numeric: tabular-nums; }
 .find-bar { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel-2); }
 .find-bar input { flex: 1; min-width: 60px; border: 0; background: transparent; }
