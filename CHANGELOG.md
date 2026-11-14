@@ -4,6 +4,8 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+- Import Arc Spaces, pins, custom tab titles, and folders from `StorableSidebar.json`. The import includes a preview and undo. Spaces from the same Arc profile share a fresh Quiver session.
+- Update Electron to 45.3.2, including a fix for cookies set shortly before exit failing to persist.
 - WebDAV downloads (`davs://…`): files or whole folders, passwords only over HTTPS, listings confined to the folder.
 - DASH downloads combine fragmented-MP4 video and audio into one `.mp4` with Quiver's own muxer.
 - Native downloaders: FTP/FTPS (resumable, encryption first, no FTP bounce), HLS with AES-128, on-demand MPEG-DASH, and Metalink with mirror failover and checksum checks; `download <address>` in the command bar; Windows shares open in File Explorer.
