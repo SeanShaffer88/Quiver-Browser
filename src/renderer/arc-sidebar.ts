@@ -6,32 +6,40 @@ const MAX_SPACES = 100;
 const MAX_VISITS = 800;
 const MAX_DEPTH = 12;
 
-export type ArcNode =
-  | { kind: 'tab'; title: string; host: string }
-  | { kind: 'folder' | 'split'; title: string; children: ArcNode[] };
+type SidebarNode<Link extends object> =
+  | ({ kind: 'tab'; title: string; host: string } & Link)
+  | { kind: 'folder' | 'split'; title: string; children: SidebarNode<Link>[] };
 
-interface ArcSpace {
+export type ArcNode = SidebarNode<object>;
+export type ArcImportNode = SidebarNode<{ url: string; customTitle?: string }>;
+
+interface ArcSpace<Node> {
   title: string;
   profile: number;
-  pinned: ArcNode[];
+  pinned: Node[];
   pinnedTabs: number;
   todayTabs: number;
 }
 
-interface ArcProfile {
+interface ArcProfile<Node> {
   label: string;
-  favorites: ArcNode[];
+  favorites: Node[];
   favoriteTabs: number;
 }
 
-export interface ArcSidebarPreview {
-  spaces: ArcSpace[];
-  profiles: ArcProfile[];
+interface SidebarReview<Node> {
+  spaces: ArcSpace<Node>[];
+  profiles: ArcProfile<Node>[];
   skipped: number;
   limited: boolean;
 }
 
-type ArcParseError = 'invalid-json' | 'unrecognized-sidebar' | 'too-large';
+export type ArcSidebarPreview = SidebarReview<ArcNode>;
+export interface ArcSidebarImport extends SidebarReview<ArcImportNode> {
+  spaces: (ArcSpace<ArcImportNode> & { today: ArcImportNode[] })[];
+}
+
+export type ArcParseError = 'invalid-json' | 'unrecognized-sidebar' | 'too-large';
 
 function record(value: unknown): RecordData | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as RecordData : undefined;
@@ -55,17 +63,38 @@ function profileKey(value: unknown): string | undefined {
   return JSON.stringify([directory, machine ?? null]);
 }
 
-function tabHost(value: unknown): string | undefined {
-  if (typeof value !== 'string' || value.length > 4096 || !/^https?:\/\//i.test(value)) return undefined;
+function tabUrl(value: unknown): URL | undefined {
+  if (typeof value !== 'string' || value.length > 4096 || /[\u0000-\u001f\u007f]/.test(value)
+    || !/^https?:\/\//i.test(value)) return undefined;
   try {
     const url = new URL(value);
-    return !url.username && !url.password && url.hostname.length <= 253 ? url.hostname : undefined;
+    return !url.username && !url.password && url.hostname.length <= 253 && url.href.length <= 4096 ? url : undefined;
   } catch {
     return undefined;
   }
 }
 
 export function parseArcSidebar(text: string): ArcSidebarPreview | ArcParseError {
+  const parsed = parseArcSidebarImport(text);
+  return typeof parsed === 'string' ? parsed : projectArcSidebarPreview(parsed);
+}
+
+export function projectArcSidebarPreview(parsed: ArcSidebarImport): ArcSidebarPreview {
+  function nodePreview(node: ArcImportNode): ArcNode {
+    if (node.kind === 'tab') return { kind: 'tab', title: node.title, host: node.host };
+    return { kind: node.kind, title: node.title, children: node.children.map(nodePreview) };
+  }
+  return {
+    spaces: parsed.spaces.map(({ title, profile, pinned, pinnedTabs, todayTabs }) =>
+      ({ title, profile, pinned: pinned.map(nodePreview), pinnedTabs, todayTabs })),
+    profiles: parsed.profiles.map(({ label, favorites, favoriteTabs }) =>
+      ({ label, favorites: favorites.map(nodePreview), favoriteTabs })),
+    skipped: parsed.skipped,
+    limited: parsed.limited,
+  };
+}
+
+export function parseArcSidebarImport(text: string): ArcSidebarImport | ArcParseError {
   if (text.length > ARC_SIDEBAR_MAX_BYTES) return 'too-large';
   let source: unknown;
   try {
@@ -78,7 +107,7 @@ export function parseArcSidebar(text: string): ArcSidebarPreview | ArcParseError
   const candidates = containers.map(record).filter((item) => Array.isArray(item?.spaces) && Array.isArray(item?.items));
   if (candidates.length !== 1) return 'unrecognized-sidebar';
   const main = candidates[0]!;
-  const result: ArcSidebarPreview = { spaces: [], profiles: [], skipped: 0, limited: false };
+  const result: ArcSidebarImport = { spaces: [], profiles: [], skipped: 0, limited: false };
   let visits = 0;
 
   function index(values: unknown[], limit: number): Map<string, RecordData> {
@@ -109,9 +138,9 @@ export function parseArcSidebar(text: string): ArcSidebarPreview | ArcParseError
     return number - 1;
   }
 
-  function walk(root: string | undefined, seen = new Set<string>()): { nodes: ArcNode[]; tabs: number } {
+  function walk(root: string | undefined, seen = new Set<string>()): { nodes: ArcImportNode[]; tabs: number } {
     let tabs = 0;
-    function visit(key: unknown, depth: number): ArcNode | undefined {
+    function visit(key: unknown, depth: number): ArcImportNode | undefined {
       visits++;
       const nodeId = id(key);
       const item = nodeId === undefined || seen.has(nodeId) ? undefined : items.get(nodeId);
@@ -123,11 +152,17 @@ export function parseArcSidebar(text: string): ArcSidebarPreview | ArcParseError
       const data = record(item.data);
       const tab = record(data?.tab);
       if (tab) {
-        const host = tabHost(tab.savedURL || tab.url);
-        if (host) {
-          const name = title(item.title) || title(tab.savedTitle) || title(tab.title);
+        const url = tabUrl(tab.savedURL || tab.url);
+        if (url) {
+          const host = url.hostname;
+          const customTitle = title(item.title);
+          const alias = /^https?:\/\//i.test(customTitle) ? '' : customTitle;
+          const name = alias || title(tab.savedTitle) || title(tab.title);
           tabs++;
-          return { kind: 'tab', title: /^https?:\/\//i.test(name) ? host : name || host, host };
+          return {
+            kind: 'tab', title: /^https?:\/\//i.test(name) ? host : name || host, host, url: url.href,
+            ...(alias ? { customTitle: alias } : {}),
+          };
         }
       } else if (record(data?.list) || record(data?.tabGroup) || record(data?.splitView)) {
         const split = record(data?.splitView) !== undefined;
@@ -138,12 +173,12 @@ export function parseArcSidebar(text: string): ArcSidebarPreview | ArcParseError
       return undefined;
     }
 
-    function childrenOf(item: RecordData, depth: number): ArcNode[] {
+    function childrenOf(item: RecordData, depth: number): ArcImportNode[] {
       if (!Array.isArray(item.childrenIds)) {
         if (item.childrenIds !== undefined) result.skipped++;
         return [];
       }
-      const nodes: ArcNode[] = [];
+      const nodes: ArcImportNode[] = [];
       for (const child of item.childrenIds) {
         if (visits >= MAX_VISITS || depth > MAX_DEPTH) {
           result.limited = true;
@@ -190,6 +225,7 @@ export function parseArcSidebar(text: string): ArcSidebarPreview | ArcParseError
       profile: addProfile(profileKey(space.profile)),
       pinned: pins.nodes,
       pinnedTabs: pins.tabs,
+      today: [],
       todayTabs: 0,
     });
   }
@@ -230,6 +266,10 @@ export function parseArcSidebar(text: string): ArcSidebarPreview | ArcParseError
     result.profiles[index].favorites.push(...favorites.nodes);
     result.profiles[index].favoriteTabs += favorites.tabs;
   }
-  result.spaces.forEach((space, index) => { space.todayTabs = walk(todayRoots[index]).tabs; });
+  result.spaces.forEach((space, index) => {
+    const today = walk(todayRoots[index]);
+    space.today = today.nodes;
+    space.todayTabs = today.tabs;
+  });
   return result;
 }

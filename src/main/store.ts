@@ -12,12 +12,15 @@ import { DEFAULT_ARCHIVE_HOURS, normalizeArchive, normalizeArchiveHours, type Ar
 import { normalizeSyncState, type SyncState } from './sync-service';
 import { normalizePrivacy } from './privacy';
 import { normalizeFolders } from './tab-tree';
+import { validArcImportUndo, type ArcImportUndo } from './arc-import';
+import { normalizeArcSpace } from './space-session';
 import { normalizeTopics, type Topic } from './research';
 import { hasSavedNewTabPlaceholder, normalizeRecentlyClosed, type PersistedClosedTab } from './session-recovery';
 
 export interface PersistedTab {
   url: string;
   title?: string;
+  customTitle?: string;
   pinned?: true;
   folderId?: string;
   pinnedUrl?: string;
@@ -35,6 +38,7 @@ export interface PersistedState {
   settings: Settings;
   bookmarks: Bookmark[];
   bookmarkUndo?: BookmarkUndo;
+  arcImportUndo?: ArcImportUndo;
   sessionOpen?: boolean;
   downloads?: unknown[];
   archive?: ArchivedTab[];
@@ -130,7 +134,7 @@ export class Store {
           privacy: normalizePrivacy(raw.settings?.privacy, process.platform),
         },
       } as PersistedState;
-      state.spaces = state.spaces.map((space) => ({ ...space, folders: normalizeFolders(space.folders) }));
+      state.spaces = state.spaces.map((space) => ({ ...normalizeArcSpace(space), folders: normalizeFolders(space.folders) }));
       const knownSpaces = new Set(state.spaces.map(({ id }) => id));
       state.topics = normalizeTopics(raw.topics, knownSpaces);
       state.activeTopicBySpace = Object.fromEntries(Object.entries(raw.activeTopicBySpace ?? {})
@@ -138,6 +142,7 @@ export class Store {
       state.sync = normalizeSyncState(raw.sync, os.hostname());
       state.archive = normalizeArchive(raw.archive, new Set(state.spaces.map(({ id }) => id)));
       state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);
+      state.arcImportUndo = validArcImportUndo(raw.arcImportUndo);
       const spaceIds = new Set(state.spaces.map(({ id }) => id));
       const soleNewTabSpaces = new Set([...spaceIds].filter((id) => hasSavedNewTabPlaceholder(state.tabsBySpace?.[id])));
       state.recentlyClosed = normalizeRecentlyClosed(raw.recentlyClosed, spaceIds, soleNewTabSpaces);

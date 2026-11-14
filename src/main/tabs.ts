@@ -6,7 +6,6 @@ import {
   PHONE_LABEL_H,
   PHONE_MARGIN,
   PHONE_W,
-  SHARED_PARTITION,
   SIDEBAR_COLLAPSED_W,
   SIDEBAR_W,
   TOOLBAR_H,
@@ -21,7 +20,10 @@ import {
 import { EndpointStatus, type EndpointFailure } from './endpoint-status';
 import { internalPage, type InternalPage } from './internal-access';
 import { shortcutFor, type ShortcutAction } from './shortcuts';
-import type { Store } from './store';
+import type { PersistedTab, Store } from './store';
+import type { ArcImportSpace } from './arc-import';
+import { arcSpaceId, webSpacePartition } from './space-session';
+import { clearSessions } from './privacy';
 import {
   CANONICAL_NEW_TAB_URL,
   hasSavedNewTabPlaceholder,
@@ -63,6 +65,7 @@ interface Tab {
   errorFor: string | null;
   title: string;
   titleIsExplicit: boolean;
+  customTitle?: string;
   favicon: string;
   loading: boolean;
   errors: number;
@@ -243,7 +246,7 @@ export class TabManager {
       pinnedUrl: t.pinned ? t.pinnedUrl : null,
       folderId: t.folderId,
       url: displayUrl(url),
-      title: t.title || displayUrl(url) || 'New Tab',
+      title: t.customTitle || t.title || displayUrl(url) || 'New Tab',
       favicon: t.favicon,
       loading: t.loading,
       canGoBack: this.canNavigateHistory(t, -1),
@@ -307,8 +310,7 @@ export class TabManager {
   // ───────── sessions / views ─────────
   private partitionFor(spaceId: string, internal: boolean): string {
     if (internal) return INTERNAL_PARTITION;
-    const space = this.spaces.find((s) => s.id === spaceId);
-    return space?.isolated ? `persist:quiver-space-${spaceId}` : SHARED_PARTITION;
+    return webSpacePartition(this.spaces.find((space) => space.id === spaceId));
   }
 
   private prepareSession(partition: string): void {
@@ -356,7 +358,7 @@ export class TabManager {
   }
 
   // ───────── tabs ─────────
-  openTab(rawUrl: string, opts: { spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null; pinnedUrl?: string | null; lastActiveAt?: number } = {}): Tab {
+  openTab(rawUrl: string, opts: { spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null; pinnedUrl?: string | null; lastActiveAt?: number; customTitle?: string } = {}): Tab {
     const spaceId = opts.spaceId ?? this.activeSpaceId;
     const internal = rawUrl.startsWith('quiver://') || rawUrl === '';
     const url = internal ? toInternalUrl(rawUrl || 'quiver://newtab') : rawUrl;
@@ -382,6 +384,7 @@ export class TabManager {
       errorFor: null,
       title: '',
       titleIsExplicit: false,
+      customTitle: internal ? undefined : normalizeTabTitle(opts.customTitle, url) || undefined,
       favicon: '',
       loading: false,
       errors: 0,
@@ -401,7 +404,7 @@ export class TabManager {
     if (opts.lazy) tab.pendingUrl = url;
     else this.load(tab, url);
     if (opts.activate !== false) this.activateTab(tab.id);
-    else this.layout();
+    else if (!this.restoring) this.layout();
     this.persist();
     this.emit();
     return tab;
@@ -592,7 +595,7 @@ export class TabManager {
       if (neighbor) this.activateTab(neighbor.id);
       else placeholderId = this.openTab('quiver://newtab', { spaceId: tab.spaceId }).id;
     }
-    this.recentlyClosed = rememberClosed(this.recentlyClosed, { id, url, title, spaceId: tab.spaceId, index, placeholderId });
+    this.recentlyClosed = rememberClosed(this.recentlyClosed, { id, url, title, customTitle: tab.customTitle, spaceId: tab.spaceId, index, placeholderId });
     this.layout();
     this.syncPhone();
     this.persist();
@@ -678,7 +681,7 @@ export class TabManager {
     if (!entry || (expectedId !== undefined && expectedId !== entry.id) || !this.spaces.some((space) => space.id === entry.spaceId)) return;
     const inSpace = [...this.tabs.values()].filter((tab) => tab.spaceId === entry.spaceId);
     const placeholder = inSpace.length === 1 && inSpace[0].id === entry.placeholderId ? inSpace[0] : undefined;
-    const reopened = this.openTab(entry.url, { spaceId: entry.spaceId, index: entry.index, activate: false, lazy: true });
+    const reopened = this.openTab(entry.url, { spaceId: entry.spaceId, index: entry.index, activate: false, lazy: true, customTitle: entry.customTitle });
     if (placeholder && this.tabUrl(placeholder) === CANONICAL_NEW_TAB_URL) this.discardTab(placeholder);
     this.recentlyClosed.shift();
     this.activateTab(reopened.id);
@@ -1046,7 +1049,7 @@ export class TabManager {
   // ───────── sync ─────────
   /** Spaces with their folders and pinned tabs, as published to other devices. */
   syncedSpaces(): SyncedSpace[] {
-    return this.spaces.map((sp) => ({
+    return this.spaces.filter((sp) => !arcSpaceId(sp.id)).map((sp) => ({
       id: sp.id, name: sp.name, color: sp.color, isolated: sp.isolated, folders: this.folders(sp.id),
       pinned: this.spaceTabs(sp.id).filter((t) => t.pinned).flatMap((t) => {
         const url = t.pinnedUrl ?? this.tabUrl(t);
@@ -1063,6 +1066,7 @@ export class TabManager {
    */
   applySyncedSpaces(raw: unknown): void {
     for (const remote of normalizeSyncedSpaces(raw, restorableUrl)) {
+      if (arcSpaceId(remote.id)) continue;
       let space = this.spaces.find((sp) => sp.id === remote.id);
       if (!space) {
         space = { id: remote.id, name: remote.name, color: remote.color, isolated: remote.isolated };
@@ -1142,13 +1146,49 @@ export class TabManager {
     if (this.activeSpaceId === id) this.activateSpace(this.spaces[0].id);
     this.persist();
     this.emit();
-    if (space.isolated) {
+    if (space.sessionGroupId) {
+      await this.clearUnusedArcPartitions([space]);
+    } else if (space.isolated) {
       try {
         await session.fromPartition(`persist:quiver-space-${id}`).clearStorageData();
       } catch {
         /* best effort */
       }
     }
+  }
+
+  /** Called after candidate state is installed in memory, before it is saved or broadcast. */
+  stageArcSpaces(entries: readonly ArcImportSpace[]): () => void {
+    const spaces = entries.map(({ space }) => space);
+    const rollback = () => this.removeArcSpaces(spaces);
+    const wasRestoring = this.restoring;
+    this.restoring = true;
+    try {
+      for (const { space, tabs } of entries) this.restoreSpaceTabs(space, tabs, 0);
+    } catch (error) {
+      rollback();
+      throw error;
+    } finally {
+      this.restoring = wasRestoring;
+    }
+    this.emit();
+    return rollback;
+  }
+
+  /** Imported views cannot be active when undo is available. */
+  removeArcSpaces(spaces: readonly Space[]): void {
+    const ids = new Set(spaces.map(({ id }) => id));
+    for (const tab of this.tabs.values()) if (ids.has(tab.spaceId)) this.discardTab(tab);
+    for (const id of ids) delete this.lastActive[id];
+    this.emit();
+    queueMicrotask(() => void this.clearUnusedArcPartitions(spaces));
+  }
+
+  private async clearUnusedArcPartitions(spaces: readonly Space[]): Promise<void> {
+    const inUse = new Set(this.spaces.map(webSpacePartition));
+    const unused = [...new Set(spaces.map(webSpacePartition))]
+      .filter((partition) => !inUse.has(partition) && this.preparedPartitions.has(partition));
+    if (unused.length) await clearSessions(unused.map((partition) => session.fromPartition(partition)));
   }
 
   activateSpace(id: string): void {
@@ -1544,7 +1584,7 @@ export class TabManager {
     for (const space of this.spaces) {
       const list = [...this.tabs.values()]
         .filter((tab) => tab.spaceId === space.id)
-        .map((tab) => ({ id: tab.id, url: this.tabUrl(tab), title: tab.titleIsExplicit ? tab.title : undefined, pinned: tab.pinned, folderId: tab.folderId, pinnedUrl: tab.pinnedUrl, lastActiveAt: tab.lastActiveAt }));
+        .map((tab) => ({ id: tab.id, url: this.tabUrl(tab), title: tab.titleIsExplicit ? tab.title : undefined, customTitle: tab.customTitle, pinned: tab.pinned, folderId: tab.folderId, pinnedUrl: tab.pinnedUrl, lastActiveAt: tab.lastActiveAt }));
       if (list.length === 1 && list[0].url === CANONICAL_NEW_TAB_URL) soleNewTabs.set(space.id, list[0].id);
       const { tabs, activeIndex } = snapshotSpace(list, this.lastActive[space.id]);
       st.tabsBySpace[space.id] = tabs;
@@ -1570,17 +1610,8 @@ export class TabManager {
         const { entries, activeIndex } = restoreSelection(saved, activeIndexBySpace?.[space.id] ?? 0);
         if (entries.length) restored.spaces++;
         restored.tabs += entries.length;
-        entries.forEach(({ url, title, pinned, folderId, pinnedUrl, lastActiveAt }, index) => {
-          const tab = this.openTab(url, {
-            spaceId: space.id, activate: false, lazy: true, pinned: pinned === true, folderId: typeof folderId === 'string' ? folderId : null,
-            pinnedUrl: typeof pinnedUrl === 'string' ? pinnedUrl : url,
-            lastActiveAt: typeof lastActiveAt === 'number' && Number.isFinite(lastActiveAt) && lastActiveAt <= Date.now() ? lastActiveAt : Date.now(),
-          });
-          tab.title = normalizeTabTitle(title, url);
-          tab.titleIsExplicit = !!tab.title;
-          if (index === activeIndex) this.lastActive[space.id] = tab.id;
-          if (hasSavedNewTabPlaceholder(saved)) soleNewTabs.set(space.id, tab.id);
-        });
+        const selected = this.restoreSpaceTabs(space, entries, activeIndex);
+        if (selected !== undefined && hasSavedNewTabPlaceholder(saved)) soleNewTabs.set(space.id, selected);
       }
       this.recentlyClosed = restoreRecentlyClosed(recentlyClosed, () => this.nextId++, soleNewTabs);
       this.activateSpace(activeSpaceId);
@@ -1589,6 +1620,20 @@ export class TabManager {
     }
     this.persist();
     return restored;
+  }
+
+  private restoreSpaceTabs(space: Space, entries: readonly PersistedTab[], activeIndex: number): number | undefined {
+    entries.forEach(({ url, title, customTitle, pinned, folderId, pinnedUrl, lastActiveAt }, index) => {
+      const tab = this.openTab(url, {
+        spaceId: space.id, activate: false, lazy: true, pinned: pinned === true, folderId: typeof folderId === 'string' ? folderId : null,
+        pinnedUrl: typeof pinnedUrl === 'string' ? pinnedUrl : url, customTitle,
+        lastActiveAt: typeof lastActiveAt === 'number' && Number.isFinite(lastActiveAt) && lastActiveAt <= Date.now() ? lastActiveAt : Date.now(),
+      });
+      tab.title = normalizeTabTitle(title, url);
+      tab.titleIsExplicit = !!tab.title;
+      if (index === activeIndex) this.lastActive[space.id] = tab.id;
+    });
+    return this.lastActive[space.id];
   }
 
   async waitForLoad(tab: Tab, timeoutMs: number): Promise<void> {

@@ -48,18 +48,31 @@
     </div>
   </div>
 
-  <h2>Arc sidebar preview</h2>
-  <p class="note" id="arc-sidebar-help">Choose a copy of Arc’s <code>StorableSidebar.json</code> to review its Spaces, Favorites, and pinned tabs on this device.</p>
+  <h2>Import from Arc</h2>
+  <p class="note" id="arc-sidebar-help">Choose a copy of Arc’s <code>StorableSidebar.json</code> to review its Spaces, Favorites, and pinned tabs before importing.</p>
   <div class="row">
     <button type="button" class="btn" id="arc-sidebar-choose" aria-describedby="arc-sidebar-help">Choose Arc sidebar file…</button>
     <input id="arc-sidebar-file" type="file" accept=".json,application/json" hidden>
     <button type="button" class="btn" id="arc-sidebar-clear" hidden>Clear preview</button>
   </div>
-  <p class="status" id="arc-sidebar-status" role="status"></p>
+  <div class="row">
+    <p class="status" id="arc-sidebar-status" role="status" tabindex="-1"></p>
+    <button type="button" class="btn" id="arc-sidebar-undo" hidden>Undo last Arc import</button>
+  </div>
   <section class="group arc-sidebar-review" id="arc-sidebar-review" aria-labelledby="arc-sidebar-heading" hidden>
     <h3 id="arc-sidebar-heading" tabindex="-1">Review Arc sidebar</h3>
     <div id="arc-sidebar-content"></div>
-    <p class="note">Preview only. Quiver has not added any Spaces or tabs.</p>
+    <div class="row">
+      <button type="button" class="btn primary" id="arc-sidebar-commit" disabled>Import Spaces</button>
+    </div>
+  </section>
+  <section class="group arc-sidebar-review" id="arc-sidebar-undo-panel" aria-labelledby="arc-sidebar-undo-heading" hidden>
+    <h3 id="arc-sidebar-undo-heading">Undo Arc import</h3>
+    <p id="arc-sidebar-undo-description"></p>
+    <div class="row">
+      <button type="button" class="btn" id="arc-sidebar-undo-cancel" aria-describedby="arc-sidebar-undo-description">Cancel</button>
+      <button type="button" class="btn danger" id="arc-sidebar-undo-confirm" aria-describedby="arc-sidebar-undo-description">Remove imported Spaces</button>
+    </div>
   </section>
 
   <h2>Environments</h2>

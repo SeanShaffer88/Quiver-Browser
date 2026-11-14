@@ -15,7 +15,7 @@ export function tabSearchQuery(text: string): string | undefined {
 }
 
 export function tabCommandTarget(
-  tab: { id: number; spaceId: string; title: string; titleIsExplicit: boolean; commandRevision: number; internalPage?: 'newtab' | 'settings' | 'boosts' | 'research' | 'downloads' },
+  tab: { id: number; spaceId: string; title: string; customTitle?: string; titleIsExplicit: boolean; commandRevision: number; internalPage?: 'newtab' | 'settings' | 'boosts' | 'research' | 'downloads' },
   url: string,
   spaceName: string,
   envGroups: EnvGroup[],
@@ -24,7 +24,7 @@ export function tabCommandTarget(
   const host = parsed?.protocol === 'http:' || parsed?.protocol === 'https:' ? parsed.host.slice(0, 260) : '';
   const fallback = tab.internalPage === 'settings' ? 'Settings' : tab.internalPage === 'boosts' ? 'Boosts' : tab.internalPage === 'research' ? 'Research' : tab.internalPage === 'downloads' ? 'Downloads'
     : tab.internalPage === 'newtab' ? 'New Tab' : parsed?.protocol === 'file:' ? 'Local file' : host || 'Untitled tab';
-  const title = tab.titleIsExplicit ? normalizeTabTitle(tab.title, url) : '';
+  const title = normalizeTabTitle(tab.customTitle, url) || (tab.titleIsExplicit ? normalizeTabTitle(tab.title, url) : '');
   return {
     id: tab.id, spaceId: tab.spaceId, spaceName: safeLabel(spaceName), revision: tab.commandRevision,
     url, title: title || fallback, host, environment: host ? badgeFor(url, envGroups) : null,
