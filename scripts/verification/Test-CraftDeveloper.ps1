@@ -22,7 +22,7 @@ $portPath = Join-Path $workspace 'port.txt'
 $requestPath = Join-Path $workspace 'requests.jsonl'
 $electron = (Resolve-Path -LiteralPath (Join-Path $repo 'node_modules/electron/dist/electron.exe')).Path
 $electronVersion = (Get-Content -LiteralPath (Join-Path $repo 'node_modules/electron/package.json') -Raw | ConvertFrom-Json).version
-$lockedElectron = (Get-Content -LiteralPath (Join-Path $repo 'package-lock.json') -Raw | ConvertFrom-Json).packages.'node_modules/electron'.version
+$lockedElectron = (Get-Content -LiteralPath (Join-Path $repo 'package-lock.json') -Raw | ConvertFrom-Json -AsHashtable).packages.'node_modules/electron'.version
 $runtimeVersion = (Get-Item -LiteralPath $electron).VersionInfo
 $runtimeElectron = '{0}.{1}.{2}' -f $runtimeVersion.ProductMajorPart, $runtimeVersion.ProductMinorPart, $runtimeVersion.ProductBuildPart
 if (!$lockedElectron -or $electronVersion -cne $lockedElectron -or $runtimeElectron -cne $lockedElectron) {
