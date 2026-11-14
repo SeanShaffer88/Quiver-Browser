@@ -1,0 +1,52 @@
+name: Verify Quiver RC 1 to RC 2 upgrade
+
+on:
+  push:
+    branches: [verify/rc1-rc2-upgrades]
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade:
+    name: Published packages (${{ matrix.mode }})
+    runs-on: windows-2025
+    timeout-minutes: 13
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [nsis, paf]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+      - name: Download exact published installers and verify upgrade
+        shell: pwsh
+        env:
+          TEST_MODE: ${{ matrix.mode }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = if ($env:TEST_MODE -eq 'nsis') { 'Quiver-v0.1.0-x64-Setup.exe' } else { 'QuiverPortable_0.1.0_English.paf.exe' }
+          $files = foreach ($number in 1, 2) {
+            $folder = Join-Path $env:RUNNER_TEMP "quiver-rc-$number-input"
+            $null = New-Item -ItemType Directory -Path $folder
+            $file = Join-Path $folder $name
+            $url = "https://github.com/SeanShaffer88/Quiver-Browser/releases/download/v0.1.0-rc.$number/$name"
+            & curl.exe --disable --fail --location --silent --show-error --proto '=https' --proto-redir '=https' --retry 2 --max-time 90 --output $file $url
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $file
+          }
+          & ./scripts/verification/rc-upgrade/Install-Upgrade.ps1 -Mode $env:TEST_MODE -Rc1Installer $files[0] -Rc2Installer $files[1] -Destination (Join-Path $env:RUNNER_TEMP 'quiver-upgrade')
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: quiver-rc-upgrade-${{ matrix.mode }}
+          path: |
+            ${{ runner.temp }}/quiver-upgrade/*.json
+            ${{ runner.temp }}/quiver-upgrade/*.log
+          if-no-files-found: warn
+          retention-days: 7
