@@ -80,14 +80,15 @@ function processTreeKill(child) {
   }
 }
 
-async function launch(executable, data, report, evidencePath) {
+async function launch(executable, data, report, evidencePath, fixtureUrl) {
   const { env } = profileEnvironment(data);
   const portFile = path.join(data, 'DevToolsActivePort');
   fs.rmSync(portFile, { force: true });
   const log = fs.openSync(evidencePath + '.browser.log', 'w');
   const child = spawn(executable, [
     '--user-data-dir=' + data, '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
-    '--disable-background-networking', '--disable-component-update', '--no-pings', '--',
+    '--disable-background-networking', '--disable-component-update', '--no-pings',
+    ...(fixtureUrl ? ['--use-fake-device-for-media-stream', '--', fixtureUrl] : ['--']),
   ], {
     cwd: path.dirname(executable), env, stdio: ['ignore', log, log], windowsHide: true,
   });
@@ -110,10 +111,13 @@ async function launch(executable, data, report, evidencePath) {
     const loopback = '127.0.0.1:' + port;
     return {
       child,
-      page: (url) => waitFor(url + ' target', async () => {
+      page: (url, mobile = null) => waitFor(url + ' target', async () => {
         const response = await fetch('http://' + loopback + '/json/list', { signal: AbortSignal.timeout(1200) });
-        const page = (await response.json()).find((target) => target.url === url);
-        return /^[a-f0-9]+$/i.test(page?.id ?? '') && 'ws://' + loopback + '/devtools/page/' + page.id;
+        for (const target of await response.json()) {
+          if (target.url !== url || !/^[a-f0-9]+$/i.test(target.id ?? '')) continue;
+          const endpoint = 'ws://' + loopback + '/devtools/page/' + target.id;
+          if (mobile === null || await evaluate(endpoint, '/iPhone/.test(navigator.userAgent)') === mobile) return endpoint;
+        }
       }),
       async close() {
         const exit = once(child, 'exit');
@@ -130,7 +134,7 @@ async function launch(executable, data, report, evidencePath) {
   }
 }
 
-const marker = 'rc1-seeded';
+const marker = 'rc3-seeded';
 const sessionCookie = 'quiverUpgrade=' + marker;
 const storageKey = 'quiver-upgrade-storage';
 const fixtureBookmark = { title: 'Quiver release upgrade bookmark', url: 'https://upgrade.example.invalid/' };
@@ -250,4 +254,4 @@ if (require.main === module) {
     process.exitCode = 1;
   });
 }
-module.exports = { profileEnvironment };
+module.exports = { command, evaluate, launch, processTreeKill, profileEnvironment, waitFor };

@@ -1,8 +1,8 @@
-name: Verify Quiver RC 2 to RC 3 upgrade
+name: Verify Quiver RC 3 to RC 4 upgrade
 
 on:
   push:
-    branches: [verify/rc2-rc3-upgrades]
+    branches: [verify/rc3-rc4-upgrades]
 
 permissions:
   contents: read
@@ -30,7 +30,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $name = if ($env:TEST_MODE -eq 'nsis') { 'Quiver-v0.1.0-x64-Setup.exe' } else { 'QuiverPortable_0.1.0_English.paf.exe' }
-          $files = foreach ($number in 2, 3) {
+          $files = foreach ($number in 3, 4) {
             $folder = Join-Path $env:RUNNER_TEMP "quiver-rc-$number-input"
             $null = New-Item -ItemType Directory -Path $folder
             $file = Join-Path $folder $name
@@ -39,7 +39,7 @@ jobs:
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
             $file
           }
-          & ./scripts/verification/rc-upgrade/Install-Upgrade.ps1 -Mode $env:TEST_MODE -Rc2Installer $files[0] -Rc3Installer $files[1] -Destination (Join-Path $env:RUNNER_TEMP 'quiver-upgrade')
+          & ./scripts/verification/rc-upgrade/Install-Upgrade.ps1 -Mode $env:TEST_MODE -Rc3Installer $files[0] -Rc4Installer $files[1] -Destination (Join-Path $env:RUNNER_TEMP 'quiver-upgrade')
           exit $LASTEXITCODE
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
