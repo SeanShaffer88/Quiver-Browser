@@ -531,6 +531,7 @@ export class TabManager {
     });
     wc.on('render-process-gone', (_e, details) => {
       if (this.tabs.get(tab.id) !== tab) return;
+      this.media?.reset(wc.id);
       const url = this.tabUrl(tab);
       tab.crashUrl = restorableUrl(url) ? url : null;
       tab.title = 'Page stopped responding';
