@@ -62,6 +62,11 @@ function icon(svg: string, label: string, onClick: () => void, extra: Record<str
 
 const call = (ch: string, ...a: unknown[]) => quiver.invoke(ch, ...a).catch((e: Error) => console.error(ch, e.message));
 
+function signInLabel(space: Space): string {
+  if (space.sessionGroupId) return 'Shared sign-in within imported profile';
+  return space.isolated ? 'Separate sign-in' : 'Shared sign-in';
+}
+
 function renderSpaces(s: ShellState): HTMLElement {
   const wrap = h('div', { class: 'spaces', role: 'tablist', 'aria-label': 'Spaces' });
   for (const sp of s.spaces) {
@@ -93,8 +98,8 @@ function renderSpaces(s: ShellState): HTMLElement {
         role: 'tab',
         'aria-selected': String(sp.id === s.activeSpaceId),
         dataset: { focusKey: sp.id },
-        'aria-label': sp.isolated ? sp.name + ', separate sign-in' : sp.name + ', shared sign-in',
-        title: `${sp.name}${sp.isolated ? ' — separate cookies & storage' : ' — shared cookies'}\nRight-click: rename or delete · Double-click: rename`,
+        'aria-label': sp.name + ', ' + signInLabel(sp).toLowerCase(),
+        title: `${sp.name} — ${signInLabel(sp)}\nRight-click: rename or delete · Double-click: rename`,
         onClick: () => call('space:activate', sp.id),
         onDblclick: () => {
           renamingSpace = sp.id;
@@ -473,7 +478,7 @@ function renderRecovery(s: ShellState): HTMLElement[] {
   const closed = s.recentlyClosed;
   const original = closed && s.spaces.find(({ id }) => id === closed.spaceId);
   if (closed && original) {
-    const signIn = original.isolated ? 'Separate sign-in' : 'Shared sign-in';
+    const signIn = signInLabel(original);
     const description = 'Reopen ' + closed.title + ' in ' + original.name;
     cards.push(h('div', { class: 'recovery-card recovery-closed' },
       h('p', { class: 'recovery-copy', title: closed.title }, 'Closed ' + closed.title),
@@ -546,10 +551,11 @@ function renderSidebar(s: ShellState): void {
   const active = s.spaces.find(({ id }) => id === s.activeSpaceId);
   const isolation = active && h('p', {
     class: 'space-isolation',
-    title: active.name + (active.isolated ? ' has separate cookies and sign-ins' : ' shares cookies and sign-ins with other shared Spaces'),
+    title: active.name + (active.sessionGroupId ? ' shares cookies and sign-ins within its imported profile'
+      : active.isolated ? ' has separate cookies and sign-ins' : ' shares cookies and sign-ins with other shared Spaces'),
   },
-    h('span', { class: 'recovery-expanded' }, active.isolated ? 'Separate sign-in' : 'Shared sign-in'),
-    h('span', { class: 'recovery-compact' }, active.isolated ? 'Separate' : 'Shared'),
+    h('span', { class: 'recovery-expanded' }, signInLabel(active)),
+    h('span', { class: 'recovery-compact' }, active.sessionGroupId ? 'Profile' : active.isolated ? 'Separate' : 'Shared'),
   );
   sidebar.replaceChildren(brand, renderSpaces(s), ...(isolation ? [isolation] : []),
     ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderRecovery(s),

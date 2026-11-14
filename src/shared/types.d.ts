@@ -6,6 +6,10 @@ export interface Space {
   color: string;
   /** true = own cookie jar / storage partition; false = shared default partition */
   isolated: boolean;
+  /** Spaces in one imported Arc profile share a fresh, local storage partition. */
+  sessionGroupId?: string;
+  /** Origin of this Space. Arc imports are local to this installation. */
+  arcImportId?: string;
   /** Pinned-tab folders, nested by parentId. */
   folders?: Folder[];
 }

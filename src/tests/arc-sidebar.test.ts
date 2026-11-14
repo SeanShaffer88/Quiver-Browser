@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ARC_SIDEBAR_MAX_BYTES, parseArcSidebar } from '../renderer/arc-sidebar.js';
+import { ARC_SIDEBAR_MAX_BYTES, parseArcSidebar, parseArcSidebarImport, projectArcSidebarPreview } from '../renderer/arc-sidebar.js';
 
 function sidebar(spaces: unknown[], items: unknown[], topAppsContainerIDs: unknown[] = []): string {
   return JSON.stringify({ sidebar: { containers: [{ global: {} }, { spaces, items, topAppsContainerIDs }] } });
@@ -108,4 +108,31 @@ test('distinguishes invalid, unrecognized, oversized, and empty sidebars', () =>
   assert.equal(parseArcSidebar('{"tabs":[]}'), 'unrecognized-sidebar');
   assert.equal(parseArcSidebar(' '.repeat(ARC_SIDEBAR_MAX_BYTES + 1)), 'too-large');
   assert.deepEqual(review(sidebar([], [])), { spaces: [], profiles: [], skipped: 0, limited: false });
+});
+
+test('retains safe canonical addresses and Arc aliases for import while projecting a host-only preview', () => {
+  const input = sidebar(
+    ['space', { profile: { default: true }, containerIDs: ['pinned', 'pins', 'unpinned', 'today'] }],
+    [
+      'pins', { childrenIds: ['custom', 'unsafe'] },
+      'custom', { title: 'My pinned home', data: { tab: { savedURL: 'HTTPS://Example.Test/a%20b?secret=123#anchor' } } },
+      'unsafe', { data: { tab: { savedURL: 'https://example.test/a\nb' } } },
+      'today', { childrenIds: ['open'] },
+      'open', { data: { tab: { savedTitle: 'Ordinary page title', savedURL: 'http://example.test/today' } } },
+    ],
+  );
+  const imported = parseArcSidebarImport(input);
+  if (typeof imported === 'string') assert.fail(imported);
+  assert.deepEqual(imported.spaces[0].pinned, [{
+    kind: 'tab', title: 'My pinned home', customTitle: 'My pinned home', host: 'example.test',
+    url: 'https://example.test/a%20b?secret=123#anchor',
+  }]);
+  assert.deepEqual(imported.spaces[0].today, [{
+    kind: 'tab', title: 'Ordinary page title', host: 'example.test', url: 'http://example.test/today',
+  }]);
+  assert.equal(imported.skipped, 1);
+  const preview = projectArcSidebarPreview(imported);
+  assert.deepEqual(preview, parseArcSidebar(input));
+  assert.equal(preview.spaces[0].todayTabs, 1);
+  assert.doesNotMatch(JSON.stringify(preview), /customTitle|secret=123|anchor|https?:\/\//);
 });

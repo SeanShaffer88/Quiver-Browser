@@ -20,6 +20,7 @@ import os from 'node:os';
 import { parseLaunchArgs } from './launch-args';
 import type { ShortcutAction } from './shortcuts';
 import { Store } from './store';
+import { webSpacePartition } from './space-session';
 import { restrictInternalNavigation, TabManager } from './tabs';
 import { placeWindow } from './window-placement';
 
@@ -151,8 +152,8 @@ async function main(): Promise<void> {
     // Clear web Spaces only; Quiver's own pages and settings are kept.
     event.preventDefault();
     clearedOnExit = true;
-    const partitions = [SHARED_PARTITION, ...store.state.spaces.filter((sp) => sp.isolated).map((sp) => `persist:quiver-space-${sp.id}`)];
-    void clearSessions(partitions.map((partition) => session.fromPartition(partition))).finally(() => app.quit());
+    const partitions = new Set([SHARED_PARTITION, ...store.state.spaces.map(webSpacePartition)]);
+    void clearSessions([...partitions].map((partition) => session.fromPartition(partition))).finally(() => app.quit());
   });
   const boosts = new Boosts();
   boosts.startWatching();

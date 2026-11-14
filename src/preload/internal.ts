@@ -15,6 +15,7 @@ const INVOKE = new Set([
   'history:clear', 'history:count',
   'bookmarks:list', 'bookmarks:profiles', 'bookmarks:review-profile', 'bookmarks:review-file',
   'bookmarks:cancel-review', 'bookmarks:confirm', 'bookmarks:undo', 'bookmarks:open',
+  'arc:preview', 'arc:commit', 'arc:undo', 'arc:status', 'arc:cancel',
   'boost:list', 'boost:read', 'boost:save', 'boost:create', 'boost:delete', 'boost:dir',
   'devserver:open', 'devserver:refresh', 'devserver:retry',
   'downloads:list', 'downloads:act', 'downloads:clear',

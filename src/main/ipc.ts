@@ -4,6 +4,7 @@ import { detectEnv } from '../shared/env';
 import { parseCommand } from '../shared/parser';
 import type { BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, Settings, Suggestion } from '../shared/types';
 import { BookmarkImports } from './bookmark-import';
+import { ArcImports } from './arc-import';
 import { isValidBoostName, type Boosts } from './boosts';
 import { BookmarkProfileReadError, bookmarkProfileLabel, discoverBookmarkProfiles, readChromiumBookmarkCandidates } from './chromium-bookmarks';
 import type { DevServerWatcher } from './devservers';
@@ -521,6 +522,46 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     return d.history.list().length;
   });
   handle('settings', 'history:count', () => d.history.list().length);
+
+  const arcImports = new ArcImports<WebFrameMain>(store.state, () => store.flush(), () => store.save(), {
+    stage: (entries) => tabs.stageArcSpaces(entries),
+    remove: (spaces) => tabs.removeArcSpaces(spaces),
+  });
+  let arcReview: { frame: WebFrameMain; token: string; release: () => void } | undefined;
+  const cancelArcReview = (frame: WebFrameMain) => {
+    arcImports.cancel(frame);
+    if (arcReview?.frame === frame) {
+      arcReview.release();
+      arcReview = undefined;
+    }
+  };
+  handle('settings', 'arc:preview', ({ sender, senderFrame }, raw: unknown) => {
+    if (arcReview) cancelArcReview(arcReview.frame);
+    const result = arcImports.preview(senderFrame, raw);
+    if ('token' in result && result.token) {
+      const cancel = () => cancelArcReview(senderFrame);
+      const navigation = ({ isMainFrame, isSameDocument }: { isMainFrame: boolean; isSameDocument: boolean }) => {
+        if (isMainFrame && !isSameDocument) cancel();
+      };
+      sender.on('did-start-navigation', navigation);
+      sender.once('destroyed', cancel);
+      sender.once('render-process-gone', cancel);
+      arcReview = { frame: senderFrame, token: result.token, release: () => {
+        sender.off('did-start-navigation', navigation);
+        sender.off('destroyed', cancel);
+        sender.off('render-process-gone', cancel);
+      } };
+    }
+    return result;
+  });
+  handle('settings', 'arc:commit', ({ senderFrame }, token: unknown) => {
+    const result = arcImports.commit(senderFrame, token);
+    if (arcReview?.frame === senderFrame && arcReview.token === token) cancelArcReview(senderFrame);
+    return result;
+  });
+  handle('settings', 'arc:cancel', ({ senderFrame }) => cancelArcReview(senderFrame));
+  handle('settings', 'arc:status', () => arcImports.status());
+  handle('settings', 'arc:undo', (_event, id: unknown) => arcImports.undo(id));
 
   const imports = new BookmarkImports<WebFrameMain>(store.state, () => {
     const saved = store.flush();
