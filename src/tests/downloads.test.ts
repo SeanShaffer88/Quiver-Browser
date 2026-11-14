@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isRiskyFile, normalizeDownloads, safeFileName, uniqueName } from '../main/downloads';
+import { EventEmitter } from 'node:events';
+import { mkdtemp, readFile, readdir, realpath, rm, unlink, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { setImmediate } from 'node:timers/promises';
+import type { Session } from 'electron';
+import { Downloads, isRiskyFile, normalizeDownloads, safeFileName, uniqueName } from '../main/downloads';
 
 test('file names are made safe for Windows', () => {
   assert.equal(safeFileName('report.pdf'), 'report.pdf');
@@ -38,4 +44,65 @@ test('stored downloads are validated and unfinished ones become interrupted', ()
   assert.equal(out.length, 1);
   assert.equal(out[0].state, 'interrupted');
   assert.equal(out[0].canResume, true);
+});
+
+test('checkpoint survives Chromium shutdown cancellation and resumes the same download', async (t) => {
+  const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), 'quiver-resume-')));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const partialDirectory = path.join(directory, 'download-partials');
+  const savePath = path.join(directory, 'fixture.bin');
+  const url = 'https://a.example/fixture.bin';
+  const partition = 'persist:quiver-shared';
+  const bytes = Buffer.from('partial bytes');
+  let persisted: unknown = [];
+  let creation: Parameters<Session['createInterruptedDownload']>[0] | undefined;
+  let resumed = 0;
+
+  const makeItem = (state: string) => Object.assign(new EventEmitter(), {
+    getURL: () => url, getURLChain: () => [url], getFilename: () => 'fixture.bin', getMimeType: () => 'application/octet-stream',
+    getSavePath: () => savePath, getState: () => state, getTotalBytes: () => 100,
+    getReceivedBytes: () => bytes.length, getETag: () => '"fixture"', getLastModifiedTime: () => '',
+    isPaused: () => false, canResume: () => true, pause: () => {}, resume: () => { resumed++; },
+  });
+  const session = () => {
+    const emitter = new EventEmitter();
+    return Object.assign(emitter, {
+      createInterruptedDownload(options: Parameters<Session['createInterruptedDownload']>[0]) {
+        creation = options;
+        emitter.emit('will-download', {}, makeItem('interrupted'));
+      },
+    });
+  };
+  const makeDownloads = (session: Session) => new Downloads(persisted, {
+    directory: () => directory, partialDirectory, askWhereToSave: () => false, fromPartition: () => session,
+    persist: (records) => { persisted = structuredClone(records); }, changed: () => {},
+  });
+
+  const originalSession = session();
+  const initial = makeDownloads(originalSession as unknown as Session);
+  initial.attach(originalSession as unknown as Session, partition);
+  await writeFile(savePath, Buffer.concat([bytes, Buffer.from('unrecorded trailing bytes')]));
+  const item = makeItem('progressing');
+  originalSession.emit('will-download', {}, item);
+  item.emit('updated', {}, 'progressing');
+  const id = initial.list()[0].id;
+  const checkpoint = initial.checkpointOnClose();
+  assert.ok(checkpoint);
+  await checkpoint;
+  item.emit('done', {}, 'cancelled');
+  await unlink(savePath);
+  const [partial, ...others] = await readdir(partialDirectory);
+  assert.ok(partial);
+  assert.deepEqual(others, []);
+  assert.deepEqual(await readFile(path.join(partialDirectory, partial)), bytes);
+
+  const restarted = makeDownloads(session() as unknown as Session);
+  assert.equal(restarted.list()[0].canResume, true);
+  assert.equal(await restarted.act(id, 'resume'), '');
+  await setImmediate();
+  assert.equal(resumed, 1);
+  assert.equal(creation?.offset, bytes.length);
+  assert.equal(creation?.path, savePath);
+  assert.deepEqual(restarted.list().map((download) => download.id), [id]);
+  assert.deepEqual(await readFile(savePath), bytes);
 });

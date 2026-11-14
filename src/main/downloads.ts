@@ -1,4 +1,5 @@
 import { shell, type DownloadItem, type Session } from 'electron';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { DownloadInfo, DownloadState, NativeKind } from '../shared/types';
@@ -46,6 +47,74 @@ interface DownloadRecord extends DownloadInfo {
   urlChain: string[];
   etag: string;
   lastModified: string;
+  partialKey?: string;
+  partialBytes?: number;
+}
+
+const PARTIAL_KEY = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+const RESUME_START_TIMEOUT_MS = 10_000;
+
+function hasResumeMetadata(record: DownloadRecord): boolean {
+  return !record.kind && /^https?:\/\//i.test(record.url) && Number.isSafeInteger(record.received)
+    && Number.isSafeInteger(record.total) && record.received > 0 && record.received < record.total
+    && (!!record.etag && !record.etag.startsWith('W/') || !!record.lastModified);
+}
+
+async function regularFile(file: string): Promise<fs.Stats | undefined> {
+  const stat = await fs.promises.lstat(file).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined;
+    throw error;
+  });
+  if (stat && (!stat.isFile() || stat.nlink !== 1)) throw new Error('The download path must be a regular file with one link.');
+  return stat;
+}
+
+function samePath(first: string, second: string): boolean {
+  if (!first || !second) return false;
+  return path.relative(first, second) === '';
+}
+
+/** Copy only the recorded contiguous bytes and never replace an existing file. */
+async function copyPartial(source: string, destination: string, bytes: number): Promise<void> {
+  const expected = await regularFile(source);
+  const input = await fs.promises.open(source, 'r');
+  try {
+    const observed = await input.stat();
+    if (!expected || !observed.isFile() || observed.nlink !== 1 || observed.ino !== expected.ino
+      || observed.dev !== expected.dev || observed.size < bytes) {
+      throw new Error('The partial download changed or is shorter than its saved progress.');
+    }
+    const output = await fs.promises.open(destination, 'wx');
+    try {
+      const buffer = Buffer.allocUnsafe(1024 * 1024);
+      let offset = 0;
+      while (offset < bytes) {
+        const { bytesRead } = await input.read(buffer, 0, Math.min(buffer.length, bytes - offset), offset);
+        if (bytesRead === 0) throw new Error('The partial download copy is incomplete.');
+        let written = 0;
+        while (written < bytesRead) {
+          const { bytesWritten } = await output.write(buffer, written, bytesRead - written, offset + written);
+          if (bytesWritten === 0) throw new Error('The partial download copy could not be written.');
+          written += bytesWritten;
+        }
+        offset += bytesRead;
+      }
+      await output.sync();
+      await output.close();
+    } catch (error) {
+      await output.close().catch(() => undefined);
+      await fs.promises.unlink(destination).catch(() => undefined);
+      throw error;
+    }
+  } finally {
+    await input.close();
+  }
+}
+
+async function fileDigest(file: string): Promise<string> {
+  const digest = createHash('sha256');
+  for await (const chunk of fs.createReadStream(file)) digest.update(chunk);
+  return digest.digest('hex');
 }
 
 function webUrl(value: unknown): value is string {
@@ -81,7 +150,11 @@ export function normalizeDownloads(raw: unknown): DownloadRecord[] {
     if (typeof r.detail === 'string') record.detail = r.detail.slice(0, 200);
     if (typeof r.error === 'string') record.error = r.error.slice(0, 300);
     // Quiver's own downloaders restart with Retry; Chromium's can resume from a validator.
-    record.canResume = !record.kind && state === 'interrupted' && record.received > 0 && !!(record.etag || record.lastModified);
+    if (typeof r.partialKey === 'string' && PARTIAL_KEY.test(r.partialKey) && r.partialBytes === record.received) {
+      record.partialKey = r.partialKey;
+      record.partialBytes = record.received;
+    }
+    record.canResume = state === 'interrupted' && hasResumeMetadata(record);
     record.risky = isRiskyFile(record.filename);
     out.push(record);
     if (out.length === DOWNLOAD_LIMIT) break;
@@ -97,6 +170,8 @@ export class Downloads {
   private readonly live = new Map<string, DownloadItem>();
   private readonly jobs = new Map<string, JobControl>();
   private readonly attached = new WeakSet<Session>();
+  private readonly resuming = new Map<DownloadRecord, NodeJS.Timeout | undefined>();
+  private checkpointing = false;
   private readonly lastBytes = new Map<string, { at: number; bytes: number }>();
   private emitTimer: NodeJS.Timeout | null = null;
   private nextId = Date.now();
@@ -105,6 +180,7 @@ export class Downloads {
     stored: unknown,
     private readonly options: {
       directory: () => string;
+      partialDirectory: string;
       askWhereToSave: () => boolean;
       fromPartition: (partition: string) => Session;
       persist: (records: DownloadInfo[]) => void;
@@ -115,7 +191,7 @@ export class Downloads {
   }
 
   list(): DownloadInfo[] {
-    return this.records.map(({ partition: _p, urlChain: _u, etag: _e, lastModified: _l, ...info }) => {
+    return this.records.map(({ partition: _p, urlChain: _u, etag: _e, lastModified: _l, partialKey: _k, partialBytes: _b, ...info }) => {
       const exists = info.state === 'completed' ? fs.existsSync(info.savePath) : true;
       return { ...info, missing: !exists };
     });
@@ -142,6 +218,108 @@ export class Downloads {
       }
       this.track(item, partition);
     });
+  }
+
+  private async partialPath(key: string, createDirectory = false): Promise<string> {
+    const directory = this.options.partialDirectory;
+    if (createDirectory) await fs.promises.mkdir(directory, { recursive: true });
+    const [entry, resolved] = await Promise.all([fs.promises.lstat(directory), fs.promises.realpath(directory)]);
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !samePath(directory, resolved)) {
+      throw new Error('The download checkpoint directory was redirected.');
+    }
+    return path.join(directory, key);
+  }
+
+  private discardPartial(record: DownloadRecord): void {
+    const key = record.partialKey;
+    if (!key) return;
+    delete record.partialKey;
+    delete record.partialBytes;
+    void this.partialPath(key).then((file) => fs.promises.unlink(file)).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') console.warn('[quiver] could not remove a download checkpoint:', error.code);
+    });
+  }
+
+  checkpointOnClose(): Promise<void> | undefined {
+    const candidates = this.records.filter((record) => record.state === 'progressing' || record.state === 'interrupted')
+      .filter((record) => hasResumeMetadata(record) && this.live.has(record.id));
+    if (!candidates.length) return;
+    this.checkpointing = true;
+    for (const record of candidates) this.live.get(record.id)?.pause();
+    return this.checkpointPartials(candidates);
+  }
+
+  private async checkpointPartials(records: DownloadRecord[]): Promise<void> {
+    for (const record of records) {
+      const { savePath, received } = record;
+      const key = randomUUID();
+      try {
+        if (!this.live.has(record.id) || !hasResumeMetadata(record) || !await regularFile(savePath)) continue;
+        const checkpoint = await this.partialPath(key, true);
+        await copyPartial(savePath, checkpoint, received);
+        if (!this.live.has(record.id)) {
+          await fs.promises.unlink(checkpoint);
+          continue;
+        }
+        this.discardPartial(record);
+        record.partialKey = key;
+        record.partialBytes = received;
+        record.received = received;
+      } catch (error) {
+        console.warn('[quiver] could not preserve a partial download:', (error as NodeJS.ErrnoException).code ?? 'copy failed');
+      }
+    }
+    this.save();
+  }
+
+  private pathInUse(file: string, except?: DownloadRecord): boolean {
+    return this.records.some((record) => record !== except && samePath(file, record.savePath)
+      && (this.live.has(record.id) || this.resuming.has(record)));
+  }
+
+  private async prepareResume(record: DownloadRecord): Promise<string> {
+    if (this.pathInUse(record.savePath, record)) return 'Another download is already using this destination.';
+    this.resuming.set(record, undefined);
+    try {
+      const existing = await regularFile(record.savePath);
+      if (record.partialKey) {
+        const partial = await this.partialPath(record.partialKey);
+        if ((await regularFile(partial))?.size !== record.received) throw new Error('The download checkpoint is incomplete.');
+        if (existing) {
+          if (existing.size !== record.received || await fileDigest(record.savePath) !== await fileDigest(partial)) {
+            throw new Error('The download destination changed.');
+          }
+        } else {
+          await copyPartial(partial, record.savePath, record.received);
+        }
+      } else if (existing?.size !== record.received) {
+        throw new Error('The partial download is missing or changed.');
+      }
+      const ses = this.options.fromPartition(record.partition);
+      this.attach(ses, record.partition);
+      const timeout = setTimeout(() => {
+        this.resuming.delete(record);
+        record.error = 'Could not start the saved download. Try Resume or Retry.';
+        this.save();
+      }, RESUME_START_TIMEOUT_MS);
+      this.resuming.set(record, timeout);
+      ses.createInterruptedDownload({
+        path: record.savePath, urlChain: record.urlChain, mimeType: record.mime, offset: record.received,
+        length: record.total, lastModified: record.lastModified, eTag: record.etag, startTime: record.startedAt / 1000,
+      });
+      return '';
+    } catch {
+      this.finishStartingResume(record);
+      record.canResume = false;
+      record.error = 'The saved download could not be resumed. Retry it instead.';
+      this.save();
+      return record.error;
+    }
+  }
+
+  private finishStartingResume(record: DownloadRecord): void {
+    clearTimeout(this.resuming.get(record));
+    this.resuming.delete(record);
   }
 
   /** Start one of Quiver's own downloaders (FTP, HLS, DASH, Metalink). Files go to the downloads folder. */
@@ -233,7 +411,13 @@ export class Downloads {
   private track(item: DownloadItem, partition: string): void {
     const dir = this.options.directory();
     const name = safeFileName(item.getFilename());
-    const existing = this.records.find((r) => r.state === 'interrupted' && r.url === item.getURL() && r.savePath === item.getSavePath());
+    const initiallyInterrupted = item.getState() === 'interrupted';
+    const existing = initiallyInterrupted ? [...this.resuming.keys()].find((record) =>
+      record.partition === partition && record.url === item.getURL() && samePath(record.savePath, item.getSavePath())) : undefined;
+    if (existing) {
+      this.finishStartingResume(existing);
+      delete existing.error;
+    }
     if (!item.getSavePath()) {
       if (this.options.askWhereToSave()) {
         // Chromium otherwise prefers the last folder chosen in Save As.
@@ -244,7 +428,10 @@ export class Downloads {
         } catch {
           /* Chromium reports the failure as an interrupted download */
         }
-        item.setSavePath(path.join(dir, uniqueName(name, (n) => fs.existsSync(path.join(dir, n)))));
+        item.setSavePath(path.join(dir, uniqueName(name, (candidate) => {
+          const file = path.join(dir, candidate);
+          return fs.existsSync(file) || this.pathInUse(file);
+        })));
       }
     }
     const record: DownloadRecord = existing ?? {
@@ -254,7 +441,7 @@ export class Downloads {
       risky: isRiskyFile(name),
     };
     if (!existing) this.records.unshift(record);
-    record.state = 'progressing';
+    record.state = initiallyInterrupted ? 'interrupted' : 'progressing';
     this.live.set(record.id, item);
     const update = () => {
       const savePath = item.getSavePath();
@@ -277,24 +464,32 @@ export class Downloads {
       this.lastBytes.set(record.id, { at: now, bytes: record.received });
     };
     item.on('updated', (_event, state) => {
+      if (this.checkpointing && record.partialKey && item.getState() === 'cancelled') return;
       update();
       record.state = state === 'interrupted' ? 'interrupted' : 'progressing';
       record.canResume = item.canResume();
       this.queueEmit();
     });
     item.once('done', (_event, state) => {
-      update();
       this.live.delete(record.id);
       this.lastBytes.delete(record.id);
+      // Chromium cancels live items and removes their target files during shutdown.
+      // The independent checkpoint becomes the resume source for the next launch.
+      if (this.checkpointing && record.partialKey && state === 'cancelled') return;
+      update();
       record.speed = 0;
       record.endedAt = Date.now();
       record.state = state;
-      record.canResume = state === 'interrupted' && !!(record.etag || record.lastModified) && record.received > 0;
+      record.canResume = state === 'interrupted' && hasResumeMetadata(record);
+      if (state !== 'interrupted' || record.received !== record.partialBytes) this.discardPartial(record);
       // A Save As dialog the person cancelled leaves nothing worth listing.
       if (state === 'cancelled' && !record.savePath) this.records.splice(this.records.indexOf(record), 1);
       this.save();
     });
     this.save();
+    if (existing) setImmediate(() => {
+      if (this.live.get(record.id) === item) item.resume();
+    });
   }
 
   private queueEmit(): void {
@@ -308,7 +503,11 @@ export class Downloads {
   private save(): void {
     if (this.records.length > DOWNLOAD_LIMIT) {
       for (let i = this.records.length - 1; i >= 0 && this.records.length > DOWNLOAD_LIMIT; i--) {
-        if (!this.live.has(this.records[i].id)) this.records.splice(i, 1);
+        const record = this.records[i];
+        if (!this.live.has(record.id) && !this.jobs.has(record.id) && !this.resuming.has(record)) {
+          this.discardPartial(record);
+          this.records.splice(i, 1);
+        }
       }
     }
     this.options.persist(this.records);
@@ -319,6 +518,8 @@ export class Downloads {
   async act(id: string, action: DownloadAction, confirmedRisky = false): Promise<string> {
     const record = this.records.find((r) => r.id === id);
     if (!record) return 'This download is no longer listed.';
+    if (this.checkpointing) return 'Quiver is preserving downloads before closing.';
+    if (this.resuming.has(record)) return 'This download is already resuming.';
     const job = this.jobs.get(id);
     if (record.kind && record.kind !== 'chromium') {
       const kind = record.kind;
@@ -350,10 +551,7 @@ export class Downloads {
         if (item) {
           if (item.isPaused() || item.canResume()) item.resume();
         } else if (record.state === 'interrupted' && record.canResume) {
-          this.options.fromPartition(record.partition).createInterruptedDownload({
-            path: record.savePath, urlChain: record.urlChain, mimeType: record.mime, offset: record.received,
-            length: record.total, lastModified: record.lastModified, eTag: record.etag, startTime: record.startedAt / 1000,
-          });
+          return this.prepareResume(record);
         } else {
           return 'This download cannot resume. Retry it instead.';
         }
@@ -363,8 +561,11 @@ export class Downloads {
         break;
       case 'retry': {
         if (item) return '';
+        this.discardPartial(record);
         this.records.splice(this.records.indexOf(record), 1);
-        this.options.fromPartition(record.partition).downloadURL(record.url);
+        const ses = this.options.fromPartition(record.partition);
+        this.attach(ses, record.partition);
+        ses.downloadURL(record.url);
         break;
       }
       case 'open': {
@@ -380,6 +581,7 @@ export class Downloads {
         break;
       case 'remove':
         if (item) return 'Cancel the download first.';
+        this.discardPartial(record);
         this.records.splice(this.records.indexOf(record), 1);
         break;
     }
@@ -388,7 +590,14 @@ export class Downloads {
   }
 
   clearFinished(): void {
-    for (let i = this.records.length - 1; i >= 0; i--) if (!this.live.has(this.records[i].id) && !this.jobs.has(this.records[i].id)) this.records.splice(i, 1);
+    if (this.checkpointing) return;
+    for (let i = this.records.length - 1; i >= 0; i--) {
+      const record = this.records[i];
+      if (!this.live.has(record.id) && !this.jobs.has(record.id) && !this.resuming.has(record)) {
+        this.discardPartial(record);
+        this.records.splice(i, 1);
+      }
+    }
     this.save();
   }
 }

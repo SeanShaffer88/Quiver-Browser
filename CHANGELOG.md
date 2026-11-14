@@ -4,6 +4,7 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+- Resume paused and interrupted HTTP downloads from saved progress after reopening Quiver.
 - Import Arc Spaces, pins, custom tab titles, and folders from `StorableSidebar.json`. The import includes a preview and undo. Spaces from the same Arc profile share a fresh Quiver session.
 - Update Electron to 45.3.2, including a fix for cookies set shortly before exit failing to persist.
 - WebDAV downloads (`davs://…`): files or whole folders, passwords only over HTTPS, listings confined to the folder.

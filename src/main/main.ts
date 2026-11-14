@@ -337,6 +337,7 @@ async function main(): Promise<void> {
   };
   const downloads = new Downloads(store.state.downloads, {
     directory: () => portableDownloadPath ?? app.getPath('downloads'),
+    partialDirectory: path.join(app.getPath('userData'), 'download-partials'),
     askWhereToSave: () => store.state.settings.askWhereToSave,
     fromPartition: (partition) => session.fromPartition(partition),
     persist: (records) => {
@@ -503,7 +504,23 @@ async function main(): Promise<void> {
   win.on('unmaximize', repairPlacement);
   win.on('leave-full-screen', repairPlacement);
 
-  win.on('close', () => {
+  let checkpointStarted = false;
+  let checkpointComplete = false;
+  win.on('close', (event) => {
+    if (checkpointStarted && !checkpointComplete) {
+      event.preventDefault();
+      return;
+    }
+    const checkpoint = checkpointStarted ? undefined : downloads.checkpointOnClose();
+    if (checkpoint) {
+      event.preventDefault();
+      checkpointStarted = true;
+      void checkpoint.finally(() => {
+        checkpointComplete = true;
+        if (!win.isDestroyed()) win.close();
+      });
+      return;
+    }
     saveBounds();
     tabs.persist();
     store.state.sessionOpen = false;
