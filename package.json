@@ -1,7 +1,7 @@
 {
   "name": "quiver",
   "productName": "Quiver",
-  "version": "0.1.0-beta.3",
+  "version": "0.1.0",
   "description": "Quiver - a local-first Chromium browser for developers on Windows. Vertical sidebar, Spaces, developer command bar, environment switching, phone preview and Boosts.",
   "main": "dist/main/main.js",
   "license": "MIT",

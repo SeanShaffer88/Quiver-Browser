@@ -18,10 +18,17 @@ if ($artifact -isnot [IO.FileInfo] -or $artifact.Name -notlike 'QuiverPortable_*
     throw 'Expected a Quiver PortableApps installer.'
 }
 $previousArtifact = Get-Item -LiteralPath $PreviousInstaller
-$previousHash = 'A21E135F0971269AA61734439C3AB7B6561303616AA6C47A6FDCA9DD1E81F761'
-if ($previousArtifact -isnot [IO.FileInfo] -or $previousArtifact.Name -cne 'QuiverPortable_0.1.0-beta.2_English.paf.exe' -or
+# Keep the tested predecessor pinned to the published release bytes.
+if ($artifact.Name -ceq 'QuiverPortable_0.1.0_English.paf.exe') {
+    $previousVersion = '0.1.0-beta.3'
+    $previousHash = '28C18BD970A9EDED571A710949166405EC13B8B3E5E970A5722E444663D306A0'
+} else {
+    $previousVersion = '0.1.0-beta.2'
+    $previousHash = 'A21E135F0971269AA61734439C3AB7B6561303616AA6C47A6FDCA9DD1E81F761'
+}
+if ($previousArtifact -isnot [IO.FileInfo] -or $previousArtifact.Name -cne "QuiverPortable_${previousVersion}_English.paf.exe" -or
     (Get-FileHash -LiteralPath $previousArtifact.FullName -Algorithm SHA256).Hash -cne $previousHash) {
-    throw 'The previous installer does not match the published Beta 2 portable asset.'
+    throw "The previous installer does not match the published $previousVersion portable asset."
 }
 
 $runnerTemp = (Get-Item -LiteralPath $env:RUNNER_TEMP).FullName
@@ -334,10 +341,10 @@ function Invoke-PortableRuntime([string]$Root, [string]$Url, [string]$Pass, [str
 
 function Assert-SeededPortableProfile([string]$Data, [string]$Url, [string]$BookmarkUrl) {
     $state = Get-Content -LiteralPath (Join-Path $Data 'quiver-state.json') -Raw | ConvertFrom-Json
-    $bookmark = @($state.bookmarks | Where-Object { $_.url -ceq $BookmarkUrl -and $_.title -ceq 'Portable Beta 2 bookmark' })
+    $bookmark = @($state.bookmarks | Where-Object { $_.url -ceq $BookmarkUrl -and $_.title -ceq 'Previous Quiver bookmark' })
     if ($bookmark.Count -ne 1 -or $state.settings.devServerScan -ne $false -or
         !(@($state.tabsBySpace.'space-main'.url) -ccontains $Url)) {
-        throw 'The saved Beta 2 bookmark, setting, or tab did not survive.'
+        throw 'The previous bookmark, setting, or tab did not survive.'
     }
 }
 
@@ -387,21 +394,21 @@ function Test-UpgradeAndDriveChange([string]$Origin, [string]$Records) {
         $null = New-Item -ItemType Directory -Path (Split-Path -Parent $oldPackage)
         $oldAsar = Install-Package $previousArtifact $oldPackage
         $oldAppInfo = Get-Content -LiteralPath (Join-Path $oldPackage 'App/AppInfo/appinfo.ini')
-        if ($oldAsar -ieq $AsarSha256 -or $oldAppInfo -cnotcontains 'DisplayVersion=0.1.0-beta.2') {
-            throw 'The installed previous package does not identify Beta 2.'
+        if ($oldAsar -ieq $AsarSha256 -or $oldAppInfo -cnotcontains "DisplayVersion=$previousVersion") {
+            throw "The installed previous package does not identify $previousVersion."
         }
-        $url = "$Origin/portable-check?pass=beta2"
+        $url = "$Origin/portable-check?pass=previous"
         $bookmarkUrl = "$Origin/portable-bookmark-fixture"
-        $evidence.checks.previousRuntime = Invoke-PortableRuntime $oldPackage $url 'beta2' $Records -PreviousBeta
+        $evidence.checks.previousRuntime = Invoke-PortableRuntime $oldPackage $url 'previous' $Records -PreviousBeta
         $oldData = Join-Path $oldPackage 'Data'
         $statePath = Join-Path $oldData 'quiver-state.json'
         $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-        # Seed harmless known state in the real, closed Beta 2 profile, then
-        # require Beta 2 itself to reopen the tab and preserve the fixture.
+        # Seed harmless known state in the real, closed previous profile, then
+        # require the previous build to reopen the tab and preserve the fixture.
         $state.settings.devServerScan = $false
-        $state.bookmarks = @(@{ url = $bookmarkUrl; title = 'Portable Beta 2 bookmark' })
+        $state.bookmarks = @(@{ url = $bookmarkUrl; title = 'Previous Quiver bookmark' })
         [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json -Depth 30))
-        $evidence.checks.previousProfileReload = Invoke-PortableRuntime $oldPackage $url 'beta2-reopen' $Records -ExpectedProbe 'beta2' -Restore -PreviousBeta
+        $evidence.checks.previousProfileReload = Invoke-PortableRuntime $oldPackage $url 'previous-reopen' $Records -ExpectedProbe 'previous' -Restore -PreviousBeta
         Assert-SeededPortableProfile $oldData $url $bookmarkUrl
 
         $stateBeforeUpgrade = Get-TreeState @((Get-Item -LiteralPath $oldData))
@@ -409,17 +416,17 @@ function Test-UpgradeAndDriveChange([string]$Origin, [string]$Records) {
         $filesBeforeUpgrade = Get-QuiverHostFiles
         $null = Install-Package $artifact $oldPackage $AsarSha256 $ExeSha256
         if ((Get-TreeState @((Get-Item -LiteralPath $oldData))) -cne $stateBeforeUpgrade) {
-            throw 'Upgrading the published Beta 2 package changed files under Data.'
+            throw "Upgrading the published $previousVersion package changed files under Data."
         }
         $evidence.checks.previousBetaUpgradePreservedData = $true
         $packageBefore = Get-PackageOutsideData $oldPackage
-        $evidence.checks.upgradedRuntime = Invoke-PortableRuntime $oldPackage $url 'upgraded' $Records -ExpectedProbe 'beta2' -Restore
+        $evidence.checks.upgradedRuntime = Invoke-PortableRuntime $oldPackage $url 'upgraded' $Records -ExpectedProbe 'previous' -Restore
         Assert-SeededPortableProfile $oldData $url $bookmarkUrl
         if ((Get-PackageOutsideData $oldPackage) -cne $packageBefore -or
             (Get-HostState) -cne $hostBeforeUpgrade -or (Get-QuiverHostFiles) -cne $filesBeforeUpgrade) {
             throw 'Upgrade or the upgraded runtime changed scoped host or package files.'
         }
-        Write-Host 'PASS: upgraded the published Beta 2 PAF in place and restored its seeded profile and browser storage.'
+        Write-Host "PASS: upgraded the published $previousVersion PAF in place and restored its seeded profile and browser storage."
 
         $treeBefore = Get-TreeState @((Get-Item -LiteralPath $oldPackage)) $oldPackage
         Set-Partition -InputObject $partition -NewDriveLetter $newLetter
@@ -437,7 +444,7 @@ function Test-UpgradeAndDriveChange([string]$Origin, [string]$Records) {
             throw 'Changing the drive letter changed the package or Data bytes before launch.'
         }
         $packageBefore = Get-PackageOutsideData $newPackage
-        $runtime = Invoke-PortableRuntime $newPackage $url 'new-drive-letter' $Records -ExpectedProbe 'beta2' -Restore
+        $runtime = Invoke-PortableRuntime $newPackage $url 'new-drive-letter' $Records -ExpectedProbe 'previous' -Restore
         Assert-SeededPortableProfile (Join-Path $newPackage 'Data') $url $bookmarkUrl
         if ([IO.Directory]::Exists($oldRoot) -or (Get-PackageOutsideData $newPackage) -cne $packageBefore -or
             (Get-HostState) -cne $hostBeforeUpgrade -or (Get-QuiverHostFiles) -cne $filesBeforeUpgrade) {
@@ -480,7 +487,7 @@ const server = http.createServer((request, response) => {
   const url = new URL(request.url, 'http://127.0.0.1');
   if (url.pathname === '/portable-check') {
     const pass = url.searchParams.get('pass');
-    if (!['fresh', 'relocated', 'beta2'].includes(pass)) { response.writeHead(400).end(); return; }
+    if (!['fresh', 'relocated', 'previous'].includes(pass)) { response.writeHead(400).end(); return; }
     response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' }).end(`<!doctype html><title>Quiver Portable verification</title>
     ${pass === 'fresh' ? '<a href="/portable-download?name=quiver-default.txt">Quiver Default Download</a><br><a href="/portable-download?name=quiver-custom.txt">Quiver Custom Download</a><br><a href="/portable-download?name=quiver-reopened.txt">Quiver Reopened Download</a>' : ''}
     <script>
