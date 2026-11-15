@@ -1,9 +1,9 @@
 import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, Settings, ShortcutRow, UpdateStatus } from '../shared/types';
 import { readBookmarkExport } from './bookmark-file.js';
-import { currentSection, searchTerms, sectionMatches } from './settings-search.js';
-import { setupArcImport } from './arc-import.js';
+import { setupArcSidebarPreview } from './arc-sidebar-preview.js';
 
-setupArcImport();
+setupArcSidebarPreview();
+import { currentSection, searchTerms, sectionMatches } from './settings-search.js';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let groups: EnvGroup[] = [];

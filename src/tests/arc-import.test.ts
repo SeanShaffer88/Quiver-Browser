@@ -1,129 +1,189 @@
 import assert from 'node:assert/strict';
-import path from 'node:path';
 import test from 'node:test';
-import { ARC_IMPORT_TAB_LIMIT, findArcSidebar, planArcImport, type ExistingSpace } from '../main/arc-import';
-import type { ArcSidebar, ArcSourceNode } from '../main/arc-sidebar';
-import { FOLDER_DEPTH_LIMIT, FOLDER_LIMIT, normalizeFolders } from '../main/tab-tree';
+import { ArcImports, validArcImportUndo, type ArcImportSpace } from '../main/arc-import';
+import { normalizeArcSpace, webSpacePartition } from '../main/space-session';
+import { snapshotSpace } from '../main/session-recovery';
+import type { PersistedState } from '../main/store';
 
-const tab = (url: string, title = url): ArcSourceNode => ({ kind: 'tab', title, host: new URL(url).hostname, url });
-const folder = (title: string, children: ArcSourceNode[], kind: 'folder' | 'split' = 'folder'): ArcSourceNode => ({ kind, title, children });
+function source(): string {
+  const normal = { default: true };
+  const other = { custom: { _0: { directoryBasename: 'Private profile', machineID: 'private-machine' } } };
+  const tab = (url: string, title?: string) => ({ title, data: { tab: { savedURL: url } } });
+  return JSON.stringify({ sidebar: { containers: [{
+    spaces: [
+      'b', { title: 'Work', profile: normal, containerIDs: ['pinned', 'pin', 'unpinned', 'today'] },
+      'a', { title: 'Personal', profile: normal },
+      'c', { title: 'Work', profile: other },
+    ],
+    items: [
+      'pin', { childrenIds: ['folder'] },
+      'folder', { title: 'Projects', data: { list: {} }, childrenIds: ['nested'] },
+      'nested', { title: 'Archive', data: { tabGroup: {} }, childrenIds: ['leaf'] },
+      'leaf', tab('https://pin.test/private?key=secret#anchor', 'A custom name'),
+      'today', { childrenIds: ['ordinary'] },
+      'ordinary', tab('https://today.test/page'),
+      'favorites', { childrenIds: ['favorite'] },
+      'favorite', tab('https://favorite.test/page', 'A favorite'),
+    ],
+    topAppsContainerIDs: [normal, 'favorites'],
+  }] } });
+}
 
-function arc(spaces: Array<[string, ArcSourceNode[]]>, favorites: ArcSourceNode[] = []): ArcSidebar {
+function fixture(state = {
+  version: 1, spaces: [{ id: 'main', name: 'Main', color: '#5b8cff', isolated: false }],
+  activeSpaceId: 'main', tabsBySpace: { main: [{ url: 'https://existing.test/' }] },
+  activeIndexBySpace: { main: 0 }, recentlyClosed: [], bookmarks: [{ url: 'https://bookmark.test/', title: 'Unrelated' }],
+} as unknown as PersistedState) {
+  const runtime = new Map<string, ArcImportSpace>();
+  let acceptSave = true;
+  let stageFailure = false;
+  let requeued = 0;
+  const imports = new ArcImports(state, () => acceptSave, () => { requeued++; }, {
+    stage: (entries) => {
+      if (stageFailure) throw new Error('Cannot create view');
+      for (const entry of entries) runtime.set(entry.space.id, entry);
+      return () => { for (const { space } of entries) runtime.delete(space.id); };
+    },
+    remove: (spaces) => { for (const space of spaces) runtime.delete(space.id); },
+  }, () => 100);
   return {
-    spaces: spaces.map(([title, pinned]) => ({ title, profile: 0, pinned, pinnedTabs: 0, todayTabs: 0 })),
-    profiles: [{ label: 'Default profile', favorites, favoriteTabs: favorites.length }],
-    skipped: 0,
-    limited: false,
+    imports, runtime, state, owner: {}, failedSaves: () => requeued,
+    rejectSave: (reject: boolean) => { acceptSave = !reject; },
+    rejectStage: (reject: boolean) => { stageFailure = reject; },
   };
 }
 
-function ids() {
-  let n = 0;
-  return () => `f${++n}`;
+function review(f: ReturnType<typeof fixture>, raw = source()) {
+  const result = f.imports.preview(f.owner, raw);
+  assert.ok('token' in result);
+  return result;
 }
 
-const main = (urls: string[] = [], extra: Partial<ExistingSpace> = {}): ExistingSpace => ({ id: 'm', name: 'Main', folders: [], urls: new Set(urls), ...extra });
-
-test('maps Spaces, nested folders and pins; Favorites go first into the first Space; splits flatten', () => {
-  const plan = planArcImport(arc([
-    ['Work', [tab('https://a.test/'), folder('Docs', [tab('https://b.test/', 'B'), folder('Deep', [tab('https://c.test/')]), folder('Split view', [tab('https://d.test/')], 'split')])]],
-    ['Home', [tab('https://e.test/')]],
-  ], [tab('https://fav.test/')]), [main()], ids());
-
-  assert.equal(plan.spaces.length, 2);
-  const [work, home] = plan.spaces;
-  assert.equal(work.spaceId, null);
-  assert.equal(work.name, 'Work');
-  assert.deepEqual(work.folders, [
-    { id: 'f1', name: 'Docs', parentId: null, collapsed: false },
-    { id: 'f2', name: 'Deep', parentId: 'f1', collapsed: false },
+test('review is read-only, owner and token bound, and commits ordered grouped lazy Spaces', () => {
+  const f = fixture();
+  const before = JSON.stringify(f.state);
+  const { token, preview } = review(f);
+  assert.ok(token);
+  assert.doesNotMatch(JSON.stringify(preview), /secret|anchor|private-machine|Private profile|https:/);
+  assert.equal(JSON.stringify(f.state), before);
+  assert.equal(f.runtime.size, 0);
+  assert.ok('error' in f.imports.commit({}, token));
+  assert.ok('error' in f.imports.commit(f.owner, 'wrong-token'));
+  assert.deepEqual(f.imports.commit(f.owner, token), { importedSpaces: 3, importedTabs: 4 });
+  assert.ok('error' in f.imports.commit(f.owner, token));
+  assert.equal(f.state.activeSpaceId, 'main');
+  const [main, work, personal, custom] = f.state.spaces;
+  assert.deepEqual(f.state.spaces.map((s) => s.name), ['Main', 'Work', 'Personal', 'Work']);
+  assert.equal(webSpacePartition(work), webSpacePartition(personal));
+  assert.notEqual(webSpacePartition(work), webSpacePartition(custom));
+  assert.notEqual(webSpacePartition(work), webSpacePartition(main));
+  assert.match(webSpacePartition(work), /^persist:[\w-]{1,80}$/);
+  assert.ok(work.folders);
+  assert.deepEqual(work.folders.map(({ name, parentId }) => [name, parentId]), [
+    ['Projects', null], ['Archive', work.folders[0].id],
   ]);
-  assert.deepEqual(work.tabs, [
-    { url: 'https://fav.test/', title: 'https://fav.test/', folderId: null },
-    { url: 'https://a.test/', title: 'https://a.test/', folderId: null },
-    { url: 'https://b.test/', title: 'B', folderId: 'f1' },
-    { url: 'https://c.test/', title: 'https://c.test/', folderId: 'f2' },
-    { url: 'https://d.test/', title: 'https://d.test/', folderId: 'f1' },
-  ]);
-  assert.deepEqual(home.tabs.map((t) => t.url), ['https://e.test/']);
-  assert.deepEqual(plan.counts, { spaces: 2, newSpaces: 2, mergedSpaces: 0, pinned: 5, favorites: 1, folders: 2, duplicates: 0, dropped: 0 });
+  const [favorite, pin, today] = f.state.tabsBySpace[work.id];
+  assert.equal(favorite.folderId, undefined);
+  assert.equal(pin.url, 'https://pin.test/private?key=secret#anchor');
+  assert.equal(pin.customTitle, 'A custom name');
+  assert.equal(pin.folderId, work.folders![1].id);
+  assert.equal(pin.pinned, true);
+  assert.equal(today.pinned, undefined);
+  assert.equal(f.state.tabsBySpace[personal.id].length, 1);
+  assert.equal(f.state.tabsBySpace[custom.id].length, 0);
 });
 
-test('merges Spaces by name, reuses same-named folders and skips URLs the Space already has, so a re-import adds nothing', () => {
-  const docs = { id: 'existing', name: 'Docs', parentId: null, collapsed: true };
-  const sidebar = arc([
-    ['main', [tab('https://known.test/'), folder('docs', [tab('https://new.test/')])]],
-    ['MAIN', [tab('https://new.test/'), tab('https://other.test/')]],
-  ]);
-  const plan = planArcImport(sidebar, [main(['https://known.test/'], { folders: [docs] })], ids());
-  assert.equal(plan.spaces.length, 1);
-  assert.equal(plan.spaces[0].spaceId, 'm');
-  assert.deepEqual(plan.spaces[0].folders, []);
-  assert.deepEqual(plan.spaces[0].tabs, [
-    { url: 'https://new.test/', title: 'https://new.test/', folderId: 'existing' },
-    { url: 'https://other.test/', title: 'https://other.test/', folderId: null },
-  ]);
-  assert.deepEqual(plan.counts, { spaces: 1, newSpaces: 0, mergedSpaces: 1, pinned: 2, favorites: 0, folders: 0, duplicates: 2, dropped: 0 });
-
-  const again = planArcImport(sidebar, [main(['https://known.test/', 'https://new.test/', 'https://other.test/'], { folders: [docs] })], ids());
-  assert.deepEqual(again.spaces, []);
-  assert.equal(again.counts.duplicates, 4);
+test('undo survives the persisted restore/snapshot round trip and preserves unrelated edits', () => {
+  const f = fixture();
+  f.imports.commit(f.owner, review(f).token);
+  const state = JSON.parse(JSON.stringify(f.state)) as PersistedState;
+  state.arcImportUndo = validArcImportUndo(state.arcImportUndo);
+  state.spaces = state.spaces.map(normalizeArcSpace);
+  for (const space of state.spaces.slice(1)) {
+    const entries = state.tabsBySpace[space.id].map((tab, id) => ({ id, ...tab }));
+    state.tabsBySpace[space.id] = snapshotSpace(entries, 0).tabs;
+  }
+  const restarted = fixture(state);
+  const { canUndo, undoId } = restarted.imports.status();
+  assert.equal(canUndo, true);
+  assert.ok(undoId);
+  state.spaces[0].name = 'Changed Main';
+  state.tabsBySpace.main.push({ url: 'https://new.test/' });
+  assert.deepEqual(restarted.imports.undo(undoId), { removedSpaces: 3 });
+  assert.equal(state.spaces[0].name, 'Changed Main');
+  assert.equal(state.tabsBySpace.main.length, 2);
+  assert.equal(state.bookmarks.length, 1);
+  assert.deepEqual(restarted.imports.status(), { canUndo: false });
 });
 
-test('only restorable URLs are imported and names are cleaned like folder names', () => {
-  const plan = planArcImport(arc([
-    ['‮evil\u0000 name', [{ kind: 'tab', title: 'x', host: 'x', url: 'javascript:alert(1)' }, tab('https://ok.test/')]],
-    ['   ', []],
-  ]), [main()], ids());
-  assert.equal(plan.spaces[0].name, 'evil  name');
-  assert.deepEqual(plan.spaces[0].tabs.map((t) => t.url), ['https://ok.test/']);
-  assert.equal(plan.spaces[1].name, 'Arc Space 2');
-  assert.equal(plan.counts.dropped, 1);
+test('failed commits and undo restore candidate state, and edits make undo unavailable', () => {
+  const f = fixture();
+  const before = JSON.stringify(f.state);
+  f.rejectStage(true);
+  assert.ok('error' in f.imports.commit(f.owner, review(f).token));
+  assert.equal(JSON.stringify(f.state), before);
+  f.rejectStage(false);
+  f.rejectSave(true);
+  assert.ok('error' in f.imports.commit(f.owner, review(f).token));
+  assert.equal(JSON.stringify(f.state), before);
+  assert.equal(f.runtime.size, 0);
+  f.rejectSave(false);
+  f.imports.commit(f.owner, review(f).token);
+  const beforeUndo = JSON.stringify(f.state);
+  const { undoId } = f.imports.status();
+  f.rejectSave(true);
+  assert.ok('error' in f.imports.undo(undoId));
+  assert.equal(JSON.stringify(f.state), beforeUndo);
+  assert.equal(f.runtime.size, 3);
+  assert.equal(f.failedSaves(), 3);
+  f.rejectSave(false);
+  assert.ok('error' in f.imports.undo('another-batch'));
+  const imported = f.state.spaces[1].id;
+  f.state.tabsBySpace[imported][0].lastActiveAt = 200;
+  assert.deepEqual(f.imports.status(), { canUndo: false, importedSpaces: 3 });
+  assert.ok('error' in f.imports.undo(undoId));
 });
 
-test('respects folder depth, folder count and tab limits without losing tabs above them', () => {
-  let deep: ArcSourceNode = tab('https://deep.test/');
-  for (let n = 0; n < FOLDER_DEPTH_LIMIT + 3; n++) deep = folder(`L${n}`, [deep]);
-  const many = Array.from({ length: FOLDER_LIMIT + 5 }, (_, n) => folder(`F${n}`, [tab(`https://f${n}.test/`)]));
-  const tabs = Array.from({ length: ARC_IMPORT_TAB_LIMIT + 10 }, (_, n) => tab(`https://t${n}.test/`));
-  const plan = planArcImport(arc([['Deep', [deep]], ['Many', many], ['Tabs', tabs]]), [main()], ids());
-
-  const [deepSpace, manySpace, tabsSpace] = plan.spaces;
-  assert.equal(deepSpace.folders.length, FOLDER_DEPTH_LIMIT);
-  assert.equal(normalizeFolders(deepSpace.folders).length, FOLDER_DEPTH_LIMIT);
-  assert.equal(deepSpace.tabs[0].folderId, deepSpace.folders.at(-1)!.id);
-  assert.equal(manySpace.folders.length, FOLDER_LIMIT);
-  assert.equal(manySpace.tabs.length, FOLDER_LIMIT + 5);
-  assert.equal(manySpace.tabs.at(-1)!.folderId, null);
-  assert.equal(deepSpace.tabs.length + manySpace.tabs.length + tabsSpace.tabs.length, ARC_IMPORT_TAB_LIMIT);
-  assert.equal(plan.counts.dropped, 3 + 5 + (FOLDER_LIMIT + 5 + 1 + ARC_IMPORT_TAB_LIMIT + 10 - ARC_IMPORT_TAB_LIMIT));
+test('separate import batches use fresh groups and latest undo cannot remove an earlier batch', () => {
+  const f = fixture();
+  f.imports.commit(f.owner, review(f).token);
+  const first = f.imports.status().undoId;
+  f.imports.commit(f.owner, review(f).token);
+  const second = f.imports.status().undoId;
+  assert.notEqual(first, second);
+  assert.notEqual(webSpacePartition(f.state.spaces[1]), webSpacePartition(f.state.spaces[4]));
+  assert.ok('error' in f.imports.undo(first));
+  assert.deepEqual(f.imports.undo(second), { removedSpaces: 3 });
+  assert.equal(f.state.spaces.length, 4);
+  assert.equal(f.runtime.size, 3);
 });
 
-test('Favorites without Arc Spaces go to the first Quiver Space', () => {
-  const plan = planArcImport(arc([], [tab('https://fav.test/')]), [main()], ids());
-  assert.equal(plan.spaces[0].spaceId, 'm');
-  assert.equal(plan.counts.favorites, 1);
+test('opening a previously empty imported Space prevents undo from removing new tabs', () => {
+  const f = fixture();
+  f.imports.commit(f.owner, review(f).token);
+  const { undoId } = f.imports.status();
+  const empty = f.state.spaces[3].id;
+  assert.equal(f.state.tabsBySpace[empty].length, 0);
+  f.state.activeSpaceId = empty;
+  assert.ok('error' in f.imports.undo(undoId));
+  f.state.tabsBySpace[empty].push({ url: 'quiver://app/newtab.html', lastActiveAt: 200 });
+  f.state.activeSpaceId = 'main';
+  assert.equal(f.imports.status().canUndo, false);
+  assert.ok('error' in f.imports.undo(undoId));
 });
 
-test('finds the newest StorableSidebar.json among Arc packages', () => {
-  const root = path.resolve('/local');
-  const files = new Map([
-    [path.join(root, 'Packages', 'TheBrowserCompany.Arc_old', 'LocalCache', 'Local', 'Arc', 'StorableSidebar.json'), 1],
-    [path.join(root, 'Packages', 'TheBrowserCompany.Arc_ttt', 'LocalCache', 'Local', 'Arc', 'StorableSidebar.json'), 5],
-    [path.join(root, 'Packages', 'Other.App_x', 'LocalCache', 'Local', 'Arc', 'StorableSidebar.json'), 9],
-  ]);
-  const fakeFs = {
-    readdirSync: (dir: string) => {
-      assert.equal(dir, path.join(root, 'Packages'));
-      return ['Other.App_x', 'TheBrowserCompany.Arc_old', 'TheBrowserCompany.Arc_ttt', 'TheBrowserCompany.Arc_none'];
-    },
-    statSync: (file: string) => {
-      const mtimeMs = files.get(file);
-      if (mtimeMs === undefined) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
-      return { isFile: () => true, mtimeMs };
-    },
-  } as unknown as Parameters<typeof findArcSidebar>[1];
-  assert.equal(findArcSidebar(root, fakeFs), path.join(root, 'Packages', 'TheBrowserCompany.Arc_ttt', 'LocalCache', 'Local', 'Arc', 'StorableSidebar.json'));
-  assert.equal(findArcSidebar('', fakeFs), undefined);
-  assert.equal(findArcSidebar('relative', fakeFs), undefined);
+test('keeps pins inside the deepest supported folder and reports flattened source folders', () => {
+  const f = fixture();
+  const items: unknown[] = ['root', { childrenIds: ['folder-0'] }];
+  for (let index = 0; index < 9; index++) {
+    items.push(`folder-${index}`, { title: `Folder ${index}`, data: { list: {} }, childrenIds: [index < 8 ? `folder-${index + 1}` : 'tab'] });
+  }
+  items.push('tab', { data: { tab: { savedURL: 'https://nested.test/' } } });
+  const raw = JSON.stringify({ sidebar: { containers: [{ spaces: ['a', { containerIDs: ['pinned', 'root'] }], items }] } });
+  const { token, preview } = review(f, raw);
+  assert.equal(preview.flattenedFolders, 1);
+  assert.deepEqual(f.imports.commit(f.owner, token), { importedSpaces: 1, importedTabs: 1 });
+  const [, space] = f.state.spaces;
+  assert.equal(space.folders?.length, 8);
+  assert.equal(f.state.tabsBySpace[space.id][0].folderId, space.folders?.[7].id);
 });

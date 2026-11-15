@@ -1,4 +1,4 @@
-type SessionEntry = { url: string; title?: string; pinned?: boolean; folderId?: string | null; pinnedUrl?: string | null; lastActiveAt?: number };
+type SessionEntry = { url: string; title?: string; customTitle?: string; pinned?: boolean; folderId?: string | null; pinnedUrl?: string | null; lastActiveAt?: number };
 type LiveEntry = SessionEntry & { id: number };
 export type ClosedTab = LiveEntry & { title: string; spaceId: string; index: number; placeholderId?: number };
 export type PersistedClosedTab = Omit<ClosedTab, 'id' | 'placeholderId'> & { replacePlaceholder?: true };
@@ -41,10 +41,12 @@ export function restoreSelection<T extends SessionEntry>(entries: readonly T[], 
 export function snapshotSpace(entries: readonly LiveEntry[], activeId: number | undefined) {
   const selected = entries.findIndex((entry) => entry.id === activeId);
   const { entries: available, activeIndex } = restoreSelection(entries, selected);
-  const tabs = available.map(({ url, title, pinned, folderId, pinnedUrl, lastActiveAt }) => {
+  const tabs = available.map(({ url, title, customTitle, pinned, folderId, pinnedUrl, lastActiveAt }) => {
     const label = normalizeTabTitle(title, url);
+    const alias = normalizeTabTitle(customTitle, url);
     return {
-      url, ...(label ? { title: label } : {}), ...(pinned ? { pinned: true as const } : {}), ...(pinned && folderId ? { folderId } : {}),
+      url, ...(label ? { title: label } : {}), ...(alias ? { customTitle: alias } : {}),
+      ...(pinned ? { pinned: true as const } : {}), ...(pinned && folderId ? { folderId } : {}),
       ...(pinned && pinnedUrl && pinnedUrl !== url && restorableUrl(pinnedUrl) ? { pinnedUrl } : {}),
       ...(typeof lastActiveAt === 'number' && Number.isFinite(lastActiveAt) ? { lastActiveAt } : {}),
     };
@@ -77,14 +79,15 @@ export function normalizeRecentlyClosed(
   const marked = new Set<string>();
   for (const value of input.slice(0, CLOSED_TAB_LIMIT)) {
     if (!value || typeof value !== 'object') continue;
-    const { url, title, spaceId, index, replacePlaceholder } = value as Partial<PersistedClosedTab>;
+    const { url, title, customTitle, spaceId, index, replacePlaceholder } = value as Partial<PersistedClosedTab>;
     if (typeof spaceId !== 'string' || !spaceIds.has(spaceId) || typeof title !== 'string' ||
         typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0 ||
         typeof url !== 'string' || url.length > CLOSED_URL_LIMIT || !restorableUrl(url) || isNewTab(url)) continue;
     const { username, password } = new URL(url);
     if (username || password) continue;
     const label = title.slice(0, CLOSED_TITLE_LIMIT).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim() || 'tab';
-    const entry: PersistedClosedTab = { url, title: label, spaceId, index };
+    const alias = normalizeTabTitle(customTitle, url);
+    const entry: PersistedClosedTab = { url, title: label, ...(alias && { customTitle: alias }), spaceId, index };
     if (replacePlaceholder === true && soleNewTabSpaces?.has(spaceId) && !marked.has(spaceId)) {
       entry.replacePlaceholder = true;
       marked.add(spaceId);
@@ -99,8 +102,8 @@ export function snapshotRecentlyClosed(
   spaceIds: ReadonlySet<string>,
   soleNewTabs: ReadonlyMap<string, number>,
 ): PersistedClosedTab[] {
-  const candidate = entries.map(({ url, title, spaceId, index, placeholderId }) => ({
-    url, title, spaceId, index,
+  const candidate = entries.map(({ url, title, customTitle, spaceId, index, placeholderId }) => ({
+    url, title, customTitle, spaceId, index,
     replacePlaceholder: placeholderId !== undefined && soleNewTabs.get(spaceId) === placeholderId,
   }));
   return normalizeRecentlyClosed(candidate, spaceIds, new Set(soleNewTabs.keys()));

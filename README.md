@@ -8,7 +8,7 @@ Quiver keeps settings, tabs and Boosts on this device and has no account or tele
 
 Electron supplies Chromium, native-composited tab views, persistent cookie partitions, and phone emulation through the DevTools protocol. TypeScript runs the desktop shell and its local developer tools. This keeps the Windows build on Node.js and npm. The package includes the Electron runtime.
 
-Every view enables context isolation and sandboxing and disables Node.js integration. Quiver pages use a restrictive Content Security Policy. Each privileged command is available only to the top-level Quiver page that needs it. Regular tabs and Phone Preview share the same navigation and site permission rules. Quiver denies access to camera, microphone, location, notifications, and external app protocols.
+Every view enables context isolation and sandboxing and disables Node.js integration. Quiver pages use a restrictive Content Security Policy. Each privileged command is available only to the top-level Quiver page that needs it. Camera, microphone, and screen sharing require permission in regular tabs and are unavailable in Phone Preview. Quiver denies location, notifications, and external app protocols.
 
 ## Prerequisites (build)
 
@@ -21,7 +21,7 @@ Every view enables context isolation and sandboxing and disables Node.js integra
 | Visual Studio Build Tools | **not required** | No native modules are used |
 | WiX Toolset | only for `build:msi` | electron-builder downloads it automatically on first use |
 
-Pinned dev dependencies: `electron 45.3.1`, `electron-builder 26.18.0`, `typescript 5.9.3` (also a runtime dependency, used to transpile `.ts` Boosts), `@types/node 24.19.2`.
+Pinned dev dependencies: `electron 45.3.2`, `electron-builder 26.18.0`, `typescript 5.9.3` (also a runtime dependency, used to transpile `.ts` Boosts), `@types/node 24.19.2`.
 
 ## Build and run
 
@@ -54,7 +54,7 @@ Start the PortableApps edition with `QuiverPortable.exe`. It keeps the browser p
 
 In **Settings → Bookmarks**, choose a local profile from Chrome, Edge, Brave, or Vivaldi and select **Review import**. **Choose HTML file** accepts a bookmark export from Firefox or another browser. Setup opens the same importer when you select its bookmark option. The review shows a sample and totals for new, duplicate, unsupported, and excess entries before you confirm. **Undo this import** removes the latest batch, even after restart. Quiver stores HTTP and HTTPS bookmarks locally and opens pages only when you select a bookmark.
 
-In **Settings → Import from Arc**, select **Review Arc sidebar on this PC** (shown when Quiver finds Arc for Windows' `StorableSidebar.json` under `%LOCALAPPDATA%\Packages\TheBrowserCompany.Arc_*`) or **Choose Arc sidebar file…**. The review lists Spaces, nested pinned entries and Favorites, and how many Spaces, pinned tabs and folders the import adds. **Import** turns Arc Spaces into Quiver Spaces (shared sign-in), pinned tabs and folders into pinned tabs and folders, and Favorites into pinned tabs at the top of the first Space. Spaces with the same name merge, tabs whose address that Space already has are skipped, and imported tabs load only when opened. Up to 500 tabs are imported; folders follow Quiver's limits (200 per Space, 8 levels). **Undo Arc import** removes what the import added until Quiver restarts. On the first launch, if Arc's sidebar is found, the sidebar offers the import once; dismiss it and it does not return. Arc's file is only read.
+In **Settings → Import from Arc**, choose a copy of Arc’s `StorableSidebar.json`. Review the Spaces, pinned folders, Favorites by profile, and counts of recognized Today tabs, then select **Import Spaces**. Quiver creates new Spaces, keeps custom tab titles, pins Favorites in matching Spaces, and adds Today tabs as regular tabs. Nested entries beyond Quiver's folder limits are moved to the nearest available folder or to the top level. Spaces from the same source profile share a fresh local sign-in. Imported Spaces stay on this device when folder sync is enabled. Custom profiles are matched by directory and device identity when supplied. Quiver leaves the Arc file intact. Imported links load when selected. **Undo last Arc import** removes the latest imported Spaces until you open or change them.
 
 Local packages are unsigned unless you configure code signing. Windows SmartScreen may show a warning.
 
@@ -157,7 +157,7 @@ The sidebar lists IPv4 and IPv6 HTTP servers reachable over loopback. Quiver use
 
 ### Meetings
 
-Type `meet` in the command bar to start a Google Meet or a Jitsi room, or `meet <link>`, a Meet code (`abc-defg-hij`) or a Zoom meeting ID to join. Zoom links open in Zoom's web client, so no app is needed. When a site asks for your camera, microphone or screen, Quiver asks in the toolbar: **Allow this time** (until the tab leaves the page), **Always allow** or **Block** for that site. Screen sharing then shows a menu of screens and windows to share. Tabs using the camera, microphone or screen show a red dot in the sidebar. Saved choices are listed in **Settings → Camera, microphone and screen sharing**.
+Type `meet` in the command bar to start a Google Meet or a Jitsi room, or `meet <link>`, a Meet code (`abc-defg-hij`) or a Zoom meeting ID to join. Zoom links open in Zoom's web client. When a site asks for your camera, microphone or screen, choose **Allow this time** (until the tab leaves the page), **Always allow**, or **Block** in the toolbar. Screen sharing then shows a menu of screens and windows to share. An information icon in the sidebar marks a tab whose current page received permission. **Settings → Camera, microphone and screen sharing** lists saved choices. **Forget** clears the site's saved decision and page grants so the next request prompts again. End an active session from the web page or close its tab.
 
 Only secure pages (`https`, or `http` on localhost) in a tab's main frame can ask. Known meeting sites report the camera and microphone as available so their join screens work; other sites read as denied until they ask and you agree.
 ### Sync
@@ -227,12 +227,12 @@ Quiver currently covers these Flecha workflows, plus split view and Peek (below)
 
 ### Split view and Peek
 
-- **Split view**: two tabs of the same Space side by side. Right-click a tab → *Open in split view* (pairs it with the active tab), type `split …` in the command bar (*Split view with …*), or press `Ctrl+Shift+\` to split the active tab with the next tab (a new tab when there is none). `Ctrl+Shift+-` or *Exit split view* ends it. Drag the divider (or focus it and use the arrow keys) to resize between 20% and 80%; double-click resets. The position is remembered per pair until Quiver closes. Clicking into a pane makes it the active tab, so the address bar, find bar, zoom and phone preview follow it. Both tabs are marked in the sidebar; closing either ends the split.
+- **Split view**: two tabs of the same Space side by side. Right-click a tab → *Open in split view* (pairs it with the active tab), type `split …` in the command bar (*Split view with …*), or press `Ctrl+Shift+=` to split the active tab with the next tab (a new tab when there is none). `Ctrl+Shift+-` or *Exit split view* ends it. Drag the divider (or focus it and use the arrow keys) to resize between 20% and 80%; double-click resets. The position is remembered per pair until Quiver closes. Clicking into a pane makes it the active tab, so the address bar, find bar, zoom and phone preview follow it. Both tabs are marked in the sidebar; closing either ends the split. `Ctrl+Shift+=` replaces the Shift variant of zoom in: `Ctrl+=` and `Ctrl+Numpad+` still zoom.
 - **Peek**: a link a pinned tab opens in a new tab or window (`target=_blank`, `window.open`) shows in a floating preview over the page, in the same storage partition and under the same navigation and site-permission rules. *Open as tab* keeps the page as a temporary tab, with its history. *Close*, `Esc`, `Ctrl+W` or a click on the dimmed page closes it. Turn it off in Settings → Tabs → *Open links from pinned tabs in Peek*.
 
 | # | Flecha feature | Quiver (Windows) | Status |
 |---|---|---|---|
-| 1 | Chromium rendering | Electron 45.3.1 (Chromium) | Included |
+| 1 | Chromium rendering | Electron 45.3.2 (Chromium) | Included |
 | 2 | Vertical sidebar | Collapsible sidebar, tab list, favicons, close, middle-click close, drag and keyboard reorder | Included |
 | 2 | Pinned tabs and folders | Pin, nested folders, collapse, drag between pinned and temporary, saved per Space | Included |
 | 2 | Spaces | Create / rename / delete, per-Space partition (cookies, storage), private Spaces | Included |

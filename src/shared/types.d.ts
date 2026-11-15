@@ -6,6 +6,10 @@ export interface Space {
   color: string;
   /** true = own cookie jar / storage partition; false = shared default partition */
   isolated: boolean;
+  /** Spaces in one imported Arc profile share a fresh, local storage partition. */
+  sessionGroupId?: string;
+  /** Origin of this Space. Arc imports are local to this installation. */
+  arcImportId?: string;
   /** A private Space: in-memory storage, no history, never saved or synced. Gone when closed or when Quiver quits. */
   private?: true;
   /** Pinned-tab folders, nested by parentId. */
@@ -133,8 +137,8 @@ export interface TabInfo {
   spaceId: string;
   pinned: boolean;
   folderId: string | null;
-  /** The page was given camera, microphone or screen access since it loaded. */
-  live: boolean;
+  /** An unrevoked camera, microphone or screen-sharing permission was granted on this page. */
+  mediaPermissionGranted: boolean;
   /** For a pinned tab, the page it returns to when closed. */
   pinnedUrl: string | null;
   url: string;
@@ -201,8 +205,6 @@ export interface RecoveryNotice {
 export interface ShellState {
   recentlyClosed?: { id: number; spaceId: string; title: string };
   recoveryNotice?: RecoveryNotice;
-  /** First launch found an Arc sidebar; the sidebar offers to import it until the person acts on it. */
-  arcImportOffer?: boolean;
   spaces: Space[];
   activeSpaceId: string;
   tabs: TabInfo[];
@@ -363,59 +365,3 @@ export interface DownloadInfo {
 }
 
 export type NativeKind = 'ftp' | 'hls' | 'dash' | 'metalink' | 'webdav';
-
-/** An Arc sidebar entry as Settings previews it: titles and hosts, never full URLs. */
-export type ArcNode =
-  | { kind: 'tab'; title: string; host: string }
-  | { kind: 'folder' | 'split'; title: string; children: ArcNode[] };
-
-export interface ArcSpace {
-  title: string;
-  profile: number;
-  pinned: ArcNode[];
-  pinnedTabs: number;
-  todayTabs: number;
-}
-
-export interface ArcProfile {
-  label: string;
-  favorites: ArcNode[];
-  favoriteTabs: number;
-}
-
-export interface ArcSidebarPreview {
-  spaces: ArcSpace[];
-  profiles: ArcProfile[];
-  skipped: number;
-  limited: boolean;
-}
-
-/** What importing a reviewed Arc sidebar would add to Quiver right now. */
-export interface ArcImportCounts {
-  /** Quiver Spaces that receive tabs or folders (new and merged). */
-  spaces: number;
-  newSpaces: number;
-  mergedSpaces: number;
-  pinned: number;
-  favorites: number;
-  folders: number;
-  /** Tabs whose URL that Space already has. */
-  duplicates: number;
-  /** Entries left out by Quiver's limits (folder count, depth, tab count) or because the URL cannot be restored. */
-  dropped: number;
-}
-
-export interface ArcReview {
-  id: number;
-  source: string;
-  preview: ArcSidebarPreview;
-  counts: ArcImportCounts;
-}
-
-export interface ArcImportStatus {
-  /** An Arc sidebar exists at the usual Windows location. */
-  detected: boolean;
-  /** The first-launch offer is still waiting for an answer. */
-  offer: boolean;
-  undo?: { id: number; tabs: number; spaces: number; folders: number };
-}

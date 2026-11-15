@@ -4,14 +4,19 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+- Deny camera, microphone, and screen sharing in Phone Preview.
+- Clear a tab's media permission prompt and page indicator when its renderer stops.
+- Resume paused and interrupted HTTP downloads from saved progress after reopening Quiver.
+- Import Arc Spaces, pins, custom tab titles, and folders from `StorableSidebar.json`. The import includes a preview and undo. Spaces from the same Arc profile share a fresh Quiver session.
+- Update Electron to 45.3.2, including a fix for cookies set shortly before exit failing to persist.
 - HLS downloads fetch a separate audio playlist (`#EXT-X-MEDIA`, preferring `DEFAULT=YES`) and combine fragmented-MP4 video and audio into one `.mp4`, so the best variant is no longer passed over for a lower one with audio inside.
 - Local servers in the sidebar are named after their project folder (`package.json` name, else the folder name), found from the listening process's command line.
-- Split view: two tabs of a Space side by side (tab menu, `split …` in the command bar, `Ctrl+Shift+\` / `Ctrl+Shift+-`), with a draggable divider (20–80%, remembered per pair), the active pane followed by the address bar, find, zoom and phone preview, and both tabs marked in the sidebar.
+- Split view: two tabs of a Space side by side (tab menu, `split …` in the command bar, `Ctrl+Shift+=` / `Ctrl+Shift+-`), with a draggable divider (20–80%, remembered per pair), the active pane followed by the address bar, find, zoom and phone preview, and both tabs marked in the sidebar.
 - Peek: links pinned tabs open in a new tab or window show in a floating preview with *Open as tab* and *Close* (Esc). Setting in Settings → Tabs, on by default.
+- `Ctrl+Shift+=` now starts split view instead of zooming in; `Ctrl+=` still zooms.
 - Light and dark themes: **Settings → Appearance** chooses System (follows Windows, the default), Light or Dark for every Quiver page, native menus and dialogs, and websites' `prefers-color-scheme`. Both palettes meet WCAG AA for text; high-contrast mode is unchanged.
 - Settings has a section list (beside the page on wide windows, above it on narrow ones) that highlights the section you are reading, and a search box that filters sections.
 - Collapsed sidebar opens over the page while you hover it and closes when the pointer leaves; the page does not resize. `Ctrl+B` still pins it open or closed.
-- Import from Arc: Settings finds or opens Arc's `StorableSidebar.json`, reviews it, and imports Spaces, pinned tabs, nested folders and Favorites as lazy pinned tabs, merging same-named Spaces and skipping tabs already there, with undo. A first launch with Arc installed offers it once in the sidebar.
 - Shortcuts can be changed in Settings → Shortcuts (record a new combination, remove it, or reset to default), with conflict checks; tooltips and the command bar's action list follow your keys.
 - Web pages get the first chance at shortcuts Quiver doesn't reserve, as in Chrome: `Ctrl+B` is bold and `Ctrl+F` the editor's own find in Google Docs and GitHub editors. Tab and window keys (`Ctrl+T`, `Ctrl+W`, `Ctrl+L`, `Ctrl+Tab`, …) stay with Quiver.
 - Opt-in update notice (Settings → Updates, off by default): checks GitHub's latest release at most once a day and shows "Quiver X is available" with a link to the release page. Nothing is downloaded or installed.
@@ -20,7 +25,7 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 - WebDAV downloads (`davs://…`): files or whole folders, passwords only over HTTPS, listings confined to the folder.
 - DASH downloads combine fragmented-MP4 video and audio into one `.mp4` with Quiver's own muxer.
 - Native downloaders: FTP/FTPS (resumable, encryption first, no FTP bounce), HLS with AES-128, on-demand MPEG-DASH, and Metalink with mirror failover and checksum checks; `download <address>` in the command bar; Windows shares open in File Explorer.
-- Meetings: camera, microphone and screen-share prompts (allow once, always or block per site), a screen/window picker, a live indicator on tabs, `meet` commands to start or join Meet, Zoom (web client), Teams, Webex, Jitsi and Whereby, and saved choices in Settings.
+- Meetings: camera, microphone and screen-share prompts (allow once, always or block per site), a screen/window picker, a tab-level media permission indicator, `meet` commands to start or join Meet, Zoom (web client), Teams, Webex, Jitsi and Whereby, and saved choices in Settings. Forgetting or blocking a site clears its page grants.
 - Auto-archive: temporary tabs unused for 12 hours (configurable, or never) move to a searchable archive (`archive` in the command bar). Pinned, current and audible tabs stay.
 - Closing a pinned tab returns it to its pinned page instead of removing it; the tab menu can update the pinned page or remove the tab.
 - Folder sync: settings, bookmarks, Spaces with folders and pinned tabs, research topics and (opt-in) Boosts sync through a folder you already sync, one file per device, newest change wins, first sync merges.

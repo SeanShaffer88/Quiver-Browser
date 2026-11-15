@@ -15,6 +15,8 @@ import { normalizeTheme } from '../shared/theme';
 import { normalizeShortcutOverrides } from './shortcuts';
 import { normalizeUpdateState, type UpdateState } from './updates';
 import { normalizeFolders } from './tab-tree';
+import { validArcImportUndo, type ArcImportUndo } from './arc-import';
+import { normalizeArcSpace } from './space-session';
 import { normalizeTopics, type Topic } from './research';
 import { persistableState } from './private-spaces';
 import { hasSavedNewTabPlaceholder, normalizeRecentlyClosed, type PersistedClosedTab } from './session-recovery';
@@ -22,6 +24,7 @@ import { hasSavedNewTabPlaceholder, normalizeRecentlyClosed, type PersistedClose
 export interface PersistedTab {
   url: string;
   title?: string;
+  customTitle?: string;
   pinned?: true;
   folderId?: string;
   pinnedUrl?: string;
@@ -39,14 +42,13 @@ export interface PersistedState {
   settings: Settings;
   bookmarks: Bookmark[];
   bookmarkUndo?: BookmarkUndo;
+  arcImportUndo?: ArcImportUndo;
   sessionOpen?: boolean;
   downloads?: unknown[];
   archive?: ArchivedTab[];
   topics?: Topic[];
   sync?: SyncState;
   activeTopicBySpace?: Record<string, string>;
-  /** The first-launch Arc import offer: shown while pending, never again once dismissed or used. */
-  arcImportOffer?: 'pending' | 'dismissed';
   /** Opt-in release check bookkeeping (see updates.ts). */
   updates?: UpdateState;
   bounds?: { x?: number; y?: number; width: number; height: number; maximized: boolean };
@@ -114,8 +116,6 @@ const WINDOWS_RENAME_BACKOFFS_MS = [75, 150, 300] as const;
 export class Store {
   readonly file: string;
   state: PersistedState;
-  /** No state file existed when Quiver started: this is the first launch on this profile. */
-  firstRun = false;
   private timer: NodeJS.Timeout | null = null;
 
   constructor(file = path.join(app.getPath('userData'), 'quiver-state.json')) {
@@ -148,6 +148,7 @@ export class Store {
           checkForUpdates: raw.settings?.checkForUpdates === true,
         },
       } as PersistedState;
+      state.spaces = state.spaces.map((space) => ({ ...normalizeArcSpace(space), folders: normalizeFolders(space.folders) }));
       // Private Spaces are never written, but a hand-edited file must not bring one back as a regular Space.
       state.spaces = state.spaces.filter((space) => !space.private).map((space) => ({ ...space, folders: normalizeFolders(space.folders) }));
       if (!state.spaces.length) throw new Error('bad shape');
@@ -159,7 +160,7 @@ export class Store {
       state.sync = normalizeSyncState(raw.sync, os.hostname());
       state.archive = normalizeArchive(raw.archive, new Set(state.spaces.map(({ id }) => id)));
       state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);
-      if (state.arcImportOffer !== 'pending' && state.arcImportOffer !== 'dismissed') delete state.arcImportOffer;
+      state.arcImportUndo = validArcImportUndo(raw.arcImportUndo);
       const spaceIds = new Set(state.spaces.map(({ id }) => id));
       const soleNewTabSpaces = new Set([...spaceIds].filter((id) => hasSavedNewTabPlaceholder(state.tabsBySpace?.[id])));
       state.recentlyClosed = normalizeRecentlyClosed(raw.recentlyClosed, spaceIds, soleNewTabSpaces);
@@ -167,8 +168,7 @@ export class Store {
       return state;
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
-      if (e.code === 'ENOENT') this.firstRun = true;
-      else {
+      if (e.code !== 'ENOENT') {
         // Quarantine unparseable data instead of silently discarding it.
         try {
           fs.renameSync(this.file, `${this.file}.corrupt-${Date.now()}`);

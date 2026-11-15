@@ -80,6 +80,11 @@ function renderUpdateNotice(s: ShellState): HTMLElement[] {
 
 const call = (ch: string, ...a: unknown[]) => quiver.invoke(ch, ...a).catch((e: Error) => console.error(ch, e.message));
 
+function signInLabel(space: Space): string {
+  if (space.sessionGroupId) return 'Shared sign-in within imported profile';
+  return space.isolated ? 'Separate sign-in' : 'Shared sign-in';
+}
+
 function renderSpaces(s: ShellState): HTMLElement {
   const wrap = h('div', { class: 'spaces', role: 'tablist', 'aria-label': 'Spaces' });
   for (const sp of s.spaces) {
@@ -111,10 +116,10 @@ function renderSpaces(s: ShellState): HTMLElement {
         role: 'tab',
         'aria-selected': String(sp.id === s.activeSpaceId),
         dataset: { focusKey: sp.id },
-        'aria-label': sp.private ? sp.name + ', private Space' : sp.isolated ? sp.name + ', separate sign-in' : sp.name + ', shared sign-in',
+        'aria-label': sp.private ? sp.name + ', private Space' : sp.name + ', ' + signInLabel(sp).toLowerCase(),
         title: sp.private
           ? `${sp.name} — private: nothing is saved, synced or kept in history. Closing it or quitting Quiver discards everything.\nRight-click: close`
-          : `${sp.name}${sp.isolated ? ' — separate cookies & storage' : ' — shared cookies'}\nRight-click: rename or delete · Double-click: rename`,
+          : `${sp.name} — ${signInLabel(sp)}\nRight-click: rename or delete · Double-click: rename`,
         onClick: () => call('space:activate', sp.id),
         onDblclick: () => {
           renamingSpace = sp.id;
@@ -418,11 +423,14 @@ function renderFolder(row: Extract<SidebarRow, { kind: 'folder' }>, index: numbe
 }
 
 function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active: boolean, index: number, m: RowMeta): HTMLElement {
+  const permissionStatus = 'Camera, microphone or screen sharing permitted on this page';
   const fav = t.favicon ? h('img', { class: 'fav', src: t.favicon, alt: '' }) : h('span', { class: 'fav' });
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
+  if (t.mediaPermissionGranted) {
+    kids.push(h('span', { class: 'media-permission', title: permissionStatus, 'aria-hidden': 'true' }, 'i'));
+  }
   if (t.split) kids.push(h('span', { class: 'split-mark', title: `In split view (${t.split} pane)`, 'aria-hidden': 'true' }, t.split === 'left' ? '◧' : '◨'));
-  if (t.live) kids.push(h('span', { class: 'live', title: 'Using camera, microphone or screen sharing', 'aria-label': 'live' }, '●'));
   if (t.local && t.errors > 0) {
     kids.push(h('span', {
       class: 'err', title: `${t.errors} console error(s) since last navigation. Click to open the console`,
@@ -433,12 +441,13 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
   const select = h('button', {
     class: 'tab-select',
     role: 'treeitem',
-    'aria-label': t.title + (t.pinned ? ', pinned' : '') + (t.split ? `, in split view, ${t.split} pane` : '') + (t.live ? ', using camera or microphone' : ''),
+    'aria-label': t.title + (t.pinned ? ', pinned' : '') + (t.split ? `, in split view, ${t.split} pane` : '') + (t.mediaPermissionGranted ? ', ' + permissionStatus : ''),
     'aria-selected': String(active),
     'aria-level': String(m.level), 'aria-setsize': String(m.setsize), 'aria-posinset': String(m.posinset),
     dataset: { focusKey: 'tab-' + t.id },
     onKeydown: (e: KeyboardEvent) => moveRowFocus(e, index),
-    title: t.title + '\n' + t.url + '\nDrag or press Ctrl+Shift+PageUp/PageDown to move · right-click to pin or file in a folder',
+    title: t.title + '\n' + t.url + (t.mediaPermissionGranted ? '\n' + permissionStatus : '') +
+      '\nDrag or press Ctrl+Shift+PageUp/PageDown to move · right-click to pin or file in a folder',
     onClick: () => call('tab:activate', t.id),
   }, ...kids);
   const close = h('button', {
@@ -497,29 +506,10 @@ function renderRecovery(s: ShellState): HTMLElement[] {
       }, 'ⓘ'),
     ));
   }
-  if (s.arcImportOffer) {
-    cards.push(h('div', { class: 'recovery-card arc-offer' },
-      h('p', { class: 'recovery-copy' }, 'Bring your Arc Spaces, pins and folders into Quiver.'),
-      h('button', {
-        class: 'btn',
-        'aria-label': 'Review Arc import',
-        title: 'Review your Arc sidebar in Settings before importing it',
-        dataset: { focusKey: 'arc-offer-open' },
-        onClick: () => call('arc:offer-open'),
-      }, h('span', { class: 'recovery-expanded' }, 'Review import'), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, 'A')),
-      h('button', {
-        class: 'icon-btn recovery-expanded',
-        'aria-label': 'Dismiss Arc import',
-        title: 'Not now. Import from Arc stays available in Settings.',
-        dataset: { focusKey: 'arc-offer-dismiss' },
-        onClick: () => call('arc:offer-dismiss'),
-      }, '×'),
-    ));
-  }
   const closed = s.recentlyClosed;
   const original = closed && s.spaces.find(({ id }) => id === closed.spaceId);
   if (closed && original) {
-    const signIn = original.isolated ? 'Separate sign-in' : 'Shared sign-in';
+    const signIn = signInLabel(original);
     const description = 'Reopen ' + closed.title + ' in ' + original.name;
     cards.push(h('div', { class: 'recovery-card recovery-closed' },
       h('p', { class: 'recovery-copy', title: closed.title }, 'Closed ' + closed.title),
@@ -558,7 +548,7 @@ function sidebarKey(s: ShellState): string {
   return JSON.stringify([
     s.tabs.filter((t) => t.spaceId === s.activeSpaceId),
     devServers,
-    rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.recentlyClosed, rest.recoveryNotice, rest.arcImportOffer, rest.localServerStatus,
+    rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.recentlyClosed, rest.recoveryNotice, rest.localServerStatus,
     rest.settings.sidebarCollapsed, rest.settings.devServerScan, rest.keys, rest.update, addingSpace, renamingSpace, renamingFolder,
   ]);
 }
@@ -598,10 +588,11 @@ function renderSidebar(s: ShellState): void {
     h('span', { class: 'recovery-compact' }, 'Private'),
   ) : h('p', {
     class: 'space-isolation',
-    title: active.name + (active.isolated ? ' has separate cookies and sign-ins' : ' shares cookies and sign-ins with other shared Spaces'),
+    title: active.name + (active.sessionGroupId ? ' shares cookies and sign-ins within its imported profile'
+      : active.isolated ? ' has separate cookies and sign-ins' : ' shares cookies and sign-ins with other shared Spaces'),
   },
-    h('span', { class: 'recovery-expanded' }, active.isolated ? 'Separate sign-in' : 'Shared sign-in'),
-    h('span', { class: 'recovery-compact' }, active.isolated ? 'Separate' : 'Shared'),
+    h('span', { class: 'recovery-expanded' }, signInLabel(active)),
+    h('span', { class: 'recovery-compact' }, active.sessionGroupId ? 'Profile' : active.isolated ? 'Separate' : 'Shared'),
   ));
   sidebar.replaceChildren(brand, renderSpaces(s), ...(isolation ? [isolation] : []),
     ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderUpdateNotice(s), ...renderRecovery(s),

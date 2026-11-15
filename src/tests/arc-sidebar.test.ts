@@ -1,20 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ARC_SIDEBAR_MAX_BYTES, parseArcSidebar, previewOf } from '../main/arc-sidebar';
+import { ARC_SIDEBAR_MAX_BYTES, parseArcSidebar, parseArcSidebarImport, projectArcSidebarPreview } from '../renderer/arc-sidebar.js';
 
 function sidebar(spaces: unknown[], items: unknown[], topAppsContainerIDs: unknown[] = []): string {
   return JSON.stringify({ sidebar: { containers: [{ global: {} }, { spaces, items, topAppsContainerIDs }] } });
 }
 
-function parsed(text: string) {
+function review(text: string) {
   const result = parseArcSidebar(text);
   if (typeof result === 'string') assert.fail(result);
   return result;
-}
-
-/** The host-only preview Settings receives. */
-function review(text: string) {
-  return previewOf(parsed(text));
 }
 
 test('joins spaces by their ordered roots, preserves nested pinned items, and counts Today panes', () => {
@@ -115,11 +110,29 @@ test('distinguishes invalid, unrecognized, oversized, and empty sidebars', () =>
   assert.deepEqual(review(sidebar([], [])), { spaces: [], profiles: [], skipped: 0, limited: false });
 });
 
-test('keeps the full URL for import while the Settings preview carries hosts only', () => {
-  const text = sidebar(
-    ['space', { title: 'Work', containerIDs: ['pinned', 'root'] }],
-    ['root', { childrenIds: ['tab'] }, 'tab', { data: { tab: { savedURL: 'https://one.test/private?key=secret#part' } } }],
+test('retains safe canonical addresses and Arc aliases for import while projecting a host-only preview', () => {
+  const input = sidebar(
+    ['space', { profile: { default: true }, containerIDs: ['pinned', 'pins', 'unpinned', 'today'] }],
+    [
+      'pins', { childrenIds: ['custom', 'unsafe'] },
+      'custom', { title: 'My pinned home', data: { tab: { savedURL: 'HTTPS://Example.Test/a%20b?secret=123#anchor' } } },
+      'unsafe', { data: { tab: { savedURL: 'https://example.test/a\nb' } } },
+      'today', { childrenIds: ['open'] },
+      'open', { data: { tab: { savedTitle: 'Ordinary page title', savedURL: 'http://example.test/today' } } },
+    ],
   );
-  assert.deepEqual(parsed(text).spaces[0].pinned, [{ kind: 'tab', title: 'one.test', host: 'one.test', url: 'https://one.test/private?key=secret#part' }]);
-  assert.doesNotMatch(JSON.stringify(review(text)), /private|secret/);
+  const imported = parseArcSidebarImport(input);
+  if (typeof imported === 'string') assert.fail(imported);
+  assert.deepEqual(imported.spaces[0].pinned, [{
+    kind: 'tab', title: 'My pinned home', customTitle: 'My pinned home', host: 'example.test',
+    url: 'https://example.test/a%20b?secret=123#anchor',
+  }]);
+  assert.deepEqual(imported.spaces[0].today, [{
+    kind: 'tab', title: 'Ordinary page title', host: 'example.test', url: 'http://example.test/today',
+  }]);
+  assert.equal(imported.skipped, 1);
+  const preview = projectArcSidebarPreview(imported);
+  assert.deepEqual(preview, parseArcSidebar(input));
+  assert.equal(preview.spaces[0].todayTabs, 1);
+  assert.doesNotMatch(JSON.stringify(preview), /customTitle|secret=123|anchor|https?:\/\//);
 });

@@ -4,7 +4,6 @@ import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME, SHARED_PARTITION } from '../shared/constants';
 import type { Settings } from '../shared/types';
 import { windowBackground } from '../shared/theme';
-import { findArcSidebar } from './arc-import';
 import { normalizeBookmarks } from './bookmarks';
 import { Boosts, isValidBoostName } from './boosts';
 import { configureSitePermissions } from './browser-policy';
@@ -23,6 +22,7 @@ import { parseLaunchArgs } from './launch-args';
 import { setShortcutOverrides, type ShortcutAction } from './shortcuts';
 import { UpdateChecker } from './updates';
 import { Store } from './store';
+import { webSpacePartition } from './space-session';
 import { restrictInternalNavigation, TabManager } from './tabs';
 import { placeWindow } from './window-placement';
 
@@ -160,8 +160,9 @@ async function main(): Promise<void> {
     // Clear web Spaces only; Quiver's own pages and settings are kept.
     event.preventDefault();
     clearedOnExit = true;
-    const partitions = [SHARED_PARTITION, ...store.state.spaces.filter((sp) => sp.isolated && !sp.private).map((sp) => `persist:quiver-space-${sp.id}`)];
-    void clearSessions(partitions.map((partition) => session.fromPartition(partition))).finally(() => app.quit());
+    // Private Spaces live in memory only, so there is nothing of theirs to clear.
+    const partitions = new Set([SHARED_PARTITION, ...store.state.spaces.filter((sp) => !sp.private).map(webSpacePartition)]);
+    void clearSessions([...partitions].map((partition) => session.fromPartition(partition))).finally(() => app.quit());
   });
   const boosts = new Boosts();
   boosts.startWatching();
@@ -366,6 +367,7 @@ async function main(): Promise<void> {
   };
   const downloads = new Downloads(store.state.downloads, {
     directory: () => portableDownloadPath ?? app.getPath('downloads'),
+    partialDirectory: path.join(app.getPath('userData'), 'download-partials'),
     askWhereToSave: () => store.state.settings.askWhereToSave,
     fromPartition: (partition) => session.fromPartition(partition),
     persist: (records) => {
@@ -465,9 +467,6 @@ async function main(): Promise<void> {
   await Promise.all([shell.webContents.loadURL('quiver://app/shell.html'), overlay.webContents.loadURL('quiver://app/commandbar.html')]);
   const interrupted = store.state.sessionOpen === true;
   const restored = tabs.restore();
-  // Offer the Arc import once, on the first launch of this profile, when Arc for Windows has a sidebar to bring over.
-  if (store.firstRun && findArcSidebar(process.env.LOCALAPPDATA ?? '')) store.state.arcImportOffer = 'pending';
-  tabs.arcImportOffer = store.state.arcImportOffer === 'pending';
   if (interrupted && restored.tabs > 0) tabs.showSessionRecovery(restored);
   if (launchPlacement.relocated) tabs.showWindowRecovery();
   store.state.bounds = { ...launchPlacement.bounds, maximized: launchPlacement.maximized };
@@ -555,7 +554,23 @@ async function main(): Promise<void> {
   win.on('unmaximize', repairPlacement);
   win.on('leave-full-screen', repairPlacement);
 
-  win.on('close', () => {
+  let checkpointStarted = false;
+  let checkpointComplete = false;
+  win.on('close', (event) => {
+    if (checkpointStarted && !checkpointComplete) {
+      event.preventDefault();
+      return;
+    }
+    const checkpoint = checkpointStarted ? undefined : downloads.checkpointOnClose();
+    if (checkpoint) {
+      event.preventDefault();
+      checkpointStarted = true;
+      void checkpoint.finally(() => {
+        checkpointComplete = true;
+        if (!win.isDestroyed()) win.close();
+      });
+      return;
+    }
     saveBounds();
     tabs.persist();
     store.state.sessionOpen = false;

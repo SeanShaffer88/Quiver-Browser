@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TabManager } from '../main/tabs';
+import type { MediaDelegate } from '../main/browser-policy';
 
 test('a superseded load cannot mark a newer request for the same phone URL unavailable', async () => {
   const pending: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
@@ -22,4 +23,30 @@ test('a superseded load cannot mark a newer request for the same phone URL unava
   pending[2].resolve();
   await Promise.resolve();
   assert.deepEqual(updates, [false]);
+});
+
+test('Phone Preview media requests stay denied after the preview closes', async () => {
+  const url = 'http://127.0.0.1:4000/call';
+  const desktop = { id: 1, getURL: () => url, isDestroyed: () => false };
+  const preview = { ...desktop, id: 2 };
+  const calls: number[] = [];
+  const manager = Object.assign(Object.create(TabManager.prototype), {
+    phone: { webContents: preview },
+    phoneContents: new WeakSet([preview]),
+    media: {
+      check: (id: number) => { calls.push(id); return true; },
+      request: (id: number) => { calls.push(id); return Promise.resolve(true); },
+    },
+  });
+  const delegate: MediaDelegate = Reflect.get(manager, 'mediaDelegate').call(manager);
+  const desktopContents = desktop as Parameters<MediaDelegate['check']>[0];
+  const previewContents = preview as Parameters<MediaDelegate['check']>[0];
+
+  assert.equal(delegate.check(desktopContents, true), true);
+  assert.equal(await delegate.request(desktopContents, url, true, ['camera']), true);
+  assert.equal(delegate.check(previewContents, true), false);
+  assert.equal(await delegate.request(previewContents, url, true, ['microphone']), false);
+  manager.phone = null;
+  assert.equal(await delegate.request(previewContents, url, true, ['camera']), false);
+  assert.deepEqual(calls, [1, 1]);
 });

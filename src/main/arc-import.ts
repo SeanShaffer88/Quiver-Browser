@@ -1,182 +1,205 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import type { ArcImportCounts, Folder } from '../shared/types';
-import type { ArcSidebar, ArcSourceNode } from './arc-sidebar';
-import { restorableUrl } from './session-recovery';
+import { createHash, randomUUID } from 'node:crypto';
+import { ARC_SIDEBAR_MAX_BYTES, parseArcSidebarImport, projectArcSidebarPreview, type ArcImportNode } from '../renderer/arc-sidebar';
+import type { Folder, Space } from '../shared/types';
+import { arcImportId, arcSpaceId } from './space-session';
+import type { PersistedState, PersistedTab } from './store';
 import { FOLDER_DEPTH_LIMIT, FOLDER_LIMIT, folderName } from './tab-tree';
+import { normalizeTabTitle } from './session-recovery';
 
-/**
- * Every imported tab gets its own (lazy) web view, so a very large Arc sidebar would cost real memory. This cap keeps
- * an import comfortably below what Quiver handles well; the review reports anything left out.
- */
-export const ARC_IMPORT_TAB_LIMIT = 500;
-export const ARC_IMPORT_SPACE_LIMIT = 50;
-const SPACE_NAME_LIMIT = 40;
+const MAX_IMPORTED_TABS = 800;
+const MAX_IMPORTED_SPACES = 100;
+const COLORS = ['#5b8cff', '#ff7a59', '#3ecf8e', '#f5b73b', '#b57bff', '#ff5d8f', '#2cc5d9'];
+type ImportError = { error: string };
 
-/** The parts of an existing Quiver Space the plan needs. */
-export interface ExistingSpace {
-  id: string;
-  name: string;
-  folders: readonly Folder[];
-  /** URLs of tabs already in the Space (current and pinned URLs). */
-  urls: ReadonlySet<string>;
-}
-
-export interface PlannedTab {
-  url: string;
-  title: string;
-  folderId: string | null;
-}
-
-export interface PlannedSpace {
-  /** The Quiver Space to merge into, or null to create one. */
-  spaceId: string | null;
-  name: string;
-  /** Folders to add, parents before children. */
-  folders: Folder[];
-  tabs: PlannedTab[];
-}
-
-export interface ArcImportPlan {
-  spaces: PlannedSpace[];
-  counts: ArcImportCounts;
-}
-
-function spaceKey(name: string): string {
-  return name.toLocaleLowerCase();
-}
-
-function spaceName(value: string, index: number): string {
-  // Space names share the folder rules: no control or bidi-override characters, 40 characters at most.
-  return folderName(value).slice(0, SPACE_NAME_LIMIT) || `Arc Space ${index + 1}`;
-}
-
-/**
- * Turn a parsed Arc sidebar into Quiver Spaces, pinned tabs and folders. Arc Spaces merge into Quiver Spaces with the
- * same name (ignoring case), folders merge into a same-named folder at the same place, and a tab is skipped when its
- * Space already has that URL, so importing the same sidebar twice adds nothing. Arc Favorites become top-level pinned
- * tabs in the first imported Space. Split views have no Quiver equivalent; their tabs join the surrounding folder.
- */
-export function planArcImport(sidebar: ArcSidebar, existing: readonly ExistingSpace[], newId: () => string): ArcImportPlan {
-  const counts: ArcImportCounts = { spaces: 0, newSpaces: 0, mergedSpaces: 0, pinned: 0, favorites: 0, folders: 0, duplicates: 0, dropped: 0 };
-  interface Target { plan: PlannedSpace; folders: Folder[]; urls: Set<string> }
-  const targets = new Map<string, Target>();
-  const order: Target[] = [];
-  let tabs = 0;
-
-  const targetFor = (name: string): Target | undefined => {
-    const key = spaceKey(name);
-    const known = targets.get(key);
-    if (known) return known;
-    const match = existing.find((space) => spaceKey(space.name.trim()) === key);
-    if (!match && order.filter((t) => t.plan.spaceId === null).length >= ARC_IMPORT_SPACE_LIMIT) return undefined;
-    const target: Target = {
-      plan: { spaceId: match?.id ?? null, name: match?.name ?? name, folders: [], tabs: [] },
-      folders: [...(match?.folders ?? [])],
-      urls: new Set(match?.urls ?? []),
-    };
-    targets.set(key, target);
-    order.push(target);
-    return target;
-  };
-
-  const depthOf = (folders: readonly Folder[], id: string | null): number => {
-    let depth = 0;
-    for (let at = id; at !== null && depth <= FOLDER_DEPTH_LIMIT; at = folders.find((f) => f.id === at)?.parentId ?? null) depth++;
-    return depth;
-  };
-
-  const countTabs = (nodes: readonly ArcSourceNode[]): number =>
-    nodes.reduce((total, node) => total + (node.kind === 'tab' ? 1 : countTabs(node.children)), 0);
-
-  /** A same-named folder under the same parent, or a new one; null when Quiver's folder limits would be exceeded. */
-  const folderFor = (target: Target, title: string, parentId: string | null): string | null => {
-    const name = folderName(title) || 'Folder';
-    const same = target.folders.find((f) => f.parentId === parentId && f.name.toLocaleLowerCase() === name.toLocaleLowerCase());
-    if (same) return same.id;
-    if (target.folders.length >= FOLDER_LIMIT || depthOf(target.folders, parentId) >= FOLDER_DEPTH_LIMIT) return null;
-    const folder: Folder = { id: newId(), name, parentId, collapsed: false };
-    target.folders.push(folder);
-    target.plan.folders.push(folder);
-    counts.folders++;
-    return folder.id;
-  };
-
-  const add = (target: Target, nodes: readonly ArcSourceNode[], parentId: string | null, favorite: boolean): void => {
-    for (const node of nodes) {
-      if (node.kind !== 'tab') {
-        const id = node.kind === 'folder' ? folderFor(target, node.title, parentId) : parentId;
-        // Past the folder limits the tabs still come in, one level up, instead of being lost.
-        if (node.kind === 'folder' && id === null) counts.dropped++;
-        add(target, node.children, id ?? parentId, favorite);
-        continue;
-      }
-      if (!restorableUrl(node.url)) {
-        counts.dropped++;
-      } else if (target.urls.has(node.url)) {
-        counts.duplicates++;
-      } else if (tabs >= ARC_IMPORT_TAB_LIMIT) {
-        counts.dropped++;
-      } else {
-        tabs++;
-        target.urls.add(node.url);
-        target.plan.tabs.push({ url: node.url, title: node.title, folderId: parentId });
-        if (favorite) counts.favorites++;
-        else counts.pinned++;
-      }
-    }
-  };
-
-  // Favorites go first so they sit above the first Space's own pins, as they sit above the Space in Arc.
-  const favorites = sidebar.profiles.flatMap((profile) => profile.favorites);
-  const first = sidebar.spaces.length
-    ? targetFor(spaceName(sidebar.spaces[0].title, 0))
-    : existing[0] && targetFor(existing[0].name.trim());
-  if (first) add(first, favorites, null, true);
-  else counts.dropped += countTabs(favorites);
-
-  sidebar.spaces.forEach((space, index) => {
-    const target = targetFor(spaceName(space.title, index));
-    if (target) add(target, space.pinned, null, false);
-    else counts.dropped += countTabs(space.pinned) || 1;
-  });
-
-  const spaces = order.map((t) => t.plan).filter((plan) => plan.tabs.length || plan.folders.length || plan.spaceId === null);
-  counts.spaces = spaces.length;
-  counts.newSpaces = spaces.filter((plan) => plan.spaceId === null).length;
-  counts.mergedSpaces = counts.spaces - counts.newSpaces;
-  return { spaces, counts };
-}
-
-/** Undo information for the last import: what it added, so undo removes only that. */
 export interface ArcImportUndo {
-  id: number;
-  createdSpaceIds: string[];
-  folders: Array<{ spaceId: string; ids: string[] }>;
-  tabIds: number[];
+  id: string;
+  spaceIds: string[];
+  fingerprint: string;
 }
 
-/** Arc for Windows is an MSIX package; its sidebar lives in the package's local cache. */
-const ARC_PACKAGE = /^TheBrowserCompany\.Arc_[\w.-]+$/;
+export interface ArcImportSpace {
+  space: Space;
+  tabs: PersistedTab[];
+}
 
-/** Find StorableSidebar.json under %LOCALAPPDATA%\Packages. Returns the newest one when several packages exist. */
-export function findArcSidebar(localAppData: string, fileSystem: Pick<typeof fs, 'readdirSync' | 'statSync'> = fs): string | undefined {
-  if (!localAppData || !path.isAbsolute(localAppData)) return undefined;
-  let found: { file: string; mtime: number } | undefined;
-  try {
-    const packages = path.join(localAppData, 'Packages');
-    for (const entry of fileSystem.readdirSync(packages).slice(0, 2000)) {
-      if (!ARC_PACKAGE.test(entry)) continue;
-      const file = path.join(packages, entry, 'LocalCache', 'Local', 'Arc', 'StorableSidebar.json');
-      try {
-        const stat = fileSystem.statSync(file);
-        if (stat.isFile() && (!found || stat.mtimeMs > found.mtime)) found = { file, mtime: stat.mtimeMs };
-      } catch {
-        /* this package has no sidebar */
-      }
-    }
-  } catch {
-    return undefined;
+export function validArcImportUndo(value: unknown): ArcImportUndo | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { id, spaceIds, fingerprint } = value as Partial<ArcImportUndo>;
+  if (!arcImportId(id) || !Array.isArray(spaceIds) || !spaceIds.length || spaceIds.length > MAX_IMPORTED_SPACES ||
+      !spaceIds.every(arcSpaceId) || new Set(spaceIds).size !== spaceIds.length ||
+      typeof fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(fingerprint)) return undefined;
+  return { id, spaceIds, fingerprint };
+}
+
+function fingerprint(entries: readonly ArcImportSpace[]): string {
+  const hash = createHash('sha256');
+  for (const { space, tabs } of entries) {
+    hash.update(JSON.stringify([
+      space.id, space.name, space.color, space.isolated, space.arcImportId, space.sessionGroupId,
+      (space.folders ?? []).map((f) => [f.id, f.name, f.parentId, f.collapsed]),
+      tabs.map((tab) => [
+        tab.url, tab.title ?? '', tab.customTitle ?? '', tab.pinned === true,
+        tab.folderId ?? '', tab.pinnedUrl ?? tab.url, tab.lastActiveAt ?? 0,
+      ]),
+    ]));
   }
-  return found?.file;
+  return hash.digest('hex');
+}
+
+type ArcReview = { token: string; preview: ReturnType<typeof projectArcSidebarPreview> & { flattenedFolders?: number } };
+type ArcCommit = { importedSpaces: number; importedTabs: number };
+type ArcUndo = { removedSpaces: number };
+type ArcStatus = { canUndo: boolean; importedSpaces?: number; undoId?: string };
+
+interface ArcRuntime {
+  /** Stage lazy views for the candidate state. Returns a rollback for those views. */
+  stage(entries: readonly ArcImportSpace[]): () => void;
+  /** Remove staged or live views after durable undo. */
+  remove(spaces: readonly Space[]): void;
+}
+
+export class ArcImports<Owner extends object> {
+  private review?: { owner: Owner; token: string; entries: ArcImportSpace[]; undo: ArcImportUndo; importedTabs: number };
+
+  constructor(
+    private readonly state: PersistedState,
+    private readonly flush: () => boolean,
+    private readonly save: () => void,
+    private readonly runtime: ArcRuntime,
+    private readonly now = () => Date.now(),
+  ) {}
+
+  preview(owner: Owner, raw: unknown): ArcReview | ImportError {
+    this.review = undefined;
+    if (typeof raw !== 'string') return { error: 'Choose a copy of StorableSidebar.json.' };
+    if (raw.length > ARC_SIDEBAR_MAX_BYTES || Buffer.byteLength(raw) > ARC_SIDEBAR_MAX_BYTES) {
+      return { error: 'Choose an Arc sidebar file no larger than 16 MiB.' };
+    }
+    const data = parseArcSidebarImport(raw);
+    if (typeof data === 'string') return { error: {
+      'too-large': 'Choose an Arc sidebar file no larger than 16 MiB.',
+      'invalid-json': 'This file contains invalid JSON. Choose a copy of StorableSidebar.json.',
+      'unrecognized-sidebar': 'Quiver could not recognize this Arc sidebar. Choose a copy of StorableSidebar.json.',
+    }[data] };
+
+    const preview: ArcReview['preview'] = projectArcSidebarPreview(data);
+    if (preview.limited || !preview.spaces.length) return { token: '', preview };
+    const importedTabs = data.spaces.reduce((total, space) =>
+      total + space.pinnedTabs + space.todayTabs + (data.profiles[space.profile]?.favoriteTabs ?? 0), 0);
+    if (importedTabs > MAX_IMPORTED_TABS) return { error: 'This Arc sidebar would import more than 800 tabs. Choose a smaller sidebar.' };
+    const id = randomUUID();
+    const groups = data.profiles.map(() => randomUUID());
+    let flattenedFolders = 0;
+    const entries: ArcImportSpace[] = data.spaces.map((source, index) => {
+      const folders: Folder[] = [];
+      const tabs: PersistedTab[] = [];
+      function add(nodes: readonly ArcImportNode[], pinned: boolean, parentId: string | null, depth: number, keepFolders = pinned): void {
+        for (const node of nodes) {
+          if (node.kind === 'tab') {
+            const title = normalizeTabTitle(node.title, node.url);
+            const customTitle = normalizeTabTitle(node.customTitle, node.url);
+            tabs.push({
+              url: node.url, ...(title && { title }), ...(customTitle && { customTitle }),
+              ...(pinned && { pinned: true }), ...(parentId && { folderId: parentId }),
+            });
+          } else if (keepFolders && depth < FOLDER_DEPTH_LIMIT && folders.length < FOLDER_LIMIT) {
+            const folder = { id: randomUUID(), name: folderName(node.title) || 'Folder', parentId, collapsed: false };
+            folders.push(folder);
+            add(node.children, pinned, folder.id, depth + 1);
+          } else {
+            if (keepFolders) flattenedFolders++;
+            add(node.children, pinned, parentId, depth, keepFolders);
+          }
+        }
+      }
+      add(data.profiles[source.profile]?.favorites ?? [], true, null, 0, false);
+      add(source.pinned, true, null, 0);
+      add(source.today, false, null, 0);
+      return {
+        space: {
+          id: `arc-space-${randomUUID()}`, name: folderName(source.title) || 'Space',
+          color: COLORS[(this.state.spaces.length + index) % COLORS.length],
+          isolated: true, folders, arcImportId: id, sessionGroupId: groups[source.profile],
+        },
+        tabs,
+      };
+    });
+    if (flattenedFolders) preview.flattenedFolders = flattenedFolders;
+    const token = randomUUID();
+    this.review = {
+      owner, token, entries, importedTabs,
+      undo: { id, spaceIds: entries.map(({ space }) => space.id), fingerprint: '' },
+    };
+    return { token, preview };
+  }
+
+  cancel(owner: Owner): void {
+    if (this.review?.owner === owner) this.review = undefined;
+  }
+
+  commit(owner: Owner, token: unknown): ArcCommit | ImportError {
+    const review = this.review;
+    if (!review || review.owner !== owner || review.token !== token) return { error: 'Review the Arc sidebar again before importing.' };
+    this.review = undefined;
+    if (this.state.spaces.some((space) => review.undo.spaceIds.includes(space.id) || space.arcImportId === review.undo.id)) {
+      return { error: 'Quiver could not allocate new Spaces. Review the Arc sidebar again.' };
+    }
+    const at = this.now();
+    for (const { tabs } of review.entries) for (const tab of tabs) tab.lastActiveAt = at;
+    review.undo.fingerprint = fingerprint(review.entries);
+    const previous = this.snapshot();
+    this.state.spaces = [...previous.spaces, ...review.entries.map(({ space }) => space)];
+    this.state.tabsBySpace = { ...previous.tabsBySpace, ...Object.fromEntries(review.entries.map(({ space, tabs }) => [space.id, tabs])) };
+    this.state.activeIndexBySpace = { ...previous.activeIndexBySpace, ...Object.fromEntries(review.undo.spaceIds.map((id) => [id, 0])) };
+    this.state.arcImportUndo = review.undo;
+    let rollback: (() => void) | undefined;
+    try {
+      rollback = this.runtime.stage(review.entries);
+      if (this.flush()) return { importedSpaces: review.entries.length, importedTabs: review.importedTabs };
+    } catch {
+      // A staging failure must leave the saved and live sessions as they were.
+    }
+    Object.assign(this.state, previous);
+    rollback?.();
+    this.save();
+    return { error: 'Quiver could not save the Arc import. Review the file again to retry.' };
+  }
+
+  status(): ArcStatus {
+    const undo = this.state.arcImportUndo;
+    if (!undo) return { canUndo: false };
+    const canUndo = this.canUndo(undo);
+    return { canUndo, importedSpaces: undo.spaceIds.length, ...(canUndo && { undoId: undo.id }) };
+  }
+
+  undo(expectedId: unknown): ArcUndo | ImportError {
+    const undo = this.state.arcImportUndo;
+    if (!undo || undo.id !== expectedId || !this.canUndo(undo)) return { error: 'This Arc import can no longer be undone.' };
+    const ids = new Set(undo.spaceIds);
+    const previous = this.snapshot();
+    const spaces = previous.spaces.filter((space) => ids.has(space.id));
+    this.state.spaces = previous.spaces.filter((space) => !ids.has(space.id));
+    this.state.tabsBySpace = Object.fromEntries(Object.entries(previous.tabsBySpace).filter(([id]) => !ids.has(id)));
+    this.state.activeIndexBySpace = Object.fromEntries(Object.entries(previous.activeIndexBySpace).filter(([id]) => !ids.has(id)));
+    this.state.arcImportUndo = undefined;
+    if (!this.flush()) {
+      Object.assign(this.state, previous);
+      this.save();
+      return { error: 'Quiver could not undo the Arc import. Try again.' };
+    }
+    this.runtime.remove(spaces);
+    return { removedSpaces: spaces.length };
+  }
+
+  private canUndo(undo: ArcImportUndo): boolean {
+    const spaces = this.state.spaces.filter((space) => space.arcImportId === undo.id);
+    if (spaces.length !== undo.spaceIds.length || spaces.some((space, index) => space.id !== undo.spaceIds[index]) ||
+        undo.spaceIds.includes(this.state.activeSpaceId) || this.state.spaces.length === spaces.length) return false;
+    return fingerprint(spaces.map((space) => ({ space, tabs: this.state.tabsBySpace[space.id] ?? [] }))) === undo.fingerprint;
+  }
+
+  private snapshot() {
+    const { spaces, tabsBySpace, activeIndexBySpace, arcImportUndo } = this.state;
+    return { spaces, tabsBySpace, activeIndexBySpace, arcImportUndo };
+  }
 }

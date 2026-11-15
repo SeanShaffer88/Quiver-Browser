@@ -6,7 +6,6 @@ import {
   PHONE_LABEL_H,
   PHONE_MARGIN,
   PHONE_W,
-  SHARED_PARTITION,
   SIDEBAR_COLLAPSED_W,
   SIDEBAR_W,
   TOOLBAR_H,
@@ -20,9 +19,12 @@ import {
 } from './browser-policy';
 import { EndpointStatus, type EndpointFailure } from './endpoint-status';
 import { internalPage, type InternalPage } from './internal-access';
+import type { PersistedTab, Store } from './store';
+import type { ArcImportSpace } from './arc-import';
+import { arcSpaceId, webSpacePartition } from './space-session';
+import { clearSessions } from './privacy';
 import { isPageFirst, REBINDABLE, shortcutFor, shortcutLabel, type ShortcutAction } from './shortcuts';
 import { PageKeys } from './page-keys';
-import type { Store } from './store';
 import {
   CANONICAL_NEW_TAB_URL,
   hasSavedNewTabPlaceholder,
@@ -36,7 +38,6 @@ import {
   type ClosedTab,
 } from './session-recovery';
 import { moveInGroup } from './tab-order';
-import type { ArcImportPlan, ArcImportUndo, ExistingSpace } from './arc-import';
 import type { MediaPermissions } from './site-permissions';
 import { addArchived, tabsToArchive, type ArchivedTab } from './archive';
 import { isPrivateSpace, newPrivateSpace, privatePartition, publicSpaces } from './private-spaces';
@@ -77,6 +78,7 @@ interface Tab {
   errorFor: string | null;
   title: string;
   titleIsExplicit: boolean;
+  customTitle?: string;
   favicon: string;
   loading: boolean;
   errors: number;
@@ -154,8 +156,6 @@ export class TabManager {
   private recentlyClosed: ClosedTab[] = [];
   private recoveryNotice?: RecoveryNotice;
   private restoring = false;
-  /** Shown in the sidebar until the person reviews or dismisses the first-launch Arc import. */
-  arcImportOffer = false;
   preview = false;
   devServers: DevServer[] = [];
   /** Called for each main-frame page a web tab shows (research recording). */
@@ -182,6 +182,7 @@ export class TabManager {
   private readonly endpointStatus = new EndpointStatus();
 
   private phone: WebContentsView | null = null;
+  private readonly phoneContents = new WeakSet<WebContents>();
   private phonePartition = '';
   private phoneSpaceId = '';
   private phoneUrl = '';
@@ -264,7 +265,7 @@ export class TabManager {
       pinnedUrl: t.pinned ? t.pinnedUrl : null,
       folderId: t.folderId,
       url: displayUrl(url),
-      title: t.title || displayUrl(url) || 'New Tab',
+      title: t.customTitle || t.title || displayUrl(url) || 'New Tab',
       favicon: t.favicon,
       loading: t.loading,
       canGoBack: this.canNavigateHistory(t, -1),
@@ -273,7 +274,7 @@ export class TabManager {
       errors: t.errors,
       local,
       internal: t.internal,
-      live: !t.view.webContents.isDestroyed() && !!this.media?.isLive(t.view.webContents.id),
+      mediaPermissionGranted: !t.view.webContents.isDestroyed() && !!this.media?.hasPageGrant(t.view.webContents.id),
       env: t.internal ? null : badgeFor(url, this.settings.envGroups),
       activeBoosts: [...t.cssKeys.keys(), ...t.tsBoosts].sort(),
       split: this.split?.left === t.id ? 'left' : this.split?.right === t.id ? 'right' : null,
@@ -285,7 +286,6 @@ export class TabManager {
     return {
       recentlyClosed: recent ? { id: recent.id, spaceId: recent.spaceId, title: recent.title } : undefined,
       recoveryNotice: this.recoveryNotice,
-      ...(this.arcImportOffer ? { arcImportOffer: true } : {}),
       spaces: this.spaces,
       activeSpaceId: this.activeSpaceId,
       tabs: [...this.tabs.values()].map((t) => this.info(t)),
@@ -366,9 +366,7 @@ export class TabManager {
   // ───────── sessions / views ─────────
   private partitionFor(spaceId: string, internal: boolean): string {
     if (internal) return INTERNAL_PARTITION;
-    const space = this.spaces.find((s) => s.id === spaceId);
-    if (space?.private) return privatePartition(spaceId);
-    return space?.isolated ? `persist:quiver-space-${spaceId}` : SHARED_PARTITION;
+    return webSpacePartition(this.spaces.find((space) => space.id === spaceId));
   }
 
   /** Private Spaces keep no history, research trail, archive or saved session. */
@@ -456,7 +454,7 @@ export class TabManager {
 
   // ───────── tabs ─────────
   openTab(rawUrl: string, opts: {
-    spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null; pinnedUrl?: string | null; lastActiveAt?: number;
+    spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null; pinnedUrl?: string | null; lastActiveAt?: number; customTitle?: string;
     /** An already loaded web view (a Peek) that becomes this tab, keeping its page, history and scroll position. */
     adopt?: WebContentsView;
   } = {}): Tab {
@@ -486,6 +484,7 @@ export class TabManager {
       errorFor: null,
       title: '',
       titleIsExplicit: false,
+      customTitle: internal ? undefined : normalizeTabTitle(opts.customTitle, url) || undefined,
       favicon: '',
       loading: false,
       errors: 0,
@@ -508,7 +507,7 @@ export class TabManager {
     } else if (opts.lazy) tab.pendingUrl = url;
     else this.load(tab, url);
     if (opts.activate !== false) this.activateTab(tab.id);
-    else this.layout();
+    else if (!this.restoring) this.layout();
     this.persist();
     this.emit();
     return tab;
@@ -642,6 +641,7 @@ export class TabManager {
     });
     wc.on('render-process-gone', (_e, details) => {
       if (this.tabs.get(tab.id) !== tab) return;
+      this.media?.reset(wc.id);
       const url = this.tabUrl(tab);
       tab.crashUrl = restorableUrl(url) ? url : null;
       tab.title = 'Page stopped responding';
@@ -709,7 +709,7 @@ export class TabManager {
       if (neighbor) this.activateTab(neighbor.id);
       else placeholderId = this.openTab('quiver://newtab', { spaceId: tab.spaceId }).id;
     }
-    this.recentlyClosed = rememberClosed(this.recentlyClosed, { id, url, title, spaceId: tab.spaceId, index, placeholderId });
+    this.recentlyClosed = rememberClosed(this.recentlyClosed, { id, url, title, customTitle: tab.customTitle, spaceId: tab.spaceId, index, placeholderId });
     this.layout();
     this.syncPhone();
     this.persist();
@@ -749,8 +749,8 @@ export class TabManager {
     // Archiving would write a private tab's address to disk, so private Spaces are left out.
     const candidates = [...this.tabs.values()].filter((t) => !this.isPrivate(t.spaceId)).map((t) => ({
       id: t.id, pinned: t.pinned, active: t.id === this.activeTabId || active.has(t.id),
-      // Playing sound or in a call (camera, microphone or screen) keeps a tab.
-      audible: !t.view.webContents.isDestroyed() && (t.view.webContents.isCurrentlyAudible() || !!this.media?.isLive(t.view.webContents.id)),
+      // A page granted media permission may still be capturing, even after the grant is forgotten.
+      audible: !t.view.webContents.isDestroyed() && (t.view.webContents.isCurrentlyAudible() || !!this.media?.hadPageGrant(t.view.webContents.id)),
       lastActiveAt: t.lastActiveAt,
     }));
     const ids = tabsToArchive(candidates, now, hours);
@@ -798,7 +798,7 @@ export class TabManager {
     if (!entry || (expectedId !== undefined && expectedId !== entry.id) || !this.spaces.some((space) => space.id === entry.spaceId)) return;
     const inSpace = [...this.tabs.values()].filter((tab) => tab.spaceId === entry.spaceId);
     const placeholder = inSpace.length === 1 && inSpace[0].id === entry.placeholderId ? inSpace[0] : undefined;
-    const reopened = this.openTab(entry.url, { spaceId: entry.spaceId, index: entry.index, activate: false, lazy: true });
+    const reopened = this.openTab(entry.url, { spaceId: entry.spaceId, index: entry.index, activate: false, lazy: true, customTitle: entry.customTitle });
     if (placeholder && this.tabUrl(placeholder) === CANONICAL_NEW_TAB_URL) this.discardTab(placeholder);
     this.recentlyClosed.shift();
     this.activateTab(reopened.id);
@@ -821,16 +821,27 @@ export class TabManager {
   }
 
   private mediaDelegate(): MediaDelegate {
-    const top = (wc: WebContents) => (wc.isDestroyed() ? undefined : wc.getURL());
+    const top = (wc: WebContents) => (
+      wc.isDestroyed() || this.phoneContents.has(wc) ? undefined : wc.getURL()
+    );
     return {
-      check: (wc, isMainFrame) => !!this.media?.check(wc.id, top(wc), isMainFrame),
-      request: (wc, requestingUrl, isMainFrame, kinds) => this.media?.request(wc.id, top(wc), requestingUrl, isMainFrame, kinds) ?? Promise.resolve(false),
+      check: (wc, isMainFrame) => {
+        const url = top(wc);
+        return url !== undefined && !!this.media?.check(wc.id, url, isMainFrame);
+      },
+      request: (wc, requestingUrl, isMainFrame, kinds) => {
+        const url = top(wc);
+        if (url === undefined) return Promise.resolve(false);
+        return this.media?.request(wc.id, url, requestingUrl, isMainFrame, kinds) ?? Promise.resolve(false);
+      },
       displayMedia: (request, callback) => {
         const deny = () => callback({});
         const wc = request.frame ? webContents.fromFrame(request.frame) : undefined;
         if (!wc || !this.media || !this.pickScreen || !request.videoRequested) return deny();
+        const url = top(wc);
+        if (url === undefined) return deny();
         const isMainFrame = request.frame === wc.mainFrame;
-        void this.media.request(wc.id, top(wc), request.securityOrigin, isMainFrame, ['screen'])
+        void this.media.request(wc.id, url, request.securityOrigin, isMainFrame, ['screen'])
           .then(async (ok) => {
             if (!ok) return deny();
             const source = await this.pickScreen!();
@@ -1162,11 +1173,10 @@ export class TabManager {
     return true;
   }
 
-  // ───────── spaces ─────────
   // ───────── sync ─────────
   /** Spaces with their folders and pinned tabs, as published to other devices. */
   syncedSpaces(): SyncedSpace[] {
-    return publicSpaces(this.spaces).map((sp) => ({
+    return publicSpaces(this.spaces).filter((sp) => !arcSpaceId(sp.id)).map((sp) => ({
       id: sp.id, name: sp.name, color: sp.color, isolated: sp.isolated, folders: this.folders(sp.id),
       pinned: this.spaceTabs(sp.id).filter((t) => t.pinned).flatMap((t) => {
         const url = t.pinnedUrl ?? this.tabUrl(t);
@@ -1183,6 +1193,7 @@ export class TabManager {
    */
   applySyncedSpaces(raw: unknown): void {
     for (const remote of normalizeSyncedSpaces(raw, restorableUrl)) {
+      if (arcSpaceId(remote.id)) continue;
       let space = this.spaces.find((sp) => sp.id === remote.id);
       if (space?.private) continue;
       if (!space) {
@@ -1226,112 +1237,6 @@ export class TabManager {
     }
     this.persist();
     this.emit();
-  }
-
-  // ───────── Arc import ─────────
-  /** Each Space with its folders and the URLs it already holds, for planning an import against. */
-  importTargets(): ExistingSpace[] {
-    return this.spaces.map((space) => {
-      const urls = new Set<string>();
-      for (const tab of this.spaceTabs(space.id)) {
-        urls.add(this.tabUrl(tab));
-        if (tab.pinnedUrl) urls.add(tab.pinnedUrl);
-      }
-      return { id: space.id, name: space.name, folders: this.folders(space.id), urls };
-    });
-  }
-
-  /**
-   * Apply a planned import: new Spaces use the shared partition, folders are added after the Space's own, and every
-   * tab is pinned and opened lazily so nothing loads until it is selected. Returns what undo needs to remove.
-   */
-  importArc(plan: ArcImportPlan, undoId: number): ArcImportUndo {
-    const undo: ArcImportUndo = { id: undoId, createdSpaceIds: [], folders: [], tabIds: [] };
-    this.restoring = true;
-    try {
-      for (const planned of plan.spaces) {
-        let space = planned.spaceId === null ? undefined : this.spaces.find((s) => s.id === planned.spaceId);
-        if (planned.spaceId !== null && !space) continue;
-        if (!space) {
-          space = {
-            id: `space-${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`,
-            name: planned.name,
-            color: SPACE_COLORS[this.spaces.length % SPACE_COLORS.length],
-            isolated: false,
-            folders: [],
-          };
-          this.store.state.spaces.push(space);
-          undo.createdSpaceIds.push(space.id);
-        }
-        const before = new Set(this.folders(space.id).map((f) => f.id));
-        // normalizeFolders re-checks ids, names, depth and the folder limit against the merged list.
-        space.folders = normalizeFolders([...this.folders(space.id), ...planned.folders]);
-        const added = space.folders.filter((f) => !before.has(f.id)).map((f) => f.id);
-        if (added.length) undo.folders.push({ spaceId: space.id, ids: added });
-        for (const entry of planned.tabs) {
-          if (!restorableUrl(entry.url)) continue;
-          const tab = this.openTab(entry.url, { spaceId: space.id, activate: false, lazy: true, pinned: true, folderId: entry.folderId, pinnedUrl: entry.url });
-          const title = normalizeTabTitle(entry.title, entry.url);
-          if (title) {
-            tab.title = title;
-            tab.titleIsExplicit = true;
-          }
-          undo.tabIds.push(tab.id);
-        }
-      }
-    } finally {
-      this.restoring = false;
-    }
-    this.persist();
-    this.emit();
-    return undo;
-  }
-
-  /**
-   * Remove what an import added. Tabs the person opened since stay: folders they used are removed with their tabs moved
-   * up a level, and a created Space is only removed when nothing but imported tabs is left in it.
-   */
-  undoArcImport(undo: ArcImportUndo): { tabs: number; spaces: number } {
-    let removedTabs = 0;
-    for (const id of undo.tabIds) {
-      const tab = this.tabs.get(id);
-      if (!tab) continue;
-      if (this.activeTabId === id) this.activeTabId = null;
-      if (this.lastActive[tab.spaceId] === id) delete this.lastActive[tab.spaceId];
-      this.discardTab(tab);
-      removedTabs++;
-    }
-    for (const { spaceId, ids } of undo.folders) {
-      let folders = this.folders(spaceId);
-      let list = this.spaceTabs(spaceId);
-      for (const id of ids) {
-        const result = deleteFolder(folders, list, id);
-        folders = result.folders;
-        list = result.tabs;
-      }
-      for (const t of list) {
-        const live = this.tabs.get(t.id);
-        if (live) live.folderId = t.folderId;
-      }
-      const space = this.spaces.find((s) => s.id === spaceId);
-      if (space) space.folders = folders;
-    }
-    let removedSpaces = 0;
-    for (const id of undo.createdSpaceIds) {
-      if (this.spaces.length < 2 || this.spaceTabs(id).length) continue;
-      this.store.state.spaces = this.spaces.filter((s) => s.id !== id);
-      delete this.store.state.tabsBySpace[id];
-      delete this.store.state.activeIndexBySpace[id];
-      delete this.lastActive[id];
-      this.recentlyClosed = this.recentlyClosed.filter((tab) => tab.spaceId !== id);
-      removedSpaces++;
-    }
-    if (!this.spaces.some((s) => s.id === this.activeSpaceId)) this.activateSpace(this.spaces[0].id);
-    else if (this.activeTabId === null) this.activateSpace(this.activeSpaceId);
-    this.layout();
-    this.persist();
-    this.emit();
-    return { tabs: removedTabs, spaces: removedSpaces };
   }
 
   createSpace(name: string, isolated: boolean): Space {
@@ -1382,7 +1287,9 @@ export class TabManager {
     if (this.activeSpaceId === id) this.activateSpace(this.spaces[0].id);
     this.persist();
     this.emit();
-    if (space.isolated) {
+    if (space.sessionGroupId) {
+      await this.clearUnusedArcPartitions([space]);
+    } else if (space.isolated) {
       try {
         // A private Space's storage is in memory, but clear it now rather than holding it until Quiver quits.
         await session.fromPartition(space.private ? privatePartition(id) : `persist:quiver-space-${id}`).clearStorageData();
@@ -1390,6 +1297,40 @@ export class TabManager {
         /* best effort */
       }
     }
+  }
+
+  /** Called after candidate state is installed in memory, before it is saved or broadcast. */
+  stageArcSpaces(entries: readonly ArcImportSpace[]): () => void {
+    const spaces = entries.map(({ space }) => space);
+    const rollback = () => this.removeArcSpaces(spaces);
+    const wasRestoring = this.restoring;
+    this.restoring = true;
+    try {
+      for (const { space, tabs } of entries) this.restoreSpaceTabs(space, tabs, 0);
+    } catch (error) {
+      rollback();
+      throw error;
+    } finally {
+      this.restoring = wasRestoring;
+    }
+    this.emit();
+    return rollback;
+  }
+
+  /** Imported views cannot be active when undo is available. */
+  removeArcSpaces(spaces: readonly Space[]): void {
+    const ids = new Set(spaces.map(({ id }) => id));
+    for (const tab of this.tabs.values()) if (ids.has(tab.spaceId)) this.discardTab(tab);
+    for (const id of ids) delete this.lastActive[id];
+    this.emit();
+    queueMicrotask(() => void this.clearUnusedArcPartitions(spaces));
+  }
+
+  private async clearUnusedArcPartitions(spaces: readonly Space[]): Promise<void> {
+    const inUse = new Set(this.spaces.map(webSpacePartition));
+    const unused = [...new Set(spaces.map(webSpacePartition))]
+      .filter((partition) => !inUse.has(partition) && this.preparedPartitions.has(partition));
+    if (unused.length) await clearSessions(unused.map((partition) => session.fromPartition(partition)));
   }
 
   activateSpace(id: string): void {
@@ -1753,6 +1694,7 @@ export class TabManager {
       const phone = this.createView(t.partition);
       this.phone = phone;
       const wc = phone.webContents;
+      this.phoneContents.add(wc);
       wc.setUserAgent(MOBILE_UA);
       wc.setWindowOpenHandler(({ url }) => {
         if (this.phone === phone && /^https?:/i.test(url)) this.loadPhone(phone, url);
@@ -2003,7 +1945,7 @@ export class TabManager {
       if (space.private) continue;
       const list = [...this.tabs.values()]
         .filter((tab) => tab.spaceId === space.id)
-        .map((tab) => ({ id: tab.id, url: this.tabUrl(tab), title: tab.titleIsExplicit ? tab.title : undefined, pinned: tab.pinned, folderId: tab.folderId, pinnedUrl: tab.pinnedUrl, lastActiveAt: tab.lastActiveAt }));
+        .map((tab) => ({ id: tab.id, url: this.tabUrl(tab), title: tab.titleIsExplicit ? tab.title : undefined, customTitle: tab.customTitle, pinned: tab.pinned, folderId: tab.folderId, pinnedUrl: tab.pinnedUrl, lastActiveAt: tab.lastActiveAt }));
       if (list.length === 1 && list[0].url === CANONICAL_NEW_TAB_URL) soleNewTabs.set(space.id, list[0].id);
       const { tabs, activeIndex } = snapshotSpace(list, this.lastActive[space.id]);
       st.tabsBySpace[space.id] = tabs;
@@ -2029,17 +1971,8 @@ export class TabManager {
         const { entries, activeIndex } = restoreSelection(saved, activeIndexBySpace?.[space.id] ?? 0);
         if (entries.length) restored.spaces++;
         restored.tabs += entries.length;
-        entries.forEach(({ url, title, pinned, folderId, pinnedUrl, lastActiveAt }, index) => {
-          const tab = this.openTab(url, {
-            spaceId: space.id, activate: false, lazy: true, pinned: pinned === true, folderId: typeof folderId === 'string' ? folderId : null,
-            pinnedUrl: typeof pinnedUrl === 'string' ? pinnedUrl : url,
-            lastActiveAt: typeof lastActiveAt === 'number' && Number.isFinite(lastActiveAt) && lastActiveAt <= Date.now() ? lastActiveAt : Date.now(),
-          });
-          tab.title = normalizeTabTitle(title, url);
-          tab.titleIsExplicit = !!tab.title;
-          if (index === activeIndex) this.lastActive[space.id] = tab.id;
-          if (hasSavedNewTabPlaceholder(saved)) soleNewTabs.set(space.id, tab.id);
-        });
+        const selected = this.restoreSpaceTabs(space, entries, activeIndex);
+        if (selected !== undefined && hasSavedNewTabPlaceholder(saved)) soleNewTabs.set(space.id, selected);
       }
       this.recentlyClosed = restoreRecentlyClosed(recentlyClosed, () => this.nextId++, soleNewTabs);
       this.activateSpace(activeSpaceId);
@@ -2048,6 +1981,20 @@ export class TabManager {
     }
     this.persist();
     return restored;
+  }
+
+  private restoreSpaceTabs(space: Space, entries: readonly PersistedTab[], activeIndex: number): number | undefined {
+    entries.forEach(({ url, title, customTitle, pinned, folderId, pinnedUrl, lastActiveAt }, index) => {
+      const tab = this.openTab(url, {
+        spaceId: space.id, activate: false, lazy: true, pinned: pinned === true, folderId: typeof folderId === 'string' ? folderId : null,
+        pinnedUrl: typeof pinnedUrl === 'string' ? pinnedUrl : url, customTitle,
+        lastActiveAt: typeof lastActiveAt === 'number' && Number.isFinite(lastActiveAt) && lastActiveAt <= Date.now() ? lastActiveAt : Date.now(),
+      });
+      tab.title = normalizeTabTitle(title, url);
+      tab.titleIsExplicit = !!tab.title;
+      if (index === activeIndex) this.lastActive[space.id] = tab.id;
+    });
+    return this.lastActive[space.id];
   }
 
   async waitForLoad(tab: Tab, timeoutMs: number): Promise<void> {

@@ -117,7 +117,7 @@ test('fragmented MP4 video and audio combine into one playable file (needs ffmpe
   execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc=duration=4:size=160x120:rate=25', '-c:v', 'libx264', '-g', '25', ...frag, path.join(dir, 'v.mp4')]);
   execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'sine=duration=4', '-c:a', 'aac', '-frag_duration', '1000000', ...frag, path.join(dir, 'a.mp4')]);
   muxFragmentedMp4(path.join(dir, 'v.mp4'), path.join(dir, 'a.mp4'), path.join(dir, 'out.mp4'));
-  const streams = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', path.join(dir, 'out.mp4')]).toString().trim().split('\n');
+  const streams = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', path.join(dir, 'out.mp4')]).toString().trim().split(/\r?\n/);
   assert.deepEqual(streams, ['video', 'audio']);
   execFileSync('ffmpeg', ['-v', 'error', '-xerror', '-i', path.join(dir, 'out.mp4'), '-f', 'null', '-']);
   assert.throws(() => muxFragmentedMp4(path.join(dir, 'v.mp4'), path.join(dir, 'missing.mp4'), path.join(dir, 'x.mp4')));
