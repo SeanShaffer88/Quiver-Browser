@@ -5,6 +5,14 @@ Icon "${APP_ICON}"
 RequestExecutionLevel user
 SilentInstall silent
 
+VIProductVersion "${PRODUCT_VERSION}"
+VIFileVersion "${PRODUCT_VERSION}"
+VIAddVersionKey "ProductName" "Quiver"
+VIAddVersionKey "FileDescription" "Quiver Portable Launcher"
+VIAddVersionKey "LegalCopyright" "Copyright (c) 2026 Sean Shaffer"
+VIAddVersionKey "ProductVersion" "${DISPLAY_VERSION}"
+VIAddVersionKey "FileVersion" "${DISPLAY_VERSION}"
+
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
 !include "x64.nsh"

@@ -200,7 +200,24 @@ try {
     $extractor = Join-Path $stagedTool 'App/7zip/7z.exe'
     $launcher = Join-Path $packageRoot 'QuiverPortable.exe'
     $launcherSource = Join-Path $sourceRoot 'QuiverPortable.nsi'
-    Invoke-PackagingStep 'compile-launcher' $compiler @("/DOUTPUT=$launcher", "/DAPP_ICON=$icon", $launcherSource) $sourceRoot
+    Invoke-PackagingStep 'compile-launcher' $compiler @(
+        "/DOUTPUT=$launcher", "/DAPP_ICON=$icon", "/DPRODUCT_VERSION=$packageVersion", "/DDISPLAY_VERSION=$displayVersion", $launcherSource
+    ) $sourceRoot
+    $launcherVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($launcher)
+    $launcherMetadata = [ordered]@{
+        product_name = $launcherVersion.ProductName
+        file_description = $launcherVersion.FileDescription
+        product_version = $launcherVersion.ProductVersion
+        file_version = $launcherVersion.FileVersion
+        fixed_product_version = @($launcherVersion.ProductMajorPart, $launcherVersion.ProductMinorPart, $launcherVersion.ProductBuildPart, $launcherVersion.ProductPrivatePart) -join '.'
+        fixed_file_version = @($launcherVersion.FileMajorPart, $launcherVersion.FileMinorPart, $launcherVersion.FileBuildPart, $launcherVersion.FilePrivatePart) -join '.'
+    }
+    if ($launcherMetadata.product_name -cne 'Quiver' -or $launcherMetadata.file_description -cne 'Quiver Portable Launcher' -or
+        $launcherMetadata.product_version -cne $displayVersion -or $launcherMetadata.file_version -cne $displayVersion -or
+        $launcherMetadata.fixed_product_version -cne $packageVersion -or $launcherMetadata.fixed_file_version -cne $packageVersion) {
+        throw 'The compiled PortableApps launcher has unexpected product or version metadata.'
+    }
+    $manifest.launcher_metadata = $launcherMetadata
     if ($signingRequested) { $signatureEvidence.launcher = Invoke-SigningStep $launcher }
     Invoke-PackagingStep 'generate-installer' $wizard @($packageRoot) $stagedTool
     $installerSource = Join-Path $sourceRoot 'PortableApps.comInstaller.nsi'
