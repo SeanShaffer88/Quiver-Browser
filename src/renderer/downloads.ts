@@ -60,8 +60,13 @@ function button(label: string, d: DownloadInfo, action: string, primary = false)
 function render(items: DownloadInfo[]): void {
   if (!items.length) {
     const empty = document.createElement('li');
-    empty.className = 'note';
-    empty.textContent = scope.value === 'all' ? 'No downloads yet.' : 'No downloads in this profile yet.';
+    empty.className = 'empty-state';
+    const title = document.createElement('strong');
+    title.textContent = scope.value === 'all' ? 'No downloads yet' : 'No downloads in this profile yet';
+    const copy = document.createElement('span');
+    copy.className = 'note';
+    copy.textContent = 'Files you save show up here with their progress. Type download and a link in the command bar to fetch one, and press Ctrl+J to come back.';
+    empty.append(title, copy);
     list.replaceChildren(empty);
     return;
   }

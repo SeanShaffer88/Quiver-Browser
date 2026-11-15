@@ -344,6 +344,10 @@ export class TabManager {
       keys: Object.fromEntries(REBINDABLE.map(({ action }) => [action, shortcutLabel(action)])),
       update: this.updateNotice?.(),
       handoffs: this.handoffNotices?.(),
+      archive: {
+        count: this.archive.filter((e) => e.spaceId === this.activeSpaceId).length,
+        recent: this.recentlyArchived.at > Date.now() - 5000 ? this.recentlyArchived.ids : [],
+      },
     };
   }
 
@@ -850,6 +854,8 @@ export class TabManager {
 
   // ───────── auto-archive ─────────
   archive: ArchivedTab[] = [];
+  /** The tabs the latest pass archived, so the sidebar can show them moving into the archive. */
+  private recentlyArchived: { ids: number[]; at: number } = { ids: [], at: 0 };
 
   /** Archive temporary tabs nobody has looked at for the configured time (Arc's Today). */
   archiveStale(now = Date.now()): void {
@@ -868,6 +874,7 @@ export class TabManager {
       ids.push(...tabsToArchive(candidates, now, archiveHoursFor(space, this.settings.archiveAfterHours)));
     }
     if (!ids.length) return;
+    this.recentlyArchived = { ids, at: now };
     for (const id of ids) {
       const tab = this.tabs.get(id)!;
       const url = this.tabUrl(tab);
@@ -1342,7 +1349,7 @@ export class TabManager {
   /** Spaces with their folders and pinned tabs, as published to other devices. */
   syncedSpaces(): SyncedSpace[] {
     return publicSpaces(this.spaces).filter((sp) => !arcSpaceId(sp.id)).map((sp) => ({
-      id: sp.id, name: sp.name, color: sp.color, isolated: sp.isolated, ...(sp.icon ? { icon: sp.icon } : {}), folders: this.folders(sp.id),
+      id: sp.id, name: sp.name, color: sp.color, ...(sp.color2 ? { color2: sp.color2 } : {}), isolated: sp.isolated, ...(sp.icon ? { icon: sp.icon } : {}), folders: this.folders(sp.id),
       pinned: this.spaceTabs(sp.id).filter((t) => t.pinned).flatMap((t) => {
         const url = t.pinnedUrl ?? this.tabUrl(t);
         if (!restorableUrl(url)) return [];
@@ -1362,7 +1369,7 @@ export class TabManager {
       let space = this.spaces.find((sp) => sp.id === remote.id);
       if (space?.private) continue;
       if (!space) {
-        space = { id: remote.id, name: remote.name, color: remote.color, isolated: remote.isolated, ...(remote.icon ? { icon: remote.icon } : {}) };
+        space = { id: remote.id, name: remote.name, color: remote.color, ...(remote.color2 ? { color2: remote.color2 } : {}), isolated: remote.isolated, ...(remote.icon ? { icon: remote.icon } : {}) };
         this.store.state.spaces.push(space);
       } else {
         // Isolation is not changed on an existing Space: it decides which cookie jar its tabs already use.
@@ -1370,6 +1377,8 @@ export class TabManager {
         space.color = remote.color;
         if (remote.icon) space.icon = remote.icon;
         else delete space.icon;
+        if (remote.color2) space.color2 = remote.color2;
+        else delete space.color2;
       }
       space.folders = normalizeFolders(remote.folders);
       const known = new Set(space.folders.map((f) => f.id));
@@ -1430,6 +1439,17 @@ export class TabManager {
   /** Whether a Space can be deleted: at least one regular Space must remain, as private ones are never saved. */
   canDeleteSpace(id: string): boolean {
     return this.spaces.some((s) => s.id === id) && this.spaces.some((s) => s.id !== id && !s.private);
+  }
+
+  /** Set a Space's colour, and optionally a second colour for a gradient. Colours are validated by the caller. */
+  setSpaceColor(id: string, color: string, color2: string | undefined): void {
+    const s = this.spaces.find((x) => x.id === id);
+    if (!s) return;
+    s.color = color;
+    if (color2 && color2 !== color) s.color2 = color2;
+    else delete s.color2;
+    this.store.save();
+    this.emit();
   }
 
   renameSpace(id: string, name: string): void {

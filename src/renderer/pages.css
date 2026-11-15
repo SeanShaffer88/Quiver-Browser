@@ -177,3 +177,5 @@ kbd, code { font: 12px var(--mono); background: var(--panel-2); border: 1px soli
 .list-thumb { display: block; margin-top: 6px; max-width: 320px; max-height: 180px; object-fit: contain; }
 @media (prefers-reduced-motion: no-preference) { .card .card-delete { transition: opacity .12s; } }
 @media (forced-colors: active) { .card { border-color: CanvasText; } .card:focus-visible { outline-color: Highlight; } }
+.empty-state { display: grid; gap: 4px; padding: 16px; border: 1px dashed var(--border); border-radius: var(--radius); list-style: none; }
+.empty-state strong { font-weight: 600; }

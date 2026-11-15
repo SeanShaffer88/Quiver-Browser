@@ -5,7 +5,7 @@ const INVOKE = new Set([
   'state:get',
   'tab:close', 'tab:activate', 'tab:place', 'tab:menu', 'tab:console', 'tab:back', 'tab:forward', 'tab:reload',
   'tab:reopen', 'tab:retry-crash', 'recovery:dismiss',
-  'space:create', 'space:create-private', 'adblock:toggle-site', 'space:menu', 'space:rename', 'space:activate',
+  'space:create', 'space:create-private', 'adblock:toggle-site', 'space:menu', 'space:color', 'space:rename', 'space:activate',
   'folder:toggle', 'folder:rename', 'folder:move', 'folder:menu',
   'permission:decide', 'sitepermissions:forget', 'sitepermissions:list',
   'profile:context', 'settings:profile', 'spaces:list', 'spaces:update', 'history:clear-all',
@@ -31,7 +31,7 @@ const INVOKE = new Set([
   'board:open', 'board:new', 'boards:list', 'boards:get', 'boards:create', 'boards:rename', 'boards:delete', 'boards:add-note',
   'boards:update', 'boards:reorder', 'boards:remove', 'boards:open', 'boards:export', 'capture:done', 'capture:cancel',
 ]);
-const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'folder:rename-start', 'research:changed', 'sync:changed', 'downloads:changed', 'find:focus', 'peek:backdrop', 'little:state', 'boards:changed', 'capture:start']);
+const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'folder:rename-start', 'research:changed', 'sync:changed', 'downloads:changed', 'find:focus', 'peek:backdrop', 'little:state', 'boards:changed', 'capture:start', 'space:color-start']);
 
 contextBridge.exposeInMainWorld('quiver', {
   invoke: (channel: string, ...args: unknown[]): Promise<unknown> =>

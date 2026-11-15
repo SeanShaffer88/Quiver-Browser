@@ -125,6 +125,7 @@ export interface SyncedSpace {
   id: string;
   name: string;
   color: string;
+  color2?: string;
   isolated: boolean;
   /** One emoji, when the Space has one. */
   icon?: string;
@@ -160,6 +161,7 @@ export function normalizeSyncedSpaces(raw: unknown, restorable: (url: string) =>
       id: s.id,
       name: typeof s.name === 'string' && s.name.trim() ? s.name.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 40) : 'Space',
       color: typeof s.color === 'string' && /^#[0-9a-f]{6}$/i.test(s.color) ? s.color : '#5b8cff',
+      ...(typeof s.color2 === 'string' && /^#[0-9a-f]{6}$/i.test(s.color2) ? { color2: s.color2 } : {}),
       isolated: s.isolated === true,
       ...(icon(s.icon) ? { icon: icon(s.icon) } : {}),
       folders: s.folders,

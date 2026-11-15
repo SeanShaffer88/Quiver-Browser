@@ -29,6 +29,16 @@
       </select>
     </div>
     <p class="note">Applies to Quiver, its menus and dialogs, and websites that offer a light and dark look.</p>
+    <div class="row">
+      <label for="reduce-motion">Reduce motion</label>
+      <select id="reduce-motion" aria-describedby="reduce-motion-note">
+        <option value="system">System: follow Windows</option>
+        <option value="on">On: no animations</option>
+        <option value="off">Off: always animate</option>
+      </select>
+    </div>
+    <p class="note" id="reduce-motion-note">Turns off Quiver's own animations, such as tabs opening and closing, switching Spaces and the command bar. Websites are not affected. System follows Windows' "Animation effects" setting.</p>
+    <p class="note">Each Space tints the sidebar with its color. Right-click a Space and choose Space color to pick one or a two-color gradient; Quiver adjusts the tint so text stays readable.</p>
   </section>
   <section class="settings-section" id="section-spaces" aria-labelledby="spaces-heading">
     <h2 id="spaces-heading" tabindex="-1">Spaces and profiles</h2>
