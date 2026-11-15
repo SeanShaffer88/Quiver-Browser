@@ -17,6 +17,8 @@ import { meetingProvider } from './meetings';
 import { MediaPermissions } from './site-permissions';
 import { clearSessions, PrivacyController } from './privacy';
 import { normalizeTopics, Research } from './research';
+import { Boards } from './boards';
+import { CaptureMode } from './board-capture';
 import { normalizeSyncState, SyncService } from './sync-service';
 import { collectDeviceTabs } from './continuity';
 import os from 'node:os';
@@ -89,6 +91,9 @@ const MIME: Record<string, string> = {
   '.png': 'image/png',
 };
 
+/** Reads a board's capture or icon file for quiver://app/board-media/<board>/<file>; set once boards load. */
+let boardMedia: ((boardId: string, file: string) => Buffer | null) | undefined;
+
 let registeredInternal = false;
 function registerInternalProtocol(): void {
   if (registeredInternal) return;
@@ -99,6 +104,11 @@ function registerInternalProtocol(): void {
     try {
       const u = new URL(req.url);
       if (u.host !== 'app') return new Response('not found', { status: 404 });
+      const media = /^\/board-media\/([\w-]{1,64})\/([\w-]{1,80}\.png)$/.exec(u.pathname);
+      if (media) {
+        const data = boardMedia?.(media[1], media[2]);
+        return data ? new Response(new Uint8Array(data), { headers: { 'content-type': 'image/png', 'cache-control': 'no-store' } }) : new Response('not found', { status: 404 });
+      }
       const rel = decodeURIComponent(u.pathname).replace(/^\/+/, '') || 'newtab.html';
       const file = path.resolve(RENDERER_DIR, rel);
       if (!file.startsWith(RENDERER_DIR + path.sep)) return new Response('forbidden', { status: 403 });
@@ -436,6 +446,20 @@ async function main(): Promise<void> {
     }
   });
   research.prune(new Set(tabs.spaces.map(({ id }) => id)));
+  const boards = new Boards(app.getPath('userData'), new Set(tabs.spaces.filter((sp) => !sp.private).map(({ id }) => id)), () => {
+    tabs.emit();
+    for (const tab of tabs.tabs.values()) {
+      if (tab.internalPage === 'boards' && !tab.view.webContents.isDestroyed()) tab.view.webContents.send('boards:changed');
+    }
+  });
+  boardMedia = (boardId, file) => boards.readMedia(boardId, file);
+  tabs.boardsStatus = (spaceId) => (tabs.isPrivate(spaceId) ? undefined : boards.inSpace(spaceId).map(({ id, name, cards }) => ({ id, name, count: cards.length })));
+  const captureView = new WebContentsView({ webPreferences: prefs() });
+  restrictInternalNavigation(captureView.webContents, 'capture');
+  captureView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  captureView.setBackgroundColor('#00000000');
+  // A capture belongs to the tab it started on; it is dropped if that tab stops being the one shown.
+  const capture = new CaptureMode(win, captureView, (target) => tabs.activeTabId === target.tabId && !tabs.peekOpen);
   const history = new ProfileHistories(app.getPath('userData'), () => store.state.settings.rememberHistory);
   tabs.onVisit = (spaceId, url, title, kind) => {
     research.recordPage(spaceId, url, title);
@@ -515,7 +539,7 @@ async function main(): Promise<void> {
   });
   const littleWindows = little;
   actions = registerIpc({
-    tabs, store, boosts, devWatcher, overlay, shell, research, sync, history, downloads, updates, little: littleWindows,
+    tabs, store, boosts, devWatcher, overlay, shell, research, boards, capture, sync, history, downloads, updates, little: littleWindows,
     onPrivacyChanged: () => privacy.apply(),
     onThemeChanged: () => { nativeTheme.themeSource = store.state.settings.theme; },
     runCommand: (command) => {
@@ -527,7 +551,10 @@ async function main(): Promise<void> {
     },
   });
 
-  await Promise.all([shell.webContents.loadURL('quiver://app/shell.html'), overlay.webContents.loadURL('quiver://app/commandbar.html')]);
+  await Promise.all([
+    shell.webContents.loadURL('quiver://app/shell.html'), overlay.webContents.loadURL('quiver://app/commandbar.html'),
+    captureView.webContents.loadURL('quiver://app/capture.html'),
+  ]);
   const interrupted = store.state.sessionOpen === true;
   const restored = tabs.restore();
   if (interrupted && restored.tabs > 0) tabs.showSessionRecovery(restored);
@@ -579,7 +606,10 @@ async function main(): Promise<void> {
 
   if (store.state.settings.devServerScan) devWatcher.start();
 
-  win.on('resize', () => tabs.syncPhone());
+  win.on('resize', () => {
+    capture.cancel();
+    tabs.syncPhone();
+  });
   win.on('maximize', () => tabs.layout());
   win.on('unmaximize', () => tabs.layout());
   win.on('enter-full-screen', () => tabs.layout());
@@ -657,6 +687,7 @@ async function main(): Promise<void> {
     store.state.sessionOpen = false;
     store.flush();
     history.flush();
+    boards.flush();
     devWatcher.stop();
     boosts.stopWatching();
   });
@@ -665,7 +696,7 @@ async function main(): Promise<void> {
     screen.removeListener('display-metrics-changed', onDisplayMetrics);
     littleWindows.closeAll();
     tabs.dispose();
-    for (const view of [shell, overlay]) {
+    for (const view of [shell, overlay, captureView]) {
       if (!view.webContents.isDestroyed()) view.webContents.close();
     }
     app.quit();

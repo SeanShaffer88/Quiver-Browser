@@ -188,6 +188,23 @@ export class TabManager {
   }
   /** The research topic recording in a Space, for the toolbar. */
   researchStatus?: (spaceId: string) => ShellState['research'];
+  /** The boards in a Space, for the sidebar. */
+  boardsStatus?: (spaceId: string) => ShellState['boards'];
+  private notice?: { id: number; text: string };
+  private noticeTimer: NodeJS.Timeout | null = null;
+
+  /** Show a short confirmation in the toolbar (announced to screen readers) that clears itself. */
+  flash(text: string): void {
+    if (this.noticeTimer) clearTimeout(this.noticeTimer);
+    this.notice = { id: (this.notice?.id ?? 0) + 1, text: text.slice(0, 200) };
+    this.noticeTimer = setTimeout(() => {
+      this.notice = undefined;
+      this.noticeTimer = null;
+      this.emit();
+    }, 5000);
+    this.noticeTimer.unref?.();
+    this.emit();
+  }
   /** The opt-in "new version available" notice, if any. */
   updateNotice?: () => ShellState['update'];
   /** Tabs other devices sent here, waiting for Open or Dismiss. */
@@ -312,6 +329,8 @@ export class TabManager {
       find: this.findState && this.findState.tabId === this.activeTabId ? { ...this.findState } : undefined,
       zoom: this.activeZoom(),
       research: this.researchStatus?.(this.activeSpaceId),
+      boards: this.boardsStatus?.(this.activeSpaceId),
+      notice: this.notice,
       permissionPrompt: this.activePrompt(),
       adBlock: this.adBlockState(),
       downloads: this.downloads?.summary(),

@@ -125,3 +125,55 @@ kbd, code { font: 12px var(--mono); background: var(--panel-2); border: 1px soli
 .shortcuts td:last-child .btn { margin-left: 6px; }
 .shortcuts .tag { margin-left: 8px; font-size: 11px; color: var(--muted); }
 .shortcuts tr.recording td { background: var(--panel-2); }
+/* boards */
+.boards main { overflow: hidden; display: flex; flex-direction: column; gap: 6px; }
+.boards main > .note, .boards main > .status { margin: 0; }
+.boards .name-input { flex: 1; font-weight: 600; font-size: 15px; min-width: 160px; }
+.board-toolbar { flex-wrap: wrap; }
+.view-toggle { display: flex; gap: 4px; }
+.new-board { display: flex; gap: 6px; }
+.new-board input { flex: 1; min-width: 0; }
+.board-nav { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.board-nav-group { margin-top: 10px; }
+.canvas-scroll { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius);
+  background-color: var(--bg); background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 24px 24px; }
+.canvas { position: relative; list-style: none; margin: 0; padding: 0; }
+.card { position: absolute; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .18); overflow: hidden; touch-action: none; }
+.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card.dragging { box-shadow: 0 8px 24px rgba(0, 0, 0, .3); z-index: 1; }
+.card .grip { height: 12px; flex: none; cursor: grab; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+.card.dragging .grip { cursor: grabbing; }
+.card .note-body, .card .note-editor { flex: 1; min-height: 0; overflow: auto; padding: 8px 10px; user-select: text; cursor: default; }
+.card .note-editor { border: 0; border-radius: 0; resize: none; font: 13px/1.5 var(--mono); background: var(--bg); }
+.note-body > :first-child { margin-top: 0; }
+.note-body > :last-child { margin-bottom: 0; }
+.note-body h3, .note-body h4, .note-body h5 { margin: .4em 0 .2em; font-size: 14px; }
+.note-body h3 { font-size: 16px; }
+.note-body ul, .note-body ol { padding-inline-start: 20px; margin: .3em 0; }
+.note-body p { margin: .3em 0; }
+.note-body blockquote { margin: .3em 0; padding-inline-start: 10px; border-inline-start: 3px solid var(--border); color: var(--muted); }
+.note-body a { color: var(--accent); }
+.card .link-open { flex: 1; display: grid; grid-template-columns: 20px 1fr; gap: 2px 8px; align-content: center; padding: 8px 10px; text-align: left; color: var(--text); }
+.card .link-open:hover .link-title { text-decoration: underline; }
+.link-open .favicon, .link-open .monogram { grid-row: span 2; align-self: center; }
+.link-open .monogram { width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center; background: var(--panel-2); font-weight: 600; font-size: 11px; }
+.link-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-host { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-body { flex: 1; min-height: 0; margin: 0; display: flex; flex-direction: column; padding: 4px; }
+.capture-body img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
+.capture-body figcaption { font-size: 12px; padding-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-body figcaption .link { color: var(--accent); max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.card .card-delete { position: absolute; top: 12px; right: 2px; opacity: 0; }
+.card:hover .card-delete, .card:focus-within .card-delete { opacity: 1; }
+.card .resize { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--muted) 50%, var(--muted) 60%, transparent 60%, transparent 75%, var(--muted) 75%, var(--muted) 85%, transparent 85%); }
+.card-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.card-item { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; background: var(--panel); }
+.card-item-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.card-item-head strong { flex: 1; min-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.card-item-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.card-item .note-body { margin-top: 6px; user-select: text; }
+.list-thumb { display: block; margin-top: 6px; max-width: 320px; max-height: 180px; object-fit: contain; }
+@media (prefers-reduced-motion: no-preference) { .card .card-delete { transition: opacity .12s; } }
+@media (forced-colors: active) { .card { border-color: CanvasText; } .card:focus-visible { outline-color: Highlight; } }

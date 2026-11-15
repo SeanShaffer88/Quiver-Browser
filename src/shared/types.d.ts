@@ -267,6 +267,10 @@ export interface ShellState {
   zoom: number;
   /** The research topic recording in the active Space. */
   research?: { id: string; name: string; count: number };
+  /** Boards in the active Space, most recently changed first (none in a private Space). */
+  boards?: { id: string; name: string; count: number }[];
+  /** A short confirmation, such as a page added to a board; it clears itself. */
+  notice?: { id: number; text: string };
   /** A camera / microphone / screen request waiting on the active tab. */
   permissionPrompt?: { id: number; host: string; kinds: ('camera' | 'microphone' | 'screen')[] };
   /** Ad and tracker blocking on the active web tab; absent for Quiver's own pages. */
@@ -313,7 +317,7 @@ export type SuggestionAction =
   | { type: 'copy'; text: string }
   | { type: 'boost'; name: string }
   | { type: 'env'; target: EnvBadge; url: string }
-  | { type: 'internal'; page: 'boosts' | 'settings' | 'research' | 'downloads' }
+  | { type: 'internal'; page: 'boosts' | 'settings' | 'research' | 'downloads' | 'boards' }
   | { type: 'activate-tab'; target: TabCommandTarget }
   | { type: 'split-with'; target: TabCommandTarget }
   | { type: 'browser'; command: BrowserCommand }
@@ -327,6 +331,9 @@ export type SuggestionAction =
   | { type: 'remote-tab'; deviceId: string; device: string; url: string }
   | { type: 'continue'; deviceId: string; device: string; spaceId: string; space: string; count: number }
   | { type: 'send-tab'; deviceId: string; device: string }
+  /** An existing board by id, or a new board in the current Space by name. */
+  | { type: 'board'; op: 'open' | 'add-page' | 'capture'; boardId: string }
+  | { type: 'board'; op: 'open' | 'add-page' | 'capture'; name: string }
   | { type: 'noop' };
 
 export type BrowserCommand =
@@ -334,7 +341,8 @@ export type BrowserCommand =
   | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings' | 'downloads'
   | 'find' | 'zoom-in' | 'zoom-out' | 'zoom-reset'
   | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space'
-  | 'split' | 'unsplit' | 'private-space' | 'little-open' | 'devices' | 'send-tab';
+  | 'split' | 'unsplit' | 'private-space' | 'little-open' | 'devices' | 'send-tab'
+  | 'boards' | 'board-add' | 'board-capture';
 
 /** The Little Quiver toolbar: what the page in that window shows. */
 export interface LittleQuiverState {

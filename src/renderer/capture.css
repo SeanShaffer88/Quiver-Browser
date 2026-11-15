@@ -1,0 +1,17 @@
+html, body { background: transparent; }
+.surface { position: fixed; inset: 0; cursor: crosshair; background: rgba(0, 0, 0, .35); outline: none; }
+.surface.has-selection { background: transparent; }
+/* The dimming outside the selection comes from the selection's own shadow, so the chosen area stays clear. */
+.selection { position: absolute; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .35); outline: 2px solid var(--accent); outline-offset: 0; pointer-events: none; }
+.bar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+  max-width: min(760px, calc(100% - 24px)); padding: 10px 12px; background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, .3); cursor: default; }
+.bar.low { top: auto; bottom: 12px; }
+.help { color: var(--muted); flex: 1 1 260px; }
+.status { flex-basis: 100%; color: var(--prod); }
+.status:empty { display: none; }
+@media (forced-colors: active) {
+  .surface { background: transparent; }
+  .selection { outline-color: Highlight; box-shadow: none; }
+  .bar { border-color: CanvasText; }
+}

@@ -28,8 +28,10 @@ const INVOKE = new Set([
   'downloads:list', 'downloads:act', 'downloads:clear',
   'research:list', 'research:get', 'research:rename', 'research:notes', 'research:item-note', 'research:item-remove',
   'research:delete', 'research:resume', 'research:stop', 'research:open', 'research:export',
+  'board:open', 'board:new', 'boards:list', 'boards:get', 'boards:create', 'boards:rename', 'boards:delete', 'boards:add-note',
+  'boards:update', 'boards:reorder', 'boards:remove', 'boards:open', 'boards:export', 'capture:done', 'capture:cancel',
 ]);
-const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'folder:rename-start', 'research:changed', 'sync:changed', 'downloads:changed', 'find:focus', 'peek:backdrop', 'little:state']);
+const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'folder:rename-start', 'research:changed', 'sync:changed', 'downloads:changed', 'find:focus', 'peek:backdrop', 'little:state', 'boards:changed', 'capture:start']);
 
 contextBridge.exposeInMainWorld('quiver', {
   invoke: (channel: string, ...args: unknown[]): Promise<unknown> =>

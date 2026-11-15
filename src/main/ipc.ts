@@ -1,9 +1,16 @@
-import { clipboard, dialog, ipcMain, Menu, session, shell as electronShell, type IpcMainInvokeEvent, type MenuItemConstructorOptions, type WebContentsView, type WebFrameMain } from 'electron';
+import { app, clipboard, dialog, ipcMain, Menu, session, shell as electronShell, type IpcMainInvokeEvent, type MenuItemConstructorOptions, type WebContentsView, type WebFrameMain } from 'electron';
 import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
 import { detectEnv } from '../shared/env';
 import { parseCommand } from '../shared/parser';
 import type { BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, ProfileContext, Settings, ShortcutRow, Space, SpaceSettingsView, Suggestion } from '../shared/types';
+import fs from 'node:fs';
+import path from 'node:path';
 import { BookmarkImports } from './bookmark-import';
+import { ADD_TO_BOARD_PREFIX, boardSuggestions, CAPTURE_TO_BOARD_PREFIX } from './board-commands';
+import { faviconPng, type CaptureMode } from './board-capture';
+import { cardLabel, cardUrls, type Board, type Boards } from './boards';
+import { renderNote } from './board-text';
+import { researchUrl } from './research';
 import { ArcImports } from './arc-import';
 import { isValidBoostName, type Boosts } from './boosts';
 import { BookmarkProfileReadError, bookmarkProfileLabel, discoverBookmarkProfiles, readChromiumBookmarkCandidates } from './chromium-bookmarks';
@@ -43,8 +50,10 @@ export interface IpcDeps {
   overlay: WebContentsView;
   shell: WebContentsView;
   /** Runs a browser action chosen in the command palette. */
-  runCommand: (command: BrowserCommand) => void;
+  runCommand: (command: Exclude<BrowserCommand, BoardCommand>) => void;
   research: Research;
+  boards: Boards;
+  capture: CaptureMode;
   sync: SyncService;
   history: ProfileHistories;
   downloads: Downloads;
@@ -57,6 +66,11 @@ export interface IpcDeps {
 }
 
 const MAX_COMMAND_LENGTH = 65536;
+
+type BoardCommand = 'boards' | 'board-add' | 'board-capture';
+
+/** Native menus treat & as a mnemonic marker. */
+const menuText = (value: string) => value.replace(/&/g, '&&');
 
 const KIND_LABEL = { ftp: 'FTP', hls: 'HLS stream', dash: 'DASH stream', metalink: 'Metalink', webdav: 'WebDAV' } as const;
 
@@ -96,7 +110,7 @@ export function sanitizeEnvGroups(input: unknown): EnvGroup[] {
 }
 
 export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?: CommandMode) => void; toggleSidebar: () => void; applySettings: (patch: Partial<Settings>) => void } {
-  const { tabs, store, boosts, devWatcher, overlay, shell, research } = d;
+  const { tabs, store, boosts, devWatcher, overlay, shell, research, boards, capture } = d;
 
   /** The Space a Quiver page (Settings, Downloads) was opened in, which decides the profile it shows. */
   const senderSpace = (e: IpcMainInvokeEvent) => {
@@ -134,6 +148,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       let assignedPage: InternalPage | undefined;
       if (e.sender === shell.webContents) assignedPage = 'shell';
       else if (e.sender === overlay.webContents) assignedPage = 'commandbar';
+      else if (e.sender === capture.view.webContents) assignedPage = 'capture';
       else {
         for (const tab of tabs.tabs.values()) {
           if (tab.internalPage && e.sender === tab.view.webContents) {
@@ -218,6 +233,8 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (meet) return meet;
     const topics = researchSuggestions(text, research.inSpace(context.spaceId), research.active(context.spaceId), context.internal ? '' : context.url);
     if (topics) return topics;
+    const boardList = boardSuggestions(text, boards.inSpace(context.spaceId), context.internal ? '' : context.url, tabs.isPrivate(context.spaceId));
+    if (boardList) return boardList;
     const downloadSuggestion = downloadSuggestions(text, context.internal ? '' : context.url);
     if (downloadSuggestion) return downloadSuggestion;
     const archived = /^archive(?:\s+([\s\S]*))?$/i.exec(text.trim());
@@ -300,6 +317,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
         ? { label: 'Exit split view', click: () => tabs.exitSplit() }
         : { label: 'Open in split view', enabled: tabs.activeTabId !== null && tabs.activeTab?.spaceId === tab.spaceId, click: () => tabs.startSplit(tab.id) },
       { type: 'separator' },
+      ...boardMenu(tab),
       { label: 'Copy link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(false); if (link) clipboard.writeText(link); } },
       { label: 'Copy Markdown link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(true); if (link) clipboard.writeText(link); } },
       { label: 'Open the console', enabled: !tab.internal, click: () => tabs.openConsole(tab.id) },
@@ -446,7 +464,11 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       { label: 'Rename Space', click: () => shell.webContents.send('space:rename-start', id) },
       { label: 'New private Space', accelerator: 'Ctrl+Shift+N', click: () => tabs.createPrivateSpace() },
       { type: 'separator' },
-      { label: tabs.isPrivate(String(id)) ? 'Close private Space and discard everything' : 'Delete Space and its tabs', enabled: tabs.canDeleteSpace(String(id)), click: () => void tabs.deleteSpace(String(id)).then(() => research.prune(new Set(tabs.spaces.map((sp) => sp.id)))) },
+      { label: tabs.isPrivate(String(id)) ? 'Close private Space and discard everything' : 'Delete Space and its tabs', enabled: tabs.canDeleteSpace(String(id)), click: () => void tabs.deleteSpace(String(id)).then(() => {
+        const left = new Set(tabs.spaces.map((sp) => sp.id));
+        research.prune(left);
+        boards.prune(left);
+      }) },
     ]);
     menu.popup();
   });
@@ -553,7 +575,37 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       case 'unarchive':
         if (!tabs.unarchive(action.url, action.archivedAt)) return 'stale';
         break;
+      case 'board': {
+        if (tabs.isPrivate(context.spaceId)) return 'unavailable';
+        const existing = 'boardId' in action ? boards.get(action.boardId) : undefined;
+        if ('boardId' in action && existing?.spaceId !== context.spaceId) return 'stale';
+        const tab = tabs.activeTab;
+        if (action.op !== 'open' && (!tab || tab.internal || !researchUrl(tabs.tabUrl(tab)))) return 'unavailable';
+        const board = existing ?? ('name' in action ? boardNamed(context.spaceId, action.name) : undefined);
+        if (!board) return 'unavailable';
+        if (action.op === 'open') {
+          tabs.navigate(`quiver://boards?board=${encodeURIComponent(board.id)}`);
+          break;
+        }
+        if (action.op === 'add-page') {
+          closeOverlay(true);
+          void addPageToBoard(tab!, board);
+        } else {
+          closeOverlay(false);
+          startCapture(tab!, board);
+        }
+        return 'done';
+      }
       case 'browser':
+        if (action.command === 'boards') {
+          tabs.navigate('quiver://boards');
+          break;
+        }
+        if (action.command === 'board-add' || action.command === 'board-capture') {
+          // Reopen the bar with the board picker typed in, so the next choice is the board.
+          openCommandBar(action.command === 'board-add' ? ADD_TO_BOARD_PREFIX : CAPTURE_TO_BOARD_PREFIX, command.mode);
+          return 'done';
+        }
         closeOverlay(true);
         d.runCommand(action.command);
         return 'done';
@@ -592,7 +644,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('shell', 'cmd:run', (_e, action: unknown) => {
     const choice = action as Partial<{ type: string; page: string; topic: string }> | null;
     if (choice?.type !== 'internal') return;
-    if (choice.page === 'boosts' || choice.page === 'settings' || choice.page === 'downloads') tabs.navigate(`quiver://${choice.page}`);
+    if (choice.page === 'boosts' || choice.page === 'settings' || choice.page === 'downloads' || choice.page === 'boards') tabs.navigate(`quiver://${choice.page}`);
     if (choice.page === 'research') {
       const topic = typeof choice.topic === 'string' && research.get(choice.topic) ? `?topic=${encodeURIComponent(choice.topic)}` : '';
       tabs.navigate(`quiver://research${topic}`);
@@ -662,6 +714,145 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (!topic) return false;
     clipboard.writeText(topicMarkdown(topic));
     return true;
+  });
+
+  // boards
+  type AnyTab = NonNullable<TabManager['activeTab']>;
+  /** An existing board of this name in the Space, else a new one. */
+  function boardNamed(spaceId: string, name: string): Board | undefined {
+    const wanted = name.replace(/\s+/g, ' ').trim().toLowerCase();
+    return boards.inSpace(spaceId).find((b) => b.name.toLowerCase() === wanted) ?? boards.create(spaceId, name);
+  }
+  const pageTitle = (tab: AnyTab) => (tab.titleIsExplicit ? tab.title : '');
+  async function addPageToBoard(tab: AnyTab, board: Board): Promise<void> {
+    const url = tabs.tabUrl(tab);
+    if (tab.internal || !researchUrl(url) || tabs.isPrivate(tab.spaceId)) return tabs.flash('Only web pages can be added to a board.');
+    const icon = tab.favicon ? await faviconPng(tab.favicon, tab.partition) : null;
+    const card = boards.add(board.id, { kind: 'link', url, title: pageTitle(tab), icon });
+    tabs.flash(typeof card === 'string' ? card : `Added to “${board.name}”.`);
+  }
+  function startCapture(tab: AnyTab, board: Board): void {
+    if (tab.internal || tab.view.webContents.isDestroyed() || !researchUrl(tabs.tabUrl(tab)) || tabs.isPrivate(tab.spaceId)) {
+      tabs.flash('Only web pages can be captured.');
+      return;
+    }
+    if (tabs.peekOpen) tabs.closePeek();
+    if (tabs.activeTabId !== tab.id) tabs.activateTab(tab.id);
+    if (!capture.start({ tabId: tab.id, boardId: board.id, boardName: board.name, contents: tab.view.webContents, bounds: tab.view.getBounds() })) {
+      tabs.flash('Quiver could not start a capture here.');
+    }
+  }
+  function boardMenu(tab: AnyTab): Electron.MenuItemConstructorOptions[] {
+    if (tab.internal || tabs.isPrivate(tab.spaceId)) return [];
+    const list = boards.inSpace(tab.spaceId).slice(0, 15);
+    const items = (run: (b: Board) => void, prefix: string): Electron.MenuItemConstructorOptions[] => [
+      ...list.map((b) => ({ label: menuText(b.name), click: () => run(b) })),
+      ...(list.length ? [{ type: 'separator' as const }] : []),
+      { label: 'New board…', click: () => { tabs.activateTab(tab.id); openCommandBar(prefix); } },
+    ];
+    return [
+      { label: 'Add page to board', submenu: items((b) => void addPageToBoard(tab, b), ADD_TO_BOARD_PREFIX) },
+      { label: 'Capture to board', submenu: items((b) => startCapture(tab, b), CAPTURE_TO_BOARD_PREFIX) },
+      { type: 'separator' },
+    ];
+  }
+
+  // capture overlay
+  handle('capture', 'capture:done', async (_e, rect: unknown) => {
+    const result = await capture.finish(rect);
+    if (typeof result === 'string') {
+      // A selection too small keeps capture mode open and the page shows why; anything else ends it.
+      if (capture.active) return result;
+      tabs.flash(result);
+      return '';
+    }
+    if (!result) return '';
+    const board = boards.get(result.target.boardId);
+    const tab = tabs.tabs.get(result.target.tabId);
+    if (!board || !tab) return '';
+    const card = boards.add(board.id, {
+      kind: 'capture', png: result.image.png, imageW: result.image.width, imageH: result.image.height, url: tabs.tabUrl(tab), title: pageTitle(tab),
+    });
+    tabs.flash(typeof card === 'string' ? card : `Captured to “${board.name}”.`);
+    return '';
+  });
+  handle('capture', 'capture:cancel', () => {
+    if (capture.active) tabs.flash('Capture cancelled.');
+    capture.cancel();
+  });
+
+  // sidebar
+  handle('shell', 'board:open', (_e, id: unknown) => {
+    const board = boards.get(id);
+    if (board && board.spaceId === tabs.activeSpaceId) tabs.navigate(`quiver://boards?board=${encodeURIComponent(board.id)}`);
+  });
+  handle('shell', 'board:new', () => openCommandBar('board ', 'current'));
+
+  // Boards page
+  const senderTab = (e: IpcMainInvokeEvent) => [...tabs.tabs.values()].find((t) => t.view.webContents === e.sender);
+  const spaceName = (id: string) => tabs.spaces.find((sp) => sp.id === id)?.name ?? '';
+  const boardView = (board: Board) => ({
+    id: board.id, name: board.name, spaceId: board.spaceId, spaceName: spaceName(board.spaceId), updatedAt: board.updatedAt,
+    cards: board.cards.map((c) => {
+      const media = (file: string) => `quiver://app/board-media/${board.id}/${file}`;
+      const extra = c.kind === 'text' ? { html: renderNote(c.text) } : c.kind === 'capture' ? { src: media(c.file) } : c.icon ? { iconSrc: media(c.icon) } : {};
+      return { ...c, ...extra, label: cardLabel(c) };
+    }),
+  });
+  handle('boards', 'boards:list', (e) => {
+    const here = senderTab(e)?.spaceId ?? tabs.activeSpaceId;
+    return {
+      spaceId: here, spaceName: spaceName(here), privateSpace: tabs.isPrivate(here),
+      boards: boards.list().filter((b) => tabs.spaces.some((sp) => sp.id === b.spaceId)).map((b) => ({ ...b, spaceName: spaceName(b.spaceId) })),
+    };
+  });
+  handle('boards', 'boards:get', (_e, id: unknown) => {
+    const board = boards.get(id);
+    return board ? boardView(board) : null;
+  });
+  handle('boards', 'boards:create', (e, name: unknown) => {
+    const spaceId = senderTab(e)?.spaceId ?? tabs.activeSpaceId;
+    if (tabs.isPrivate(spaceId)) return null;
+    return boards.create(spaceId, typeof name === 'string' ? name : '')?.id ?? null;
+  });
+  handle('boards', 'boards:rename', (_e, id: unknown, name: unknown) => boards.rename(id, name));
+  handle('boards', 'boards:delete', (_e, id: unknown) => boards.delete(id));
+  handle('boards', 'boards:add-note', (_e, id: unknown, at: unknown) => {
+    const p = at && typeof at === 'object' ? at as Record<string, unknown> : null;
+    const spot = p && typeof p.x === 'number' && typeof p.y === 'number' && Number.isFinite(p.x) && Number.isFinite(p.y) ? { x: p.x, y: p.y } : undefined;
+    const card = boards.add(id, { kind: 'text', text: '', at: spot });
+    return typeof card === 'string' ? { error: card } : { id: card.id };
+  });
+  handle('boards', 'boards:update', (_e, id: unknown, cardId: unknown, patch: unknown) =>
+    boards.update(id, cardId, patch && typeof patch === 'object' ? patch as Record<string, unknown> : {}));
+  handle('boards', 'boards:reorder', (_e, id: unknown, cardId: unknown, index: unknown) => boards.reorder(id, cardId, index));
+  handle('boards', 'boards:remove', (_e, id: unknown, cardId: unknown) => boards.remove(id, cardId));
+  handle('boards', 'boards:open', (_e, id: unknown, cardId: unknown, url: unknown) => {
+    // Only addresses that are on the card can be opened, and only in the board's Space.
+    const found = boards.card(id, cardId);
+    if (!found || !tabs.spaces.some((sp) => sp.id === found.board.spaceId)) return false;
+    const allowed = cardUrls(found.card);
+    const target = typeof url === 'string' ? url : allowed[0];
+    if (!target || !allowed.includes(target)) return false;
+    if (tabs.activeSpaceId !== found.board.spaceId) tabs.activateSpace(found.board.spaceId);
+    tabs.openTab(target, { spaceId: found.board.spaceId });
+    return true;
+  });
+  handle('boards', 'boards:export', async (_e, id: unknown) => {
+    const board = boards.get(id);
+    const html = board && boards.exportHtml(board.id);
+    if (!board || !html) return { error: 'That board no longer exists.' };
+    const base = board.name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Board';
+    const choice = await dialog.showSaveDialog({
+      title: 'Export board', defaultPath: path.join(app.getPath('downloads'), `${base}.html`), filters: [{ name: 'Web page', extensions: ['html'] }],
+    });
+    if (choice.canceled || !choice.filePath) return { cancelled: true };
+    try {
+      await fs.promises.writeFile(choice.filePath, html, 'utf8');
+      return { saved: path.basename(choice.filePath) };
+    } catch {
+      return { error: 'Quiver could not write that file.' };
+    }
   });
 
   // settings

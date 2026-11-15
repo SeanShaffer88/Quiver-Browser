@@ -27,6 +27,10 @@ const handoffStatus = h('div', { class: 'sr-only', role: 'status', 'aria-atomic'
 document.body.append(handoffStatus);
 /** Handoffs already announced, so each is read out once when it arrives. */
 const announcedHandoffs = new Set<string>();
+// Confirmations such as "Added to “Ideas”" are announced from one lasting live region; the toolbar shows them too.
+const noticeStatus = h('div', { class: 'sr-only', role: 'status', 'aria-atomic': 'true' });
+document.body.append(noticeStatus);
+let shownNotice = 0;
 let state: ShellState | null = null;
 let addingSpace = false;
 let renamingSpace: string | null = null;
@@ -571,7 +575,7 @@ function sidebarKey(s: ShellState): string {
   return JSON.stringify([
     s.tabs.filter((t) => t.spaceId === s.activeSpaceId),
     devServers,
-    rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.recentlyClosed, rest.recoveryNotice, rest.localServerStatus,
+    rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.boards, rest.recentlyClosed, rest.recoveryNotice, rest.localServerStatus,
     rest.settings.sidebarCollapsed, rest.settings.devServerScan, rest.keys, rest.update, rest.handoffs, addingSpace, renamingSpace, renamingFolder,
   ]);
 }
@@ -602,6 +606,8 @@ function renderSidebar(s: ShellState): void {
     );
   }
 
+  const boardsSection = s.boards && renderBoards(s.boards);
+
   const active = s.spaces.find(({ id }) => id === s.activeSpaceId);
   const isolation = active && (active.private ? h('p', {
     class: 'space-isolation private',
@@ -619,7 +625,7 @@ function renderSidebar(s: ShellState): void {
   ));
   sidebar.replaceChildren(brand, renderSpaces(s), ...(isolation ? [isolation] : []),
     ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderUpdateNotice(s), ...renderHandoffs(s), ...renderRecovery(s),
-    ...(s.localServerStatus ? [renderLocalServerStatus(s.localServerStatus)] : []), tabsEl, servers);
+    ...(s.localServerStatus ? [renderLocalServerStatus(s.localServerStatus)] : []), tabsEl, ...(boardsSection ? [boardsSection] : []), servers);
   tabsEl.scrollTop = previousScroll;
   tabList = { scroller: tabsEl, inner, rows: s.sidebar, meta: rowMeta(s.sidebar), tabs: new Map(spaceTabs.map((t) => [t.id, t])), activeId: s.activeTabId };
   const reveal = s.activeSpaceId + ':' + s.activeTabId;
@@ -629,6 +635,26 @@ function renderSidebar(s: ShellState): void {
     if (index >= 0) revealRow(index);
   }
   paintTabs();
+}
+
+const SIDEBAR_BOARDS = 6;
+
+function renderBoards(list: NonNullable<ShellState['boards']>): HTMLElement {
+  const section = h('section', { class: 'servers boards-list', 'aria-label': 'Boards' }, h('h3', {}, h('span', {}, 'Boards'),
+    h('button', { class: 'icon-btn', title: 'New board', 'aria-label': 'New board', dataset: { focusKey: 'board-new' }, onClick: () => call('board:new') }, '+')));
+  if (!list.length) section.append(h('div', { class: 'empty' }, 'Collect pages, notes and captures. Type “board” in the command bar.'));
+  for (const b of list.slice(0, SIDEBAR_BOARDS)) {
+    const cards = `${b.count} ${b.count === 1 ? 'card' : 'cards'}`;
+    section.append(h('button', {
+      class: 'server board-link', title: `${b.name}\n${cards}`, 'aria-label': `Open board ${b.name}, ${cards}`, dataset: { focusKey: 'board-' + b.id },
+      onClick: () => call('board:open', b.id),
+    }, h('span', { class: 'port', 'aria-hidden': 'true' }, '▦'), h('span', { class: 'stitle' }, b.name)));
+  }
+  if (list.length > SIDEBAR_BOARDS) {
+    section.append(h('button', { class: 'server board-link', dataset: { focusKey: 'board-all' }, onClick: () => call('cmd:run', { type: 'internal', page: 'boards' }) },
+      h('span', { class: 'port', 'aria-hidden': 'true' }, '…'), h('span', { class: 'stitle' }, `All ${list.length} boards`)));
+  }
+  return section;
 }
 
 function activeTab(s: ShellState): TabInfo | undefined {
@@ -768,6 +794,7 @@ function renderToolbar(s: ShellState): void {
     ...(s.zoom !== 1 && Number.isFinite(s.zoom) ? [h('button', { class: 'zoom-chip', title: 'Reset zoom (Ctrl+0)', 'aria-label': `Zoom ${Math.round(s.zoom * 100)} percent. Reset zoom`, dataset: { focusKey: 'zoom' }, onClick: () => call('zoom:reset') }, `${Math.round(s.zoom * 100)}%`)] : []),
     ...(shield ? [shield] : []),
     ...(research ? [research] : []),
+    ...(s.notice ? [h('span', { class: 'notice-chip', 'aria-hidden': 'true', title: s.notice.text }, s.notice.text)] : []),
     ...(downloadsButton ? [downloadsButton] : []),
     icon(ICON.env, withKeys(s, 'Switch environment: local → staging → prod', 'env'), () => call('env:switch'), { disabled: !t?.env }),
     phone,
@@ -802,6 +829,10 @@ function render(): void {
   const arrived = (state.handoffs ?? []).filter((x) => !announcedHandoffs.has(x.id));
   for (const x of arrived) announcedHandoffs.add(x.id);
   if (arrived.length) handoffStatus.textContent = `Tab from ${arrived[0].from}: ${arrived[0].title}`;
+  if (state.notice && state.notice.id !== shownNotice) {
+    shownNotice = state.notice.id;
+    noticeStatus.textContent = state.notice.text;
+  } else if (!state.notice && noticeStatus.textContent) noticeStatus.textContent = '';
   if (focused?.dataset.focusKey && !focused.isConnected && !focusShellControl(focused.dataset.focusKey)) {
     if (!focusShellControl('tab-' + state.activeTabId)) focusShellControl('address');
   }
