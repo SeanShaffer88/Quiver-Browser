@@ -7,13 +7,16 @@ const INVOKE = new Set([
   'tab:reopen', 'tab:retry-crash', 'recovery:dismiss',
   'space:create', 'space:create-private', 'adblock:toggle-site', 'space:menu', 'space:rename', 'space:activate',
   'folder:toggle', 'folder:rename', 'folder:move', 'folder:menu',
-  'permission:decide', 'sitepermissions:forget',
+  'permission:decide', 'sitepermissions:forget', 'sitepermissions:list',
+  'profile:context', 'settings:profile', 'spaces:list', 'spaces:update', 'history:clear-all',
   'find:query', 'find:close', 'zoom:reset',
   'split:ratio', 'split:exit', 'peek:close', 'peek:open-tab',
+  'little:get', 'little:copy', 'little:open', 'little:close',
   'sidebar:toggle', 'preview:toggle', 'env:switch',
   'sidebar:toggle', 'sidebar:peek', 'preview:toggle', 'env:switch',
   'cmd:open', 'cmd:close', 'cmd:suggest', 'cmd:commit', 'cmd:run',
   'settings:get', 'settings:set', 'sync:status', 'sync:choose', 'sync:disconnect', 'sync:options', 'sync:now',
+  'devices:list', 'devices:open-tab', 'devices:continue', 'handoff:open', 'handoff:dismiss',
   'history:clear', 'history:count',
   'shortcuts:list', 'shortcuts:set', 'shortcuts:reset', 'shortcuts:recording',
   'update:status', 'update:check', 'update:open', 'update:dismiss',
@@ -25,8 +28,10 @@ const INVOKE = new Set([
   'downloads:list', 'downloads:act', 'downloads:clear',
   'research:list', 'research:get', 'research:rename', 'research:notes', 'research:item-note', 'research:item-remove',
   'research:delete', 'research:resume', 'research:stop', 'research:open', 'research:export',
+  'board:open', 'board:new', 'boards:list', 'boards:get', 'boards:create', 'boards:rename', 'boards:delete', 'boards:add-note',
+  'boards:update', 'boards:reorder', 'boards:remove', 'boards:open', 'boards:export', 'capture:done', 'capture:cancel',
 ]);
-const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'folder:rename-start', 'research:changed', 'sync:changed', 'downloads:changed', 'find:focus', 'peek:backdrop']);
+const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'folder:rename-start', 'research:changed', 'sync:changed', 'downloads:changed', 'find:focus', 'peek:backdrop', 'little:state', 'boards:changed', 'capture:start']);
 
 contextBridge.exposeInMainWorld('quiver', {
   invoke: (channel: string, ...args: unknown[]): Promise<unknown> =>

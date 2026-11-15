@@ -31,13 +31,16 @@ export type PromptChoice = 'once' | 'always' | 'block';
 export interface PendingPrompt {
   id: number;
   contentsId: number;
+  /** The storage partition (profile) the decision is saved for. */
+  scope: string;
   origin: string;
   kinds: MediaKind[];
 }
 
 /**
  * Camera, microphone and screen-share decisions. Requests wait for the person to answer a prompt unless the site
- * is already allowed or blocked. "Once" lasts until the tab navigates; "always" and "block" are saved per origin.
+ * is already allowed or blocked. "Once" lasts until the tab navigates; "always" and "block" are saved per origin,
+ * separately for each scope (the storage partition of the page, so each profile has its own decisions).
  */
 export class MediaPermissions {
   private nextId = 1;
@@ -47,17 +50,19 @@ export class MediaPermissions {
   private readonly grantedSinceNavigation = new Set<number>();
 
   constructor(
-    private readonly saved: () => Record<string, SiteDecision>,
-    private readonly save: (origin: string, decision: SiteDecision | null) => void,
+    private readonly saved: (scope: string) => Record<string, SiteDecision>,
+    private readonly save: (origin: string, decision: SiteDecision | null, scope: string) => void,
     private readonly changed: () => void,
     private readonly isMeeting: (url: string) => boolean,
+    /** The scope a page's decisions belong to. */
+    private readonly scopeOf: (contentsId: number) => string = () => '',
   ) {}
 
   /** Synchronous permission check (navigator.permissions.query). Known meeting sites read as askable, others denied until allowed. */
   check(contentsId: number, topLevelUrl: string | undefined, isMainFrame: boolean): boolean {
     const origin = mediaOrigin(topLevelUrl, isMainFrame);
     if (!origin) return false;
-    const decision = this.saved()[origin];
+    const decision = this.saved(this.scopeOf(contentsId))[origin];
     if (decision === 'block') return false;
     return decision === 'allow' || this.once.get(contentsId) === origin || this.isMeeting(topLevelUrl!);
   }
@@ -66,7 +71,8 @@ export class MediaPermissions {
     const origin = mediaOrigin(topLevelUrl, isMainFrame);
     const requester = requestingUrl ? URL.parse(requestingUrl)?.origin : origin;
     if (!origin || requester !== origin || !kinds.length) return Promise.resolve(false);
-    const decision = this.saved()[origin];
+    const scope = this.scopeOf(contentsId);
+    const decision = this.saved(scope)[origin];
     if (decision === 'block') return Promise.resolve(false);
     if (decision === 'allow' || this.once.get(contentsId) === origin) {
       if (this.granted.get(contentsId) !== origin) {
@@ -76,13 +82,13 @@ export class MediaPermissions {
       return Promise.resolve(true);
     }
     return new Promise((resolve) => {
-      const existing = [...this.pending.values()].find((p) => p.contentsId === contentsId && p.origin === origin);
+      const existing = [...this.pending.values()].find((p) => p.contentsId === contentsId && p.origin === origin && p.scope === scope);
       if (existing) {
         for (const kind of kinds) if (!existing.kinds.includes(kind)) existing.kinds.push(kind);
         existing.resolvers.push(resolve);
       } else {
         const id = this.nextId++;
-        this.pending.set(id, { id, contentsId, origin, kinds: [...kinds], resolvers: [resolve] });
+        this.pending.set(id, { id, contentsId, scope, origin, kinds: [...kinds], resolvers: [resolve] });
       }
       this.changed();
     });
@@ -90,7 +96,7 @@ export class MediaPermissions {
 
   /** The prompt to show for a tab, if any. */
   promptFor(contentsId: number): PendingPrompt | undefined {
-    for (const p of this.pending.values()) if (p.contentsId === contentsId) return { id: p.id, contentsId, origin: p.origin, kinds: [...p.kinds] };
+    for (const p of this.pending.values()) if (p.contentsId === contentsId) return { id: p.id, contentsId, scope: p.scope, origin: p.origin, kinds: [...p.kinds] };
     return undefined;
   }
 
@@ -99,15 +105,15 @@ export class MediaPermissions {
     if (!prompt) return;
     this.pending.delete(id);
     if (choice === 'block') {
-      this.save(prompt.origin, 'block');
-      this.clearGrants(prompt.origin);
+      this.save(prompt.origin, 'block', prompt.scope);
+      this.clearGrants(prompt.origin, prompt.scope);
       for (const [pendingId, pending] of this.pending) {
-        if (pending.origin !== prompt.origin) continue;
+        if (pending.origin !== prompt.origin || pending.scope !== prompt.scope) continue;
         this.pending.delete(pendingId);
         for (const resolve of pending.resolvers) resolve(false);
       }
     } else {
-      if (choice === 'always') this.save(prompt.origin, 'allow');
+      if (choice === 'always') this.save(prompt.origin, 'allow', prompt.scope);
       if (choice === 'once') this.once.set(prompt.contentsId, prompt.origin);
       this.markGranted(prompt.contentsId, prompt.origin);
     }
@@ -144,18 +150,24 @@ export class MediaPermissions {
     if (hadGrant || denied) this.changed();
   }
 
-  forget(origin: string): void {
-    this.save(origin, null);
-    this.clearGrants(origin);
+  /** The decisions saved for a scope, for Settings. */
+  savedFor(scope: string): Record<string, SiteDecision> {
+    return this.saved(scope);
+  }
+
+  forget(origin: string, scope = ''): void {
+    this.save(origin, null, scope);
+    this.clearGrants(origin, scope);
     this.changed();
   }
 
-  private clearGrants(origin: string): void {
+  /** End grants for an origin in one scope; the same site in another profile keeps its own. */
+  private clearGrants(origin: string, scope: string): void {
     for (const [contentsId, site] of this.once) {
-      if (site === origin) this.once.delete(contentsId);
+      if (site === origin && this.scopeOf(contentsId) === scope) this.once.delete(contentsId);
     }
     for (const [contentsId, site] of this.granted) {
-      if (site === origin) this.granted.delete(contentsId);
+      if (site === origin && this.scopeOf(contentsId) === scope) this.granted.delete(contentsId);
     }
   }
 }

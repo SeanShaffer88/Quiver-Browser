@@ -1,9 +1,16 @@
-import { clipboard, dialog, ipcMain, Menu, session, shell as electronShell, type IpcMainInvokeEvent, type WebContentsView, type WebFrameMain } from 'electron';
+import { app, clipboard, dialog, ipcMain, Menu, session, shell as electronShell, type IpcMainInvokeEvent, type MenuItemConstructorOptions, type WebContentsView, type WebFrameMain } from 'electron';
 import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
 import { detectEnv } from '../shared/env';
 import { parseCommand } from '../shared/parser';
-import type { BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, Settings, ShortcutRow, Suggestion } from '../shared/types';
+import type { BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, ProfileContext, Settings, ShortcutRow, Space, SpaceSettingsView, Suggestion } from '../shared/types';
+import fs from 'node:fs';
+import path from 'node:path';
 import { BookmarkImports } from './bookmark-import';
+import { ADD_TO_BOARD_PREFIX, boardSuggestions, CAPTURE_TO_BOARD_PREFIX } from './board-commands';
+import { faviconPng, type CaptureMode } from './board-capture';
+import { cardLabel, cardUrls, type Board, type Boards } from './boards';
+import { renderNote } from './board-text';
+import { researchUrl } from './research';
 import { ArcImports } from './arc-import';
 import { isValidBoostName, type Boosts } from './boosts';
 import { BookmarkProfileReadError, bookmarkProfileLabel, discoverBookmarkProfiles, readChromiumBookmarkCandidates } from './chromium-bookmarks';
@@ -20,7 +27,10 @@ import { archiveSuggestions, normalizeArchiveHours } from './archive';
 import { nativeKind } from './native/runners';
 import { shareTarget } from './native/share';
 import type { SyncService } from './sync-service';
-import type { History } from './history';
+import { planContinue, publishableUrl } from './continuity';
+import { deviceSuggestions, devicesQuery, remoteTabMatches, sendMatches, sendQuery, sendSuggestions } from './device-commands';
+import type { ProfileHistories } from './history';
+import { bookmarksElsewhere, bookmarksForProfile, profileKind, profileLabel, readingProfile, separateProfiles, SHARED_PROFILE, spaceProfile, spacesInProfile } from './profiles';
 import type { DownloadAction, Downloads } from './downloads';
 import { splitSearchQuery, splitSuggestions, tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
@@ -30,6 +40,7 @@ import {
   REBINDABLE, setShortcutOverrides,
 } from './shortcuts';
 import type { UpdateChecker } from './updates';
+import type { LittleQuiver } from './little-quiver';
 
 export interface IpcDeps {
   tabs: TabManager;
@@ -39,18 +50,27 @@ export interface IpcDeps {
   overlay: WebContentsView;
   shell: WebContentsView;
   /** Runs a browser action chosen in the command palette. */
-  runCommand: (command: BrowserCommand) => void;
+  runCommand: (command: Exclude<BrowserCommand, BoardCommand>) => void;
   research: Research;
+  boards: Boards;
+  capture: CaptureMode;
   sync: SyncService;
-  history: History;
+  history: ProfileHistories;
   downloads: Downloads;
   /** Reapply privacy settings after they change. */
   onPrivacyChanged: () => void;
   onThemeChanged: () => void;
   updates: UpdateChecker;
+  /** Little Quiver windows (links from other apps); their toolbars are the 'little' page. */
+  little?: LittleQuiver;
 }
 
 const MAX_COMMAND_LENGTH = 65536;
+
+type BoardCommand = 'boards' | 'board-add' | 'board-capture';
+
+/** Native menus treat & as a mnemonic marker. */
+const menuText = (value: string) => value.replace(/&/g, '&&');
 
 const KIND_LABEL = { ftp: 'FTP', hls: 'HLS stream', dash: 'DASH stream', metalink: 'Metalink', webdav: 'WebDAV' } as const;
 
@@ -90,7 +110,36 @@ export function sanitizeEnvGroups(input: unknown): EnvGroup[] {
 }
 
 export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?: CommandMode) => void; toggleSidebar: () => void; applySettings: (patch: Partial<Settings>) => void } {
-  const { tabs, store, boosts, devWatcher, overlay, shell, research } = d;
+  const { tabs, store, boosts, devWatcher, overlay, shell, research, boards, capture } = d;
+
+  /** The Space a Quiver page (Settings, Downloads) was opened in, which decides the profile it shows. */
+  const senderSpace = (e: IpcMainInvokeEvent) => {
+    let spaceId = tabs.activeSpaceId;
+    for (const tab of tabs.tabs.values()) {
+      if (tab.view.webContents === e.sender) {
+        spaceId = tab.spaceId;
+        break;
+      }
+    }
+    return tabs.spaces.find((sp) => sp.id === spaceId) ?? tabs.spaces.find((sp) => sp.id === tabs.activeSpaceId);
+  };
+  const profileContext = (e: IpcMainInvokeEvent): ProfileContext => {
+    const space = senderSpace(e);
+    const profile = readingProfile(space);
+    const kind = profileKind(space);
+    return {
+      spaceId: space?.id ?? '',
+      spaceName: space?.name ?? '',
+      kind,
+      label: kind === 'private' ? 'Private Space' : profileLabel(tabs.spaces, profile),
+      spaces: kind === 'private' ? [] : spacesInProfile(tabs.spaces, profile).map(({ name }) => name),
+    };
+  };
+  /** The profile a separate-profile Space adds bookmarks to; undefined for the shared library (and private Spaces). */
+  const bookmarkOwner = (e: IpcMainInvokeEvent) => {
+    const profile = spaceProfile(senderSpace(e));
+    return profile && profile !== SHARED_PROFILE ? profile : undefined;
+  };
 
   const handle = (role: InternalRole, channel: string, fn: (e: AuthorizedInvokeEvent, ...args: any[]) => unknown) => {
     ipcMain.handle(channel, (e, ...args) => {
@@ -99,6 +148,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       let assignedPage: InternalPage | undefined;
       if (e.sender === shell.webContents) assignedPage = 'shell';
       else if (e.sender === overlay.webContents) assignedPage = 'commandbar';
+      else if (e.sender === capture.view.webContents) assignedPage = 'capture';
       else {
         for (const tab of tabs.tabs.values()) {
           if (tab.internalPage && e.sender === tab.view.webContents) {
@@ -106,6 +156,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
             break;
           }
         }
+        if (!assignedPage && d.little?.isToolbar(e.sender)) assignedPage = 'little';
       }
       if (internalRole(frame.url, assignedPage, frame === e.sender.mainFrame) !== role) throw new Error('forbidden sender');
       return fn(e as AuthorizedInvokeEvent, ...args);
@@ -160,12 +211,30 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     }
   }
 
+  /** Why a tab cannot be sent to another device, or undefined when it can. */
+  const sendBlocker = (tab: NonNullable<TabManager['activeTab']> | undefined | null): string | undefined => {
+    if (!tab) return 'Open a web page to send it';
+    if (tabs.isPrivate(tab.spaceId)) return 'Tabs in a private Space are never sent to other devices';
+    if (tab.internal) return 'Quiver’s own pages stay on this device';
+    if (!publishableUrl(tabs.tabUrl(tab))) return 'Only web pages without a user name or password in the address can be sent';
+    return undefined;
+  };
+
+  const deviceContext = () => ({
+    syncing: d.sync.status().folder !== null,
+    openTabs: d.sync.status().openTabs,
+    now: Date.now(),
+    localUrls: new Set([...tabs.tabs.values()].map((t) => tabs.tabUrl(t))),
+  });
+
   /** Tab search (`tab …`), palette scopes (`> …`, `bm …`), else the parser with palette matches below its default result. */
   const suggestionsFor = (text: string, context: CommandContext): Suggestion[] => {
     const meet = meetSuggestions(text);
     if (meet) return meet;
     const topics = researchSuggestions(text, research.inSpace(context.spaceId), research.active(context.spaceId), context.internal ? '' : context.url);
     if (topics) return topics;
+    const boardList = boardSuggestions(text, boards.inSpace(context.spaceId), context.internal ? '' : context.url, tabs.isPrivate(context.spaceId));
+    if (boardList) return boardList;
     const downloadSuggestion = downloadSuggestions(text, context.internal ? '' : context.url);
     if (downloadSuggestion) return downloadSuggestion;
     const archived = /^archive(?:\s+([\s\S]*))?$/i.exec(text.trim());
@@ -174,13 +243,25 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (splitQuery !== undefined) return splitSuggestions(splitQuery, context.spaceId, context.tabId, openTabTargets());
     const tabQuery = tabSearchQuery(text);
     if (tabQuery !== undefined) return tabSearchSuggestions(tabQuery, context.spaceId, openTabTargets());
+    const devicesText = devicesQuery(text);
+    if (devicesText !== undefined) return deviceSuggestions(devicesText, d.sync.devices(), deviceContext());
+    const send = sendQuery(text);
+    if (send && (send.explicit || sendMatches(send.query, d.sync.sendTargets()))) {
+      return sendSuggestions(send.query, d.sync.sendTargets(), deviceContext(), sendBlocker(tabs.activeTab));
+    }
     const palette = paletteQuery(text);
-    const sources = () => ({ activeSpaceId: context.spaceId, tabs: openTabTargets(), bookmarks: store.state.bookmarks, history: d.history.list() });
+    // History and bookmarks come from the profile of the Space the command bar was opened in.
+    const profile = readingProfile(tabs.spaces.find((sp) => sp.id === context.spaceId));
+    const sources = () => ({
+      activeSpaceId: context.spaceId, tabs: openTabTargets(),
+      bookmarks: bookmarksForProfile(store.state.bookmarks, profile), history: d.history.list(profile),
+      littleWindows: d.little?.count ?? 0,
+    });
     if (palette && palette.scope !== 'all') return paletteSuggestions(palette.scope, palette.query, sources());
     const parsed = parseCommand(text, parseContext(context));
     const fellThrough = parsed.length === 1 && (parsed[0].kind === 'url' || parsed[0].kind === 'search');
     if (!palette || !fellThrough || palette.query.length < 2) return parsed;
-    return [...parsed, ...paletteSuggestions('all', palette.query, sources())];
+    return [...parsed, ...paletteSuggestions('all', palette.query, sources()), ...remoteTabMatches(palette.query, d.sync.devices(), deviceContext())];
   };
 
   handle('shell', 'state:get', () => tabs.snapshot());
@@ -236,9 +317,11 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
         ? { label: 'Exit split view', click: () => tabs.exitSplit() }
         : { label: 'Open in split view', enabled: tabs.activeTabId !== null && tabs.activeTab?.spaceId === tab.spaceId, click: () => tabs.startSplit(tab.id) },
       { type: 'separator' },
+      ...boardMenu(tab),
       { label: 'Copy link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(false); if (link) clipboard.writeText(link); } },
       { label: 'Copy Markdown link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(true); if (link) clipboard.writeText(link); } },
       { label: 'Open the console', enabled: !tab.internal, click: () => tabs.openConsole(tab.id) },
+      sendMenu(tab),
       ...(!tab.internal && store.state.settings.privacy.blockTrackers ? [{
         label: 'Allow ads on this site',
         type: 'checkbox' as const,
@@ -253,6 +336,41 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       ] : [{ label: 'Close tab', click: () => tabs.closeTab(tab.id) }]),
     ]).popup();
   });
+
+  /** "Send tab to device" with one item per device that can receive it. */
+  function sendMenu(tab: NonNullable<TabManager['activeTab']>): MenuItemConstructorOptions {
+    const blocked = d.sync.status().folder === null ? 'Choose a sync folder in Settings first' : sendBlocker(tab);
+    const targets = blocked ? [] : d.sync.sendTargets();
+    if (blocked || !targets.length) {
+      return { label: 'Send tab to device', enabled: false, toolTip: blocked ?? 'No other devices can receive tabs yet' };
+    }
+    return {
+      label: 'Send tab to device',
+      submenu: targets.map((device) => ({
+        label: device.name,
+        click: () => {
+          // Re-read the tab: it may have navigated since the menu opened.
+          const now = tabs.tabs.get(tab.id);
+          if (now && !sendBlocker(now)) d.sync.sendTab(device.id, tabs.tabUrl(now), now.customTitle || now.title);
+        },
+      })),
+    };
+  }
+
+  /** Open one tab another device has open, in a new tab in the current Space. */
+  const openRemoteTab = (deviceId: unknown, url: unknown): boolean => {
+    if (typeof deviceId !== 'string' || typeof url !== 'string' || !d.sync.remoteTab(deviceId, url)) return false;
+    tabs.openTab(url);
+    return true;
+  };
+
+  /** "Continue here": open another device's Space into the matching Space here, or a new one. */
+  const continueHere = (deviceId: unknown, spaceId: unknown): number | null => {
+    if (typeof deviceId !== 'string' || (spaceId !== undefined && typeof spaceId !== 'string')) return null;
+    const remote = d.sync.remoteSpace(deviceId, spaceId as string | undefined);
+    if (!remote) return null;
+    return tabs.continueSession(planContinue(remote, tabs.spaces, (id) => tabs.openUrls(id)));
+  };
 
   // pinned-tab folders
   const folderId = (id: unknown) => (typeof id === 'string' ? id : '');
@@ -311,6 +429,17 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('shell', 'peek:close', () => tabs.closePeek());
   handle('shell', 'peek:open-tab', () => tabs.peekToTab());
 
+  // Little Quiver toolbar. The window is the sender's own; nothing the page sends names another one.
+  const littleOf = (e: AuthorizedInvokeEvent) => {
+    const lw = d.little?.fromToolbar(e.sender);
+    if (!lw) throw new Error('forbidden sender');
+    return lw;
+  };
+  handle('little', 'little:get', (e) => d.little!.state(littleOf(e)));
+  handle('little', 'little:copy', (e) => d.little!.copyLink(littleOf(e)));
+  handle('little', 'little:open', (e) => d.little!.openInQuiver(littleOf(e)));
+  handle('little', 'little:close', (e) => d.little!.close(littleOf(e)));
+
   // spaces
   handle('shell', 'space:create', (_e, name: string, isolated: boolean) => {
     tabs.createSpace(String(name ?? ''), !!isolated);
@@ -325,11 +454,21 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('shell', 'space:rename', (_e, id: string, name: string) => tabs.renameSpace(String(id), String(name)));
   handle('shell', 'space:activate', (_e, id: string) => tabs.activateSpace(String(id)));
   handle('shell', 'space:menu', (_e, id: string) => {
+    const space = tabs.spaces.find((sp) => sp.id === String(id));
+    if (!space) return;
+    const kind = profileKind(space);
     const menu = Menu.buildFromTemplate([
+      { label: kind === 'private' ? 'Profile: Private (in memory)' : kind === 'separate' ? 'Profile: Separate' : 'Profile: Shared', enabled: false },
+      ...(kind === 'private' ? [] : [{ label: 'Space settings…', click: () => tabs.openTab(`quiver://settings?space=${encodeURIComponent(space.id)}#section-spaces`, { spaceId: space.id }) }]),
+      { type: 'separator' },
       { label: 'Rename Space', click: () => shell.webContents.send('space:rename-start', id) },
       { label: 'New private Space', accelerator: 'Ctrl+Shift+N', click: () => tabs.createPrivateSpace() },
       { type: 'separator' },
-      { label: tabs.isPrivate(String(id)) ? 'Close private Space and discard everything' : 'Delete Space and its tabs', enabled: tabs.canDeleteSpace(String(id)), click: () => void tabs.deleteSpace(String(id)).then(() => research.prune(new Set(tabs.spaces.map((sp) => sp.id)))) },
+      { label: tabs.isPrivate(String(id)) ? 'Close private Space and discard everything' : 'Delete Space and its tabs', enabled: tabs.canDeleteSpace(String(id)), click: () => void tabs.deleteSpace(String(id)).then(() => {
+        const left = new Set(tabs.spaces.map((sp) => sp.id));
+        research.prune(left);
+        boards.prune(left);
+      }) },
     ]);
     menu.popup();
   });
@@ -436,7 +575,37 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       case 'unarchive':
         if (!tabs.unarchive(action.url, action.archivedAt)) return 'stale';
         break;
+      case 'board': {
+        if (tabs.isPrivate(context.spaceId)) return 'unavailable';
+        const existing = 'boardId' in action ? boards.get(action.boardId) : undefined;
+        if ('boardId' in action && existing?.spaceId !== context.spaceId) return 'stale';
+        const tab = tabs.activeTab;
+        if (action.op !== 'open' && (!tab || tab.internal || !researchUrl(tabs.tabUrl(tab)))) return 'unavailable';
+        const board = existing ?? ('name' in action ? boardNamed(context.spaceId, action.name) : undefined);
+        if (!board) return 'unavailable';
+        if (action.op === 'open') {
+          tabs.navigate(`quiver://boards?board=${encodeURIComponent(board.id)}`);
+          break;
+        }
+        if (action.op === 'add-page') {
+          closeOverlay(true);
+          void addPageToBoard(tab!, board);
+        } else {
+          closeOverlay(false);
+          startCapture(tab!, board);
+        }
+        return 'done';
+      }
       case 'browser':
+        if (action.command === 'boards') {
+          tabs.navigate('quiver://boards');
+          break;
+        }
+        if (action.command === 'board-add' || action.command === 'board-capture') {
+          // Reopen the bar with the board picker typed in, so the next choice is the board.
+          openCommandBar(action.command === 'board-add' ? ADD_TO_BOARD_PREFIX : CAPTURE_TO_BOARD_PREFIX, command.mode);
+          return 'done';
+        }
         closeOverlay(true);
         d.runCommand(action.command);
         return 'done';
@@ -456,6 +625,18 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
         closeOverlay(true);
         return tabs.startSplit(tab.id) ? 'done' : 'unavailable';
       }
+      case 'remote-tab':
+        if (!openRemoteTab(action.deviceId, action.url)) return 'stale';
+        break;
+      case 'continue':
+        if (continueHere(action.deviceId, action.spaceId) === null) return 'stale';
+        break;
+      case 'send-tab': {
+        const tab = tabs.activeTab;
+        if (!tab || sendBlocker(tab) || !d.sync.sendTab(action.deviceId, tabs.tabUrl(tab), tab.customTitle || tab.title)) return 'unavailable';
+        closeOverlay(true);
+        return 'done';
+      }
     }
     closeOverlay(false);
     return 'done';
@@ -463,7 +644,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('shell', 'cmd:run', (_e, action: unknown) => {
     const choice = action as Partial<{ type: string; page: string; topic: string }> | null;
     if (choice?.type !== 'internal') return;
-    if (choice.page === 'boosts' || choice.page === 'settings' || choice.page === 'downloads') tabs.navigate(`quiver://${choice.page}`);
+    if (choice.page === 'boosts' || choice.page === 'settings' || choice.page === 'downloads' || choice.page === 'boards') tabs.navigate(`quiver://${choice.page}`);
     if (choice.page === 'research') {
       const topic = typeof choice.topic === 'string' && research.get(choice.topic) ? `?topic=${encodeURIComponent(choice.topic)}` : '';
       tabs.navigate(`quiver://research${topic}`);
@@ -471,7 +652,30 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   });
   // downloads page
   const DOWNLOAD_ACTIONS = new Set<DownloadAction>(['pause', 'resume', 'cancel', 'retry', 'open', 'show', 'remove']);
-  handle('downloads', 'downloads:list', () => d.downloads.list());
+  // The Downloads page lists its own profile's downloads unless it asks for every profile.
+  handle('downloads', 'downloads:list', (e, scope: unknown) => {
+    if (scope === 'all') return d.downloads.list();
+    return d.downloads.list(tabs.webPartition(senderSpace(e)?.id ?? tabs.activeSpaceId));
+  });
+  handle('downloads', 'profile:context', (e) => profileContext(e));
+  handle('settings', 'settings:profile', (e) => profileContext(e));
+
+  // Settings > Spaces
+  const spaceView = (space: Space): SpaceSettingsView => {
+    const profile = spaceProfile(space);
+    return {
+      id: space.id, name: space.name, color: space.color, icon: space.icon ?? '', kind: profileKind(space),
+      sharesWith: profile && profile !== SHARED_PROFILE ? spacesInProfile(tabs.spaces, profile).filter((sp) => sp !== space).map(({ name }) => name) : [],
+      behavior: { ...space.behavior },
+    };
+  };
+  handle('settings', 'spaces:list', () => tabs.spaces.filter((sp) => !sp.private).map(spaceView));
+  handle('settings', 'spaces:update', (_e, id: unknown, patch: unknown) => {
+    if (typeof id !== 'string' || !patch || typeof patch !== 'object' || Array.isArray(patch)) return null;
+    const { icon, color, behavior } = patch as Record<string, unknown>;
+    const space = tabs.updateSpace(id, { icon, color, behavior });
+    return space ? spaceView(space) : null;
+  });
   handle('downloads', 'downloads:act', (_e, id: unknown, action: unknown, confirmedRisky: unknown) => {
     if (typeof id !== 'string' || !DOWNLOAD_ACTIONS.has(action as DownloadAction)) return 'Unknown action.';
     return d.downloads.act(id, action as DownloadAction, confirmedRisky === true);
@@ -512,6 +716,145 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     return true;
   });
 
+  // boards
+  type AnyTab = NonNullable<TabManager['activeTab']>;
+  /** An existing board of this name in the Space, else a new one. */
+  function boardNamed(spaceId: string, name: string): Board | undefined {
+    const wanted = name.replace(/\s+/g, ' ').trim().toLowerCase();
+    return boards.inSpace(spaceId).find((b) => b.name.toLowerCase() === wanted) ?? boards.create(spaceId, name);
+  }
+  const pageTitle = (tab: AnyTab) => (tab.titleIsExplicit ? tab.title : '');
+  async function addPageToBoard(tab: AnyTab, board: Board): Promise<void> {
+    const url = tabs.tabUrl(tab);
+    if (tab.internal || !researchUrl(url) || tabs.isPrivate(tab.spaceId)) return tabs.flash('Only web pages can be added to a board.');
+    const icon = tab.favicon ? await faviconPng(tab.favicon, tab.partition) : null;
+    const card = boards.add(board.id, { kind: 'link', url, title: pageTitle(tab), icon });
+    tabs.flash(typeof card === 'string' ? card : `Added to “${board.name}”.`);
+  }
+  function startCapture(tab: AnyTab, board: Board): void {
+    if (tab.internal || tab.view.webContents.isDestroyed() || !researchUrl(tabs.tabUrl(tab)) || tabs.isPrivate(tab.spaceId)) {
+      tabs.flash('Only web pages can be captured.');
+      return;
+    }
+    if (tabs.peekOpen) tabs.closePeek();
+    if (tabs.activeTabId !== tab.id) tabs.activateTab(tab.id);
+    if (!capture.start({ tabId: tab.id, boardId: board.id, boardName: board.name, contents: tab.view.webContents, bounds: tab.view.getBounds() })) {
+      tabs.flash('Quiver could not start a capture here.');
+    }
+  }
+  function boardMenu(tab: AnyTab): Electron.MenuItemConstructorOptions[] {
+    if (tab.internal || tabs.isPrivate(tab.spaceId)) return [];
+    const list = boards.inSpace(tab.spaceId).slice(0, 15);
+    const items = (run: (b: Board) => void, prefix: string): Electron.MenuItemConstructorOptions[] => [
+      ...list.map((b) => ({ label: menuText(b.name), click: () => run(b) })),
+      ...(list.length ? [{ type: 'separator' as const }] : []),
+      { label: 'New board…', click: () => { tabs.activateTab(tab.id); openCommandBar(prefix); } },
+    ];
+    return [
+      { label: 'Add page to board', submenu: items((b) => void addPageToBoard(tab, b), ADD_TO_BOARD_PREFIX) },
+      { label: 'Capture to board', submenu: items((b) => startCapture(tab, b), CAPTURE_TO_BOARD_PREFIX) },
+      { type: 'separator' },
+    ];
+  }
+
+  // capture overlay
+  handle('capture', 'capture:done', async (_e, rect: unknown) => {
+    const result = await capture.finish(rect);
+    if (typeof result === 'string') {
+      // A selection too small keeps capture mode open and the page shows why; anything else ends it.
+      if (capture.active) return result;
+      tabs.flash(result);
+      return '';
+    }
+    if (!result) return '';
+    const board = boards.get(result.target.boardId);
+    const tab = tabs.tabs.get(result.target.tabId);
+    if (!board || !tab) return '';
+    const card = boards.add(board.id, {
+      kind: 'capture', png: result.image.png, imageW: result.image.width, imageH: result.image.height, url: tabs.tabUrl(tab), title: pageTitle(tab),
+    });
+    tabs.flash(typeof card === 'string' ? card : `Captured to “${board.name}”.`);
+    return '';
+  });
+  handle('capture', 'capture:cancel', () => {
+    if (capture.active) tabs.flash('Capture cancelled.');
+    capture.cancel();
+  });
+
+  // sidebar
+  handle('shell', 'board:open', (_e, id: unknown) => {
+    const board = boards.get(id);
+    if (board && board.spaceId === tabs.activeSpaceId) tabs.navigate(`quiver://boards?board=${encodeURIComponent(board.id)}`);
+  });
+  handle('shell', 'board:new', () => openCommandBar('board ', 'current'));
+
+  // Boards page
+  const senderTab = (e: IpcMainInvokeEvent) => [...tabs.tabs.values()].find((t) => t.view.webContents === e.sender);
+  const spaceName = (id: string) => tabs.spaces.find((sp) => sp.id === id)?.name ?? '';
+  const boardView = (board: Board) => ({
+    id: board.id, name: board.name, spaceId: board.spaceId, spaceName: spaceName(board.spaceId), updatedAt: board.updatedAt,
+    cards: board.cards.map((c) => {
+      const media = (file: string) => `quiver://app/board-media/${board.id}/${file}`;
+      const extra = c.kind === 'text' ? { html: renderNote(c.text) } : c.kind === 'capture' ? { src: media(c.file) } : c.icon ? { iconSrc: media(c.icon) } : {};
+      return { ...c, ...extra, label: cardLabel(c) };
+    }),
+  });
+  handle('boards', 'boards:list', (e) => {
+    const here = senderTab(e)?.spaceId ?? tabs.activeSpaceId;
+    return {
+      spaceId: here, spaceName: spaceName(here), privateSpace: tabs.isPrivate(here),
+      boards: boards.list().filter((b) => tabs.spaces.some((sp) => sp.id === b.spaceId)).map((b) => ({ ...b, spaceName: spaceName(b.spaceId) })),
+    };
+  });
+  handle('boards', 'boards:get', (_e, id: unknown) => {
+    const board = boards.get(id);
+    return board ? boardView(board) : null;
+  });
+  handle('boards', 'boards:create', (e, name: unknown) => {
+    const spaceId = senderTab(e)?.spaceId ?? tabs.activeSpaceId;
+    if (tabs.isPrivate(spaceId)) return null;
+    return boards.create(spaceId, typeof name === 'string' ? name : '')?.id ?? null;
+  });
+  handle('boards', 'boards:rename', (_e, id: unknown, name: unknown) => boards.rename(id, name));
+  handle('boards', 'boards:delete', (_e, id: unknown) => boards.delete(id));
+  handle('boards', 'boards:add-note', (_e, id: unknown, at: unknown) => {
+    const p = at && typeof at === 'object' ? at as Record<string, unknown> : null;
+    const spot = p && typeof p.x === 'number' && typeof p.y === 'number' && Number.isFinite(p.x) && Number.isFinite(p.y) ? { x: p.x, y: p.y } : undefined;
+    const card = boards.add(id, { kind: 'text', text: '', at: spot });
+    return typeof card === 'string' ? { error: card } : { id: card.id };
+  });
+  handle('boards', 'boards:update', (_e, id: unknown, cardId: unknown, patch: unknown) =>
+    boards.update(id, cardId, patch && typeof patch === 'object' ? patch as Record<string, unknown> : {}));
+  handle('boards', 'boards:reorder', (_e, id: unknown, cardId: unknown, index: unknown) => boards.reorder(id, cardId, index));
+  handle('boards', 'boards:remove', (_e, id: unknown, cardId: unknown) => boards.remove(id, cardId));
+  handle('boards', 'boards:open', (_e, id: unknown, cardId: unknown, url: unknown) => {
+    // Only addresses that are on the card can be opened, and only in the board's Space.
+    const found = boards.card(id, cardId);
+    if (!found || !tabs.spaces.some((sp) => sp.id === found.board.spaceId)) return false;
+    const allowed = cardUrls(found.card);
+    const target = typeof url === 'string' ? url : allowed[0];
+    if (!target || !allowed.includes(target)) return false;
+    if (tabs.activeSpaceId !== found.board.spaceId) tabs.activateSpace(found.board.spaceId);
+    tabs.openTab(target, { spaceId: found.board.spaceId });
+    return true;
+  });
+  handle('boards', 'boards:export', async (_e, id: unknown) => {
+    const board = boards.get(id);
+    const html = board && boards.exportHtml(board.id);
+    if (!board || !html) return { error: 'That board no longer exists.' };
+    const base = board.name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Board';
+    const choice = await dialog.showSaveDialog({
+      title: 'Export board', defaultPath: path.join(app.getPath('downloads'), `${base}.html`), filters: [{ name: 'Web page', extensions: ['html'] }],
+    });
+    if (choice.canceled || !choice.filePath) return { cancelled: true };
+    try {
+      await fs.promises.writeFile(choice.filePath, html, 'utf8');
+      return { saved: path.basename(choice.filePath) };
+    } catch {
+      return { error: 'Quiver could not write that file.' };
+    }
+  });
+
   // settings
   handle('settings', 'settings:get', () => store.state.settings);
   /** Apply a settings change from the Settings page or from sync. Every field is validated. */
@@ -527,6 +870,8 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       s.peekPinnedLinks = patch.peekPinnedLinks;
       if (!s.peekPinnedLinks) tabs.closePeek();
     }
+    if (typeof patch.peekShiftClick === 'boolean') s.peekShiftClick = patch.peekShiftClick;
+    if (typeof patch.littleQuiver === 'boolean') s.littleQuiver = patch.littleQuiver;
     if (patch.archiveAfterHours !== undefined) s.archiveAfterHours = normalizeArchiveHours(patch.archiveAfterHours);
     if (patch.theme !== undefined) {
       s.theme = normalizeTheme(patch.theme);
@@ -626,17 +971,50 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     await d.sync.syncNow();
     return d.sync.status();
   });
-
-  handle('settings', 'sitepermissions:forget', (_e, origin: string) => {
-    if (typeof origin === 'string' && origin in store.state.settings.sitePermissions) tabs.media?.forget(origin);
-    return store.state.settings.sitePermissions;
+  // other devices and tabs sent between them
+  handle('settings', 'devices:list', () => d.sync.devices());
+  handle('settings', 'devices:open-tab', (_e, deviceId: unknown, url: unknown) => openRemoteTab(deviceId, url));
+  handle('settings', 'devices:continue', (_e, deviceId: unknown, spaceId: unknown) => continueHere(deviceId, spaceId));
+  handle('shell', 'handoff:open', (_e, id: unknown) => {
+    const handoff = typeof id === 'string' ? d.sync.takeHandoff(id) : undefined;
+    // The address was validated when the sender's file was read; it opens in the Space you are in.
+    if (handoff) tabs.openTab(handoff.url);
+  });
+  handle('shell', 'handoff:dismiss', (_e, id: unknown) => {
+    if (typeof id === 'string') d.sync.takeHandoff(id);
   });
 
-  handle('settings', 'history:clear', () => {
-    d.history.clear();
-    return d.history.list().length;
+  // Camera / microphone decisions belong to the profile of the Space Settings is open in.
+  const decisionsOf = (e: IpcMainInvokeEvent) => {
+    const space = senderSpace(e);
+    const partition = tabs.webPartition(space?.id ?? tabs.activeSpaceId);
+    const profile = spaceProfile(space);
+    const saved = profile === SHARED_PROFILE ? store.state.settings.sitePermissions
+      : profile ? store.state.profilePermissions?.[profile] ?? {} : tabs.media?.savedFor(partition) ?? {};
+    return { partition, saved };
+  };
+  handle('settings', 'sitepermissions:list', (e) => ({ ...decisionsOf(e).saved }));
+  handle('settings', 'sitepermissions:forget', (e, origin: string) => {
+    const { partition, saved } = decisionsOf(e);
+    if (typeof origin === 'string' && Object.hasOwn(saved, origin)) tabs.media?.forget(origin, partition);
+    return { ...decisionsOf(e).saved };
   });
-  handle('settings', 'history:count', () => d.history.list().length);
+
+  // History is kept per profile; private Spaces keep none.
+  const historyProfile = (e: IpcMainInvokeEvent) => spaceProfile(senderSpace(e));
+  handle('settings', 'history:clear', (e) => {
+    const profile = historyProfile(e);
+    if (profile) d.history.clear(profile);
+    return profile ? d.history.list(profile).length : 0;
+  });
+  handle('settings', 'history:clear-all', () => {
+    d.history.clearAll(separateProfiles(tabs.spaces));
+    return 0;
+  });
+  handle('settings', 'history:count', (e) => {
+    const profile = historyProfile(e);
+    return profile ? d.history.list(profile).length : 0;
+  });
 
   const arcImports = new ArcImports<WebFrameMain>(store.state, () => store.flush(), () => store.save(), {
     stage: (entries) => tabs.stageArcSpaces(entries),
@@ -707,8 +1085,10 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     return imports.begin(frame);
   };
   const browserData = process.platform === 'win32' ? process.env.LOCALAPPDATA ?? '' : '';
-  handle('settings', 'bookmarks:list', (): BookmarkLibraryView => {
-    return { bookmarks: store.state.bookmarks, undo: imports.getUndo() };
+  handle('settings', 'bookmarks:list', (e): BookmarkLibraryView => {
+    const bookmarks = bookmarksForProfile(store.state.bookmarks, readingProfile(senderSpace(e)));
+    const elsewhere = bookmarksElsewhere(store.state.bookmarks, tabs.spaces);
+    return { bookmarks, undo: imports.getUndo(), ...(elsewhere ? { elsewhere } : {}) };
   });
   handle('settings', 'bookmarks:profiles', () => discoverBookmarkProfiles(browserData));
   handle('settings', 'bookmarks:review-profile', async (event, browser: unknown, profile: unknown) => {
@@ -718,7 +1098,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       const source = bookmarkProfileLabel(browser, profile);
       if (!source) throw new BookmarkProfileReadError('The selected browser profile is no longer available.');
       const scan = await readChromiumBookmarkCandidates(browserData, browser, profile);
-      return imports.finish(frame, generation, source, scan.candidates, scan.scanLimited);
+      return imports.finish(frame, generation, source, scan.candidates, scan.scanLimited, bookmarkOwner(event));
     } catch (error) {
       if (imports.isCurrent(frame, generation)) clearBookmarkReview(frame);
       return { error: error instanceof BookmarkProfileReadError ? error.message : 'Quiver could not read this browser profile.' };
@@ -728,7 +1108,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     const frame = event.senderFrame;
     const generation = beginBookmarkReview(event, frame);
     const file = typeof name === 'string' ? name.slice(0, 260).split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 120) : '';
-    return imports.finish(frame, generation, file || 'HTML bookmark export', input, scanLimited === true);
+    return imports.finish(frame, generation, file || 'HTML bookmark export', input, scanLimited === true, bookmarkOwner(event));
   });
   handle('settings', 'bookmarks:cancel-review', (event) => clearBookmarkReview(event.senderFrame));
   handle('settings', 'bookmarks:confirm', (event, id: unknown) => {
@@ -742,9 +1122,10 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if ('removed' in result && trackedBookmarkReview) clearBookmarkReview(trackedBookmarkReview.frame);
     return result;
   });
-  handle('settings', 'bookmarks:open', (_event, url: unknown) => {
-    const bookmark = store.state.bookmarks.find((item) => item.url === url);
-    if (bookmark) tabs.openTab(bookmark.url);
+  handle('settings', 'bookmarks:open', (event, url: unknown) => {
+    const space = senderSpace(event);
+    const bookmark = bookmarksForProfile(store.state.bookmarks, readingProfile(space)).find((item) => item.url === url);
+    if (bookmark) tabs.openTab(bookmark.url, space ? { spaceId: space.id } : {});
   });
 
   // boosts

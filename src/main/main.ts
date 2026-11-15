@@ -8,7 +8,8 @@ import { normalizeBookmarks } from './bookmarks';
 import { Boosts, isValidBoostName } from './boosts';
 import { configureSitePermissions } from './browser-policy';
 import { DevServerWatcher } from './devservers';
-import { History } from './history';
+import { ProfileHistories } from './history';
+import { localOnlyProfiles, profileOfPartition, SHARED_PROFILE, spaceProfile, syncableBookmarks, withLocalOnlyBookmarks } from './profiles';
 import { Downloads } from './downloads';
 import { cleanUserAgent } from './browsing';
 import { registerIpc } from './ipc';
@@ -16,7 +17,10 @@ import { meetingProvider } from './meetings';
 import { MediaPermissions } from './site-permissions';
 import { clearSessions, PrivacyController } from './privacy';
 import { normalizeTopics, Research } from './research';
+import { Boards } from './boards';
+import { CaptureMode } from './board-capture';
 import { normalizeSyncState, SyncService } from './sync-service';
+import { collectDeviceTabs } from './continuity';
 import os from 'node:os';
 import { parseLaunchArgs } from './launch-args';
 import { setShortcutOverrides, type ShortcutAction } from './shortcuts';
@@ -25,6 +29,8 @@ import { Store } from './store';
 import { webSpacePartition } from './space-session';
 import { restrictInternalNavigation, TabManager } from './tabs';
 import { placeWindow } from './window-placement';
+import { LittleQuiver } from './little-quiver';
+import { opensInLittle } from './little-quiver-layout';
 
 function createPortableDirectory(parent: string, name: string): string {
   const directory = path.join(parent, name);
@@ -85,6 +91,9 @@ const MIME: Record<string, string> = {
   '.png': 'image/png',
 };
 
+/** Reads a board's capture or icon file for quiver://app/board-media/<board>/<file>; set once boards load. */
+let boardMedia: ((boardId: string, file: string) => Buffer | null) | undefined;
+
 let registeredInternal = false;
 function registerInternalProtocol(): void {
   if (registeredInternal) return;
@@ -95,6 +104,11 @@ function registerInternalProtocol(): void {
     try {
       const u = new URL(req.url);
       if (u.host !== 'app') return new Response('not found', { status: 404 });
+      const media = /^\/board-media\/([\w-]{1,64})\/([\w-]{1,80}\.png)$/.exec(u.pathname);
+      if (media) {
+        const data = boardMedia?.(media[1], media[2]);
+        return data ? new Response(new Uint8Array(data), { headers: { 'content-type': 'image/png', 'cache-control': 'no-store' } }) : new Response('not found', { status: 404 });
+      }
       const rel = decodeURIComponent(u.pathname).replace(/^\/+/, '') || 'newtab.html';
       const file = path.resolve(RENDERER_DIR, rel);
       if (!file.startsWith(RENDERER_DIR + path.sep)) return new Response('forbidden', { status: 403 });
@@ -134,6 +148,13 @@ async function main(): Promise<void> {
     if (handleSecondInstance) handleSecondInstance(targets);
     else pendingLaunches.push(targets);
   });
+  // macOS hands links to the running app (or to a launch in progress) as open-url rather than argv.
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    const targets = { urls: parseLaunchArgs(['', url]).urls, importBookmarks: false };
+    if (handleSecondInstance) handleSecondInstance(targets);
+    else pendingLaunches.push(targets);
+  });
   // Before any session exists, so every page and request sees the plain Chromium user agent.
   app.userAgentFallback = cleanUserAgent(app.userAgentFallback, app.getName());
   await app.whenReady();
@@ -147,7 +168,9 @@ async function main(): Promise<void> {
   const privacy = new PrivacyController(() => store.state.settings.privacy, (options) => app.configureHostResolver(options), {
     appliesTo: (ses) => ses !== session.fromPartition(INTERNAL_PARTITION),
     changed: () => onBlockedChanged(),
+    spellcheckFor: (ses) => spellcheckFor(ses),
   });
+  let spellcheckFor: (ses: Electron.Session) => boolean | undefined = () => undefined;
   app.on('session-created', (ses) => privacy.configureSession(ses));
   app.on('web-contents-created', (_event, contents) => privacy.configureContents(contents));
   privacy.configureSession(session.defaultSession);
@@ -209,6 +232,7 @@ async function main(): Promise<void> {
   overlay.setVisible(false);
 
   let actions: ReturnType<typeof registerIpc> | null = null;
+  let little: LittleQuiver | undefined;
   const devWatcher = new DevServerWatcher((list) => tabs.setDevServers(list));
 
   const onShortcut = (a: ShortcutAction) => {
@@ -329,21 +353,42 @@ async function main(): Promise<void> {
     boosts,
     (state) => {
       if (!shell.webContents.isDestroyed()) shell.webContents.send('state', state);
+      // Little Quiver's "Open in Quiver" names the active Space.
+      little?.refresh();
     },
     onShortcut,
     portableDownloadPath,
   );
   tabs.attachShortcuts(shell.webContents);
+  spellcheckFor = (ses) => tabs.spellcheckFor(ses);
+  tabs.onSessionPrepared = (ses) => privacy.refreshSpellcheck(ses);
+  tabs.onProfileSettingsChanged = () => privacy.apply();
+  // Decisions are kept per profile: the shared profile in settings.sitePermissions (where they always were), each
+  // separate profile in profilePermissions, and private Spaces in memory only.
+  const privateDecisions = new Map<string, Record<string, 'allow' | 'block'>>();
+  const decisionsFor = (scope: string): Record<string, 'allow' | 'block'> => {
+    const profile = scope ? profileOfPartition(scope) : SHARED_PROFILE;
+    if (profile === SHARED_PROFILE) return store.state.settings.sitePermissions;
+    if (profile) return (store.state.profilePermissions ??= {})[profile] ??= {};
+    let decisions = privateDecisions.get(scope);
+    if (!decisions) privateDecisions.set(scope, decisions = {});
+    return decisions;
+  };
   tabs.media = new MediaPermissions(
-    () => store.state.settings.sitePermissions,
-    (origin, decision) => {
-      if (decision) store.state.settings.sitePermissions[origin] = decision;
-      else delete store.state.settings.sitePermissions[origin];
-      store.save();
+    decisionsFor,
+    (origin, decision, scope) => {
+      const decisions = decisionsFor(scope);
+      if (decision) decisions[origin] = decision;
+      else delete decisions[origin];
+      const profile = scope ? profileOfPartition(scope) : SHARED_PROFILE;
+      if (profile && profile !== SHARED_PROFILE && !Object.keys(decisions).length) delete store.state.profilePermissions?.[profile];
+      if (profile) store.save();
     },
     () => tabs.emit(),
     (url) => meetingProvider(url) !== undefined,
+    (contentsId) => tabs.partitionOfContents(contentsId),
   );
+  tabs.forgetPrivateDecisions = (partition) => privateDecisions.delete(partition);
   tabs.pickScreen = async () => {
     // A native menu keeps the choice in Quiver's own UI, out of reach of the requesting page.
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
@@ -401,12 +446,30 @@ async function main(): Promise<void> {
     }
   });
   research.prune(new Set(tabs.spaces.map(({ id }) => id)));
-  const history = new History(path.join(app.getPath('userData'), 'history.json'), () => store.state.settings.rememberHistory);
+  const boards = new Boards(app.getPath('userData'), new Set(tabs.spaces.filter((sp) => !sp.private).map(({ id }) => id)), () => {
+    tabs.emit();
+    for (const tab of tabs.tabs.values()) {
+      if (tab.internalPage === 'boards' && !tab.view.webContents.isDestroyed()) tab.view.webContents.send('boards:changed');
+    }
+  });
+  boardMedia = (boardId, file) => boards.readMedia(boardId, file);
+  tabs.boardsStatus = (spaceId) => (tabs.isPrivate(spaceId) ? undefined : boards.inSpace(spaceId).map(({ id, name, cards }) => ({ id, name, count: cards.length })));
+  const captureView = new WebContentsView({ webPreferences: prefs() });
+  restrictInternalNavigation(captureView.webContents, 'capture');
+  captureView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  captureView.setBackgroundColor('#00000000');
+  // A capture belongs to the tab it started on; it is dropped if that tab stops being the one shown.
+  const capture = new CaptureMode(win, captureView, (target) => tabs.activeTabId === target.tabId && !tabs.peekOpen);
+  const history = new ProfileHistories(app.getPath('userData'), () => store.state.settings.rememberHistory);
   tabs.onVisit = (spaceId, url, title, kind) => {
     research.recordPage(spaceId, url, title);
-    if (kind === 'title') history.title(url, title);
-    else history.visit(url, title);
+    // Each profile keeps its own history; private Spaces never get here.
+    const profile = spaceProfile(tabs.spaces.find((sp) => sp.id === spaceId));
+    if (!profile) return;
+    if (kind === 'title') history.title(profile, url, title);
+    else history.visit(profile, url, title);
   };
+  tabs.onProfileRemoved = (profile) => history.remove(profile);
   tabs.researchStatus = (spaceId) => {
     const topic = research.active(spaceId);
     return topic && { id: topic.id, name: topic.name, count: topic.items.length };
@@ -418,9 +481,10 @@ async function main(): Promise<void> {
       set: (data) => actions?.applySettings((data && typeof data === 'object' ? data : {}) as Partial<Settings>),
     },
     bookmarks: {
-      get: () => store.state.bookmarks,
+      // Bookmarks of imported Arc profiles stay on this device, like those profiles' Spaces.
+      get: () => syncableBookmarks(store.state.bookmarks, localOnlyProfiles(tabs.spaces)),
       set: (data) => {
-        store.state.bookmarks = normalizeBookmarks(data);
+        store.state.bookmarks = normalizeBookmarks(withLocalOnlyBookmarks(normalizeBookmarks(data), store.state.bookmarks, localOnlyProfiles(tabs.spaces)));
         delete store.state.bookmarkUndo;
         store.save();
       },
@@ -440,11 +504,23 @@ async function main(): Promise<void> {
         for (const [name, content] of wanted) if (boosts.readIfExists(name) !== content) boosts.save(name, content);
       },
     },
-  }, () => store.save(), () => {
+  }, () => store.save(), notifySettings, undefined, {
+    tabs: () => {
+      const { spaces, tabs: open, activeSpaceId } = tabs.openTabsForSync();
+      return collectDeviceTabs(spaces, open, activeSpaceId, Date.now());
+    },
+    changed: () => {
+      tabs.emit();
+      notifySettings();
+    },
+  });
+  function notifySettings() {
     for (const tab of tabs.tabs.values()) {
       if (tab.internalPage === 'settings' && !tab.view.webContents.isDestroyed()) tab.view.webContents.send('sync:changed');
     }
-  });
+  }
+  tabs.onChanged = () => sync.tabsChanged();
+  tabs.handoffNotices = () => sync.pendingHandoffs().slice(0, 3).map(({ id, from, title, url }) => ({ id, from, title: title || (URL.parse(url)?.host ?? url), host: URL.parse(url)?.host ?? '' }));
   const updates = new UpdateChecker(
     () => store.state.updates ?? { lastCheckedAt: 0 },
     (next) => {
@@ -457,14 +533,28 @@ async function main(): Promise<void> {
     (url, init) => net.fetch(url, init),
   );
   tabs.updateNotice = () => updates.notice();
+  little = new LittleQuiver({
+    tabs, store, mainWindow: win, internalPrefs: () => prefs(),
+    icon: process.platform === 'win32' ? path.join(RENDERER_DIR, 'quiver-icon.ico') : undefined,
+  });
+  const littleWindows = little;
   actions = registerIpc({
-    tabs, store, boosts, devWatcher, overlay, shell, research, sync, history, downloads, updates,
+    tabs, store, boosts, devWatcher, overlay, shell, research, boards, capture, sync, history, downloads, updates, little: littleWindows,
     onPrivacyChanged: () => privacy.apply(),
     onThemeChanged: () => { nativeTheme.themeSource = store.state.settings.theme; },
-    runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings') : onShortcut(command)),
+    runCommand: (command) => {
+      if (command === 'settings') tabs.navigate('quiver://settings');
+      else if (command === 'little-open') littleWindows.openMostRecentInQuiver();
+      else if (command === 'devices') actions?.openCommandBar('devices ');
+      else if (command === 'send-tab') actions?.openCommandBar('send to ');
+      else onShortcut(command);
+    },
   });
 
-  await Promise.all([shell.webContents.loadURL('quiver://app/shell.html'), overlay.webContents.loadURL('quiver://app/commandbar.html')]);
+  await Promise.all([
+    shell.webContents.loadURL('quiver://app/shell.html'), overlay.webContents.loadURL('quiver://app/commandbar.html'),
+    captureView.webContents.loadURL('quiver://app/capture.html'),
+  ]);
   const interrupted = store.state.sessionOpen === true;
   const restored = tabs.restore();
   if (interrupted && restored.tabs > 0) tabs.showSessionRecovery(restored);
@@ -472,11 +562,23 @@ async function main(): Promise<void> {
   store.state.bounds = { ...launchPlacement.bounds, maximized: launchPlacement.maximized };
   store.state.sessionOpen = true;
   store.flush();
-  const openLaunchTargets = ({ urls, importBookmarks }: LaunchTargets) => {
-    for (const url of urls) tabs.openTab(url);
+  /**
+   * Open links handed over by another app. With Little Quiver on (the default) each one gets a small window of its
+   * own and the main window's tabs are left alone; otherwise they become tabs as before. Returns whether anything
+   * was opened in the main window, which is then brought forward.
+   */
+  const openLaunchTargets = ({ urls, importBookmarks }: LaunchTargets): boolean => {
+    let inMain = importBookmarks;
+    for (const url of urls) {
+      if (opensInLittle(store.state.settings.littleQuiver, url)) littleWindows.open(url);
+      else {
+        tabs.openTab(url);
+        inMain = true;
+      }
+    }
     if (importBookmarks) tabs.navigate('quiver://settings?import=bookmarks');
+    return inMain;
   };
-  openLaunchTargets(parseLaunchArgs(process.argv));
   sync.start();
   // Archive unused temporary tabs shortly after launch and then every few minutes.
   setTimeout(() => tabs.archiveStale(), 60_000).unref();
@@ -487,10 +589,16 @@ async function main(): Promise<void> {
   setInterval(checkForUpdates, 60 * 60_000).unref();
   tabs.layout();
   win.show();
+  // After the main window is shown, so a Little Quiver window from the launch opens in front of it.
+  openLaunchTargets(parseLaunchArgs(process.argv));
   handleSecondInstance = (targets) => {
     if (win.isDestroyed()) return;
-    if (win.isMinimized()) win.restore();
-    win.focus();
+    const raise = targets.urls.length === 0 || targets.urls.some((url) => !opensInLittle(store.state.settings.littleQuiver, url));
+    // Starting Quiver again with no links (or links meant for tabs) brings the main window forward.
+    if (raise || targets.importBookmarks) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
     openLaunchTargets(targets);
   };
   for (const targets of pendingLaunches) handleSecondInstance(targets);
@@ -498,7 +606,10 @@ async function main(): Promise<void> {
 
   if (store.state.settings.devServerScan) devWatcher.start();
 
-  win.on('resize', () => tabs.syncPhone());
+  win.on('resize', () => {
+    capture.cancel();
+    tabs.syncPhone();
+  });
   win.on('maximize', () => tabs.layout());
   win.on('unmaximize', () => tabs.layout());
   win.on('enter-full-screen', () => tabs.layout());
@@ -576,14 +687,16 @@ async function main(): Promise<void> {
     store.state.sessionOpen = false;
     store.flush();
     history.flush();
+    boards.flush();
     devWatcher.stop();
     boosts.stopWatching();
   });
   win.on('closed', () => {
     screen.removeListener('display-removed', repairPlacement);
     screen.removeListener('display-metrics-changed', onDisplayMetrics);
+    littleWindows.closeAll();
     tabs.dispose();
-    for (const view of [shell, overlay]) {
+    for (const view of [shell, overlay, captureView]) {
       if (!view.webContents.isDestroyed()) view.webContents.close();
     }
     app.quit();

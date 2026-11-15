@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { normalizeDeviceTabs, normalizeHandoffs, normalizeIds, type DeviceTabs, type Handoff } from './continuity';
 
 // Folder sync: every device writes only its own file into a folder the user already syncs (OneDrive, Dropbox,
 // Syncthing…), so cloud providers never see two writers on one file. Each section is last-writer-wins by the time
@@ -18,6 +19,14 @@ export interface DeviceFile {
   deviceName: string;
   writtenAt: number;
   sections: Partial<Record<SyncSection, SectionCopy>>;
+  /** This device can receive tabs sent from other devices (older Quivers cannot). */
+  acceptsHandoff?: boolean;
+  /** Open tabs per Space, when "Sync open tabs" is on. Never private Spaces, internal pages or credentials. */
+  tabs?: DeviceTabs;
+  /** Tabs sent from this device to others, until each receiver acknowledges or they expire. */
+  handoffs?: Handoff[];
+  /** Ids of handoffs this device has received, so their senders can drop them. */
+  handoffAck?: string[];
 }
 
 /** What this device last published per section, so local edits can be told apart from synced ones. */
@@ -37,7 +46,7 @@ export function hashSection(data: unknown): string {
 
 export const DEVICE_ID = /^[\w-]{1,64}$/;
 
-export function normalizeDeviceFile(raw: unknown): DeviceFile | null {
+export function normalizeDeviceFile(raw: unknown, now = Date.now()): DeviceFile | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   if (r.version !== 1 || typeof r.deviceId !== 'string' || !DEVICE_ID.test(r.deviceId)) return null;
@@ -50,7 +59,17 @@ export function normalizeDeviceFile(raw: unknown): DeviceFile | null {
     }
   }
   const name = typeof r.deviceName === 'string' ? r.deviceName.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 60) : '';
-  return { version: 1, deviceId: r.deviceId, deviceName: name || r.deviceId, writtenAt: typeof r.writtenAt === 'number' ? r.writtenAt : 0, sections };
+  const tabs = normalizeDeviceTabs(r.tabs, now);
+  const handoffs = normalizeHandoffs(r.handoffs, now);
+  const handoffAck = normalizeIds(r.handoffAck);
+  return {
+    version: 1, deviceId: r.deviceId, deviceName: name || r.deviceId,
+    writtenAt: typeof r.writtenAt === 'number' && Number.isFinite(r.writtenAt) ? r.writtenAt : 0, sections,
+    ...(r.acceptsHandoff === true ? { acceptsHandoff: true } : {}),
+    ...(tabs ? { tabs } : {}),
+    ...(handoffs.length ? { handoffs } : {}),
+    ...(handoffAck.length ? { handoffAck } : {}),
+  };
 }
 
 /**
@@ -107,12 +126,17 @@ export interface SyncedSpace {
   name: string;
   color: string;
   isolated: boolean;
+  /** One emoji, when the Space has one. */
+  icon?: string;
   folders: unknown;
   pinned: SyncedPin[];
 }
 
-/** Validate the synced Spaces section; folders are validated by the caller with normalizeFolders. */
-export function normalizeSyncedSpaces(raw: unknown, restorable: (url: string) => boolean): SyncedSpace[] {
+/**
+ * Validate the synced Spaces section; folders are validated by the caller with normalizeFolders. `icon` validates a
+ * Space icon. A Space's behavior settings are not synced: they are kept on each device.
+ */
+export function normalizeSyncedSpaces(raw: unknown, restorable: (url: string) => boolean, icon: (value: unknown) => string | undefined = () => undefined): SyncedSpace[] {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
   const out: SyncedSpace[] = [];
@@ -137,6 +161,7 @@ export function normalizeSyncedSpaces(raw: unknown, restorable: (url: string) =>
       name: typeof s.name === 'string' && s.name.trim() ? s.name.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 40) : 'Space',
       color: typeof s.color === 'string' && /^#[0-9a-f]{6}$/i.test(s.color) ? s.color : '#5b8cff',
       isolated: s.isolated === true,
+      ...(icon(s.icon) ? { icon: icon(s.icon) } : {}),
       folders: s.folders,
       pinned,
     });
@@ -149,15 +174,17 @@ function list(value: unknown): Record<string, unknown>[] {
 }
 
 /** Remote entries first, then local entries whose key the remote lacks. */
-function unionBy(local: unknown, remote: unknown, key: string): Record<string, unknown>[] {
+function unionBy(local: unknown, remote: unknown, key: string | ((e: Record<string, unknown>) => unknown)): Record<string, unknown>[] {
+  const of = typeof key === 'string' ? (e: Record<string, unknown>) => e[key] : key;
   const theirs = list(remote);
-  const seen = new Set(theirs.map((e) => e[key]));
-  return [...theirs, ...list(local).filter((e) => !seen.has(e[key]))];
+  const seen = new Set(theirs.map(of));
+  return [...theirs, ...list(local).filter((e) => !seen.has(of(e)))];
 }
 
 /** How a device that has never synced a section combines its own data with what other devices already share. */
 export const JOIN: Partial<Record<SyncSection, (local: unknown, remote: unknown) => unknown>> = {
-  bookmarks: (local, remote) => unionBy(local, remote, 'url'),
+  // A bookmark is one URL within one profile (see profiles.ts).
+  bookmarks: (local, remote) => unionBy(local, remote, (e) => `${typeof e.profile === 'string' ? e.profile : ''} ${String(e.url)}`),
   research: (local, remote) => unionBy(local, remote, 'id'),
   boosts: (local, remote) => ({
     ...(local && typeof local === 'object' ? local : {}),

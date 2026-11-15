@@ -68,7 +68,7 @@ export function commandChoice(suggestion: Suggestion, context: CommandContext): 
       if (kind === 'jwt') accessibleLabel = /^Copy (payload|header)$/.test(label) ? label : 'Copy JWT claim';
       break;
     case 'internal':
-      preview = { title: action.page === 'settings' ? 'Open Settings' : action.page === 'research' ? 'Open research notes' : action.page === 'downloads' ? 'Open downloads' : 'Open Boosts', space: context.spaceName, tab: 'new', canRun: true };
+      preview = { title: action.page === 'settings' ? 'Open Settings' : action.page === 'research' ? 'Open research notes' : action.page === 'downloads' ? 'Open downloads' : action.page === 'boards' ? 'Open Boards' : 'Open Boosts', space: context.spaceName, tab: 'new', canRun: true };
       break;
     case 'boost':
       preview = { title: 'Edit Boost', destination: action.name, space: context.spaceName, tab: 'new', canRun: true };
@@ -91,6 +91,7 @@ export function commandChoice(suggestion: Suggestion, context: CommandContext): 
       break;
     }
     case 'research':
+    case 'board':
       preview = { title: label, destination: detail, space: context.spaceName, canRun: true };
       break;
     case 'unarchive':
@@ -105,6 +106,20 @@ export function commandChoice(suggestion: Suggestion, context: CommandContext): 
     case 'browser':
       preview = { title: label, destination: detail ? `Shortcut: ${detail}` : undefined, canRun: true };
       accessibleLabel = detail ? `${label}, ${detail}` : label;
+      break;
+    case 'remote-tab':
+      preview = { title: `Open from ${action.device}`, destination: displayDestination(action.url), space: context.spaceName, tab: 'new', canRun: true };
+      accessibleLabel = [`Open ${label} from ${action.device}`, destinationHost(action.url)].filter(Boolean).join(', ');
+      break;
+    case 'continue':
+      preview = {
+        title: 'Continue here', destination: `${action.space} from ${action.device} · ${action.count === 1 ? '1 tab' : `${action.count} tabs`}, skipping any already open`,
+        space: action.space, tab: 'new', canRun: true,
+      };
+      accessibleLabel = `Continue ${action.space} from ${action.device} here, ${action.count === 1 ? '1 tab' : `${action.count} tabs`}`;
+      break;
+    case 'send-tab':
+      preview = { title: `Send to ${action.device}`, destination: context.internal ? undefined : displayDestination(context.url), space: context.spaceName, tab: 'existing', canRun: true };
       break;
     case 'noop':
       preview = { title: kind === 'jwt' ? 'Decode locally' : label, destination: detail, canRun: false };

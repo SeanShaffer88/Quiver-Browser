@@ -29,10 +29,12 @@ test('Phone Preview media requests stay denied after the preview closes', async 
   const url = 'http://127.0.0.1:4000/call';
   const desktop = { id: 1, getURL: () => url, isDestroyed: () => false };
   const preview = { ...desktop, id: 2 };
+  const little = { ...desktop, id: 3 };
   const calls: number[] = [];
   const manager = Object.assign(Object.create(TabManager.prototype), {
     phone: { webContents: preview },
     phoneContents: new WeakSet([preview]),
+    externalContents: new WeakSet([little]),
     media: {
       check: (id: number) => { calls.push(id); return true; },
       request: (id: number) => { calls.push(id); return Promise.resolve(true); },
@@ -46,6 +48,10 @@ test('Phone Preview media requests stay denied after the preview closes', async 
   assert.equal(await delegate.request(desktopContents, url, true, ['camera']), true);
   assert.equal(delegate.check(previewContents, true), false);
   assert.equal(await delegate.request(previewContents, url, true, ['microphone']), false);
+  // A Little Quiver page has nowhere to show the prompt until it is opened in Quiver.
+  const littleContents = little as Parameters<MediaDelegate['check']>[0];
+  assert.equal(delegate.check(littleContents, true), false);
+  assert.equal(await delegate.request(littleContents, url, true, ['camera']), false);
   manager.phone = null;
   assert.equal(await delegate.request(previewContents, url, true, ['camera']), false);
   assert.deepEqual(calls, [1, 1]);

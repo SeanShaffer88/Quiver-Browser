@@ -84,6 +84,7 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `Ctrl+Shift+B` | Boosts page |
 | `Ctrl+Shift+N` | New private Space |
 | `Ctrl+W` | Close tab |
+| `Ctrl+O` (in Little Quiver) | Open the page in Quiver as a tab |
 | `Ctrl+Shift+T` | Reopen the latest closed tab in its original Space |
 | `Ctrl+Tab` | Back to the tab you used last; keep holding `Ctrl` and press `Tab` again to go further back |
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Next / previous tab in sidebar order |
@@ -125,6 +126,7 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `download <address>` · `download` · `ftp://…` · `\\server\share` | Download a web, FTP, HLS, DASH or Metalink address; save the stream that's open; open a Windows share |
 | `archive` · `archive react` | Tabs archived after going unused; Enter reopens one in its Space |
 | `research webgpu` · `research` · `note read later` | Start or continue a research topic · list topics · note on this page |
+| `board` · `board ideas` · `add to board ideas` · `capture to board ideas` | Open or create a board · add this page as a link card · capture an area of this page (also *Add page to board…* and *Capture to board…* in the action list) |
 
 Matching is fuzzy: letters must start words (`rct` → *Reopen closed tab*) or follow each other (`dash` → *dashboard*), and all words must match in any order.
 
@@ -134,8 +136,49 @@ The selected result shows the action before you confirm, including the destinati
 
 Type `research <name>` in the command bar to start a topic for the current Space. While it records, web searches from the command bar and the web pages you open in that Space join its trail, with credentials and `#fragments` removed. `note <text>` attaches a note to the current page. The toolbar shows the recording topic; click it to open `quiver://research`, where you can write topic notes, annotate or remove trail items, reopen pages, stop or continue recording, and copy the topic as Markdown. `research` alone lists topics to continue or stop. Nothing is recorded unless a topic is recording, and topics stay in the local profile.
 
+### Boards
+
+A board is a canvas for collecting ideas, kept per Space at `quiver://boards`. It holds three kinds of card:
+
+- **Notes** in a small Markdown subset: `#`–`###` headings, `-` and `1.` lists, `>` quotes, `**bold**`, `*italic*`, `` `code` `` and web links (`[text](https://…)` or a bare address).
+- **Links**: the page's title, site and favicon. Clicking one opens the page in a new tab in the board's Space.
+- **Captures**: a screenshot of an area of a page, or the whole visible page.
+
+Add to a board from the command bar (*Add page to board…*, *Capture to board…*, or type `add to board <name>` / `capture to board <name>`; a name that matches no board creates one), or from a tab's right-click menu. Capture mode dims the page: drag a rectangle, or press Enter for the whole visible page; arrow keys move a selection and Shift+arrow keys resize it; Esc cancels. The sidebar's **Boards** section lists the Space's boards, and `board <name>` opens one.
+
+On the canvas, drag a card by its body or resize it from its corner. With a card focused, arrow keys move it (Shift for bigger steps), Ctrl+arrow keys resize it, Enter edits a note or opens a link, and Delete removes it. **List** shows the same cards in reading order (the order Tab and screen readers follow on the canvas) with *Move up* / *Move down* to reorder them. **Export HTML…** saves the board as one self-contained web page: captures and icons embedded, no scripts, cards in place on wide screens and stacked on narrow ones.
+
+Boards are saved in `boards.json` (atomic writes; up to 100 boards of 200 cards, notes up to 10,000 characters) and capture images as PNG files under `boards\<board id>\`, never inside the JSON. They stay on this device and are not synced. Private Spaces have no boards.
+
 ### Spaces
-`+` next to the Space chips creates a Space. Tick "Separate cookies & logins" for an isolated cookie jar and storage (a separate Chromium partition). Right-click or double-click a chip to rename; right-click to delete (deleting an isolated Space also clears its storage). Isolation is chosen at creation. The sidebar labels the active Space **Separate sign-in** or **Shared sign-in**.
+`+` next to the Space chips creates a Space. Tick **Separate profile** to give it its own profile (below); leave it off to share the shared profile with the other shared Spaces. Right-click or double-click a chip to rename; right-click to delete (deleting a Space with a separate profile also clears its storage). The profile is chosen at creation. The sidebar labels the active Space **Separate sign-in** or **Shared sign-in**, and its right-click menu starts with **Profile: Shared** or **Profile: Separate**.
+
+#### Profiles
+A profile is one Chromium storage partition and everything Quiver keeps for it. Each separate profile has its own:
+
+- cookies, sign-ins, site storage and cache;
+- **history** (`history-profiles\<profile>.json`): the command bar's `h …` and the history results under a search only show pages from the active Space's profile;
+- **bookmarks**: `bm …` and Settings → Bookmarks show the active Space's profile, and imports made from Settings in that Space go to it. Shared Spaces keep the shared library. The same page can be bookmarked in several profiles;
+- **downloads list**: the Downloads page shows the profile of the Space it is open in, with **Downloads from every profile** a choice away;
+- **camera, microphone and screen-sharing choices**, listed in Settings for the Space Settings is open in;
+- **spell check**, when the Space sets one in Settings → Spaces and profiles (spell check is per Chromium session, so shared Spaces can't differ from each other).
+
+The Spaces of one imported Arc profile share one separate profile. Ad blocking, Global Privacy Control, Secure DNS, clear-on-exit, Boosts, environments and the search engine are app-wide. Private Spaces have no saved profile: they show the shared history and bookmarks but add nothing to them, and their camera choices are kept in memory until the Space closes.
+
+**Not in a profile:** Quiver has no password manager, and Chromium's password and address autofill is not available in Electron, so passwords are whatever each site's own sign-in keeps (cookies) or what your system password manager fills. Browser extensions are not supported.
+
+**Upgrading:** history, bookmarks and camera choices from before profiles existed stay in the shared profile; nothing is moved or deleted. Spaces that already had separate cookies become separate profiles that start with empty history and bookmarks. Deleting the last Space of a separate profile deletes its history and camera choices with its cookies, and moves its bookmarks to the shared library.
+
+#### Space settings
+Right-click a Space and choose **Space settings…**, or open **Settings → Spaces and profiles**, to set for each Space:
+
+- an **icon** (one emoji, shown before the name) and **color**;
+- **Archive unused tabs** after a different time than Settings → Tabs, or never;
+- whether **new tabs open at** the top or the bottom of its tab list;
+- which links **open in Peek**: from pinned tabs, from every tab, or never;
+- **spell check** for a separate profile.
+
+The icon and color sync with Spaces; the other Space settings stay on the device.
 
 **Private Spaces** (`Ctrl+Shift+N`, **New private Space** in the command bar, the `+` form or a Space's right-click menu) are temporary. Their cookies, storage and cache live in memory only (an Electron partition without `persist:`); their pages are not added to history or research topics, are never auto-archived, and the Space is not saved to `quiver-state.json` or synced. Downloads from them are saved to disk as usual but drop out of the downloads list after a restart. A private Space has a striped purple chip labelled **Private**; right-click it and choose **Close private Space and discard everything**, or quit Quiver, to throw it all away. You can open more than one; each is separate from the others. The last regular Space can't be deleted while a private one is open.
 
@@ -167,7 +210,16 @@ In **Settings → Sync**, choose a folder you already sync with OneDrive, Dropbo
 - **What syncs:** settings (environments, search engine, local-server scanning), bookmarks, Spaces with their folders and pinned tabs, and research topics. Boosts can also sync, but that is off by default because they run code on websites.
 - **When:** at launch, every minute, and on **Sync now**. For each part, the most recent change on any device wins.
 - **First sync:** a device syncing for the first time merges its bookmarks, topics, Spaces and pinned tabs with what is already shared.
-- **What sync never does:** delete a Space or close a tab. A pinned tab removed on another device becomes a regular tab. Cookies, open regular tabs and privacy settings stay per device.
+- **What sync never does:** delete a Space or close a tab. A pinned tab removed on another device becomes a regular tab. Cookies and privacy settings stay per device; open tabs are shared only for continuity (below), never reopened automatically.
+
+#### Open tabs on other devices
+
+With **Sync open tabs** on (Settings → Sync), each device also publishes the tabs it has open, per Space: address, title, whether it is pinned, and when it was last used. Private Spaces, Quiver's own pages, `file:` / `data:` / `blob:` addresses and any address with a user name or password are never published, and the same rules are applied again to every file read from the folder. The device file is rewritten about 2 seconds after tabs change (unchanged files only every few minutes, so sync clients stay quiet), and Quiver watches the `Quiver Sync` folder, falling back to checking it every 5 seconds where it cannot be watched, so another device's tabs appear within seconds of your sync client delivering them.
+
+- **See them:** type `devices` in the command bar (`devices <words>` filters), or open **Settings → Sync → Other devices**: each device with when it was last seen, its Spaces and their tabs. Typing anything else in the command bar also lists matching tabs from other devices below this device's own results. Devices not seen for 30 days are hidden.
+- **Open one tab** in the current Space, or **Continue here** to open a whole Space from that device: into the Space with the same id (as Spaces sync keeps it) or the same name, else a new Space with the shared sign-in, skipping addresses already open there. Tabs open lazily and the one last used on the other device is selected.
+- **Send a tab:** right-click a tab → **Send tab to device**, or `send` / `send to <device>` in the command bar (also **Send tab to device…** in the action list). The receiving device shows a **Tab from <device>** notice in the sidebar with **Open** and dismiss; it is offered for 7 days, and the sender drops it once the receiver has opened or dismissed it. Sending works whenever sync is on, even with Sync open tabs off, and only to devices on a Quiver version that can receive tabs.
+- **Default:** on for sync set up from this version on; off for folders that were already syncing, so no existing device starts sharing its tabs unasked.
 ### Privacy
 
 Quiver sends no telemetry, has no account and checks for updates only if you turn that on (see Updates); crash reports stay on the device. **Settings → Privacy** controls what pages and Chromium can send:
@@ -201,7 +253,7 @@ Quiver has its own downloaders for addresses Chromium can't save, with no extra 
 ### Where data lives
 - Installed: `%APPDATA%\Quiver\`
 - PortableApps: `Data\` in the QuiverPortable folder. In addition to the profile, it holds `Cache\`, `Temp\`, `Logs\`, `CrashDumps\` and the default `Downloads\` directory.
-- Profile files: `quiver-state.json` (Spaces, tabs, settings, window bounds), `boosts\`, and Chromium partitions.
+- Profile files: `quiver-state.json` (Spaces, tabs, settings, bookmarks, window bounds), `history.json` (the shared profile's history), `history-profiles\` (each separate profile's history), `boards.json` and `boards\` (board captures), `boosts\`, and Chromium partitions.
 
 To remove everything: uninstall, then delete that folder.
 
@@ -223,12 +275,14 @@ Quiver-Browser/
 
 ## Feature-parity checklist
 
-Quiver currently covers these Flecha workflows, plus split view and Peek (below).
+Quiver currently covers these Flecha workflows, plus split view, Peek and Little Quiver (below).
 
-### Split view and Peek
+### Split view, Peek and Little Quiver
 
 - **Split view**: two tabs of the same Space side by side. Right-click a tab → *Open in split view* (pairs it with the active tab), type `split …` in the command bar (*Split view with …*), or press `Ctrl+Shift+=` to split the active tab with the next tab (a new tab when there is none). `Ctrl+Shift+-` or *Exit split view* ends it. Drag the divider (or focus it and use the arrow keys) to resize between 20% and 80%; double-click resets. The position is remembered per pair until Quiver closes. Clicking into a pane makes it the active tab, so the address bar, find bar, zoom and phone preview follow it. Both tabs are marked in the sidebar; closing either ends the split. `Ctrl+Shift+=` replaces the Shift variant of zoom in: `Ctrl+=` and `Ctrl+Numpad+` still zoom.
 - **Peek**: a link a pinned tab opens in a new tab or window (`target=_blank`, `window.open`) shows in a floating preview over the page, in the same storage partition and under the same navigation and site-permission rules. *Open as tab* keeps the page as a temporary tab, with its history. *Close*, `Esc`, `Ctrl+W` or a click on the dimmed page closes it. Turn it off in Settings → Tabs → *Open links from pinned tabs in Peek*.
+- **Peek any link**: Shift+click a link in any web tab, or right-click it and choose *Peek link*, to open it in Peek (the link menu also has *Open link in new tab* and *Copy link address*). Turn Shift+click off in Settings → Tabs → *Shift+click a link to Peek it*. Quiver takes the click only through the browser's own new-window request, after the page has had it: a page that handles Shift+click itself and cancels it (selecting a range of rows, say) keeps its behaviour, and no script is added to pages. The trade-off is that a page which only *reads* Shift on a link click without cancelling it gets a Peek, where Chromium would have opened a new window. Sign-in and payment popups (`window.open` with window features) still open as tabs, as before.
+- **Little Quiver**: a link another app opens (Quiver as the default browser: the launch link, a link handed to an already running Quiver, or macOS `open-url`) shows in a small window of its own instead of adding a tab. Its toolbar shows the page title and host, **Copy link**, **Open in Quiver** (`Ctrl+O`, or *Open in Quiver* in the command bar for the little window used last) and **Close** (`Esc` or `Ctrl+W`; `Esc` first leaves a fullscreen video). *Open in Quiver* moves the page into the active Space as a temporary tab, keeping its history, scroll position and form contents when the window uses that Space's storage; otherwise it opens the address fresh there. Each window uses the storage (cookies, sign-ins) of the Space that was active when it opened, follows the same navigation and site-permission rules as tabs, and records history unless that Space is private. Camera, microphone and screen-sharing requests are declined until the page is opened in Quiver. Links that ask for a new tab open in the same little window. Several can be open at once; each opens a step below and right of the last, at the size you last resized one to (960 × 720 at first). Turn it off in Settings → Tabs → *Open external links in Little Quiver* to get tabs, as before.
 
 | # | Flecha feature | Quiver (Windows) | Status |
 |---|---|---|---|
@@ -236,6 +290,10 @@ Quiver currently covers these Flecha workflows, plus split view and Peek (below)
 | 2 | Vertical sidebar | Collapsible sidebar, tab list, favicons, close, middle-click close, drag and keyboard reorder | Included |
 | 2 | Pinned tabs and folders | Pin, nested folders, collapse, drag between pinned and temporary, saved per Space | Included |
 | 2 | Spaces | Create / rename / delete, per-Space partition (cookies, storage), private Spaces | Included |
+| – | Little Quiver and Peek any link | External links in a small window with *Open in Quiver*; Shift+click or *Peek link* on any link | Included |
+| – | Tabs on other devices | Open tabs per Space through the sync folder, `devices`, Continue here, send tab to device | Included |
+| 2 | Space profiles and settings | Separate profile per Space (history, bookmarks, downloads list, camera choices, spell check); per-Space icon, color, archive time, new-tab position and Peek links. No passwords or extensions | Included |
+| – | Boards | Canvas of notes, links and page captures per Space; keyboard moves, list view, HTML export | Included |
 | – | Ad and tracker blocking | Built-in domain list, per-page count, per-site exceptions | Included |
 | 3 | Command bar | `Ctrl+K` / `Ctrl+L` / `Ctrl+T` overlay | Included |
 | 3 | `gh` `npm` `mdn` `caniuse` `so` | Offline parser → URL | Included |

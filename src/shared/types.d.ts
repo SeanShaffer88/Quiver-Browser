@@ -14,6 +14,48 @@ export interface Space {
   private?: true;
   /** Pinned-tab folders, nested by parentId. */
   folders?: Folder[];
+  /** One emoji shown before the name in the sidebar. */
+  icon?: string;
+  /** How this Space behaves; anything left out follows Settings. Kept on this device only. */
+  behavior?: SpaceBehavior;
+}
+
+/** Per-Space overrides of app-wide settings. A missing field means "use the Settings default". */
+export interface SpaceBehavior {
+  /** Archive unused temporary tabs after this many hours (0 = never). */
+  archiveAfterHours?: number;
+  /** Where a new temporary tab goes in the sidebar list. Default: bottom. */
+  newTabPosition?: 'top' | 'bottom';
+  /** Which links that would open a new tab or window open in Peek instead. */
+  peekLinks?: 'pinned' | 'all' | 'off';
+  /** Spell check for this Space's own profile (separate profiles only: spell check is set per storage session). */
+  spellcheck?: boolean;
+}
+
+/** Which profile a Space's tabs use: Quiver's shared one, a separate one, or a private in-memory one. */
+export type ProfileKind = 'shared' | 'separate' | 'private';
+
+/** The profile a Quiver page (Settings, Downloads) is showing, for its own Space. */
+export interface ProfileContext {
+  spaceId: string;
+  spaceName: string;
+  kind: ProfileKind;
+  /** e.g. "Shared profile" or "Work profile". */
+  label: string;
+  /** The Spaces that use this profile. */
+  spaces: string[];
+}
+
+/** A Space as Settings → Spaces edits it. */
+export interface SpaceSettingsView {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  kind: ProfileKind;
+  /** Spaces sharing the profile with this one (Arc profiles), not counting itself. */
+  sharesWith: string[];
+  behavior: SpaceBehavior;
 }
 
 export interface Folder {
@@ -50,6 +92,10 @@ export interface Settings {
   archiveAfterHours: number;
   /** Links a pinned tab opens in a new tab or window open in a floating Peek instead. */
   peekPinnedLinks: boolean;
+  /** Shift+click on a link in a regular tab (or "Peek link" in its menu) opens it in a Peek. */
+  peekShiftClick: boolean;
+  /** Links from other apps (default-browser launches) open in a small Little Quiver window instead of a tab. */
+  littleQuiver: boolean;
   privacy: PrivacySettings;
   /** Light, dark, or follow Windows. Applied through nativeTheme so every page's prefers-color-scheme follows. */
   theme: 'system' | 'light' | 'dark';
@@ -108,6 +154,8 @@ export interface PrivacySettings {
 export interface Bookmark {
   title: string;
   url: string;
+  /** The separate profile this bookmark belongs to (see profiles.ts); absent for the shared library. */
+  profile?: string;
 }
 
 export interface BookmarkProfile {
@@ -129,6 +177,8 @@ export interface BookmarkPreview {
 
 export interface BookmarkLibraryView {
   bookmarks: Bookmark[];
+  /** Bookmarks kept for profiles that are not on this device (not shown). */
+  elsewhere?: number;
   undo?: { id: string; count: number };
 }
 
@@ -217,6 +267,10 @@ export interface ShellState {
   zoom: number;
   /** The research topic recording in the active Space. */
   research?: { id: string; name: string; count: number };
+  /** Boards in the active Space, most recently changed first (none in a private Space). */
+  boards?: { id: string; name: string; count: number }[];
+  /** A short confirmation, such as a page added to a board; it clears itself. */
+  notice?: { id: number; text: string };
   /** A camera / microphone / screen request waiting on the active tab. */
   permissionPrompt?: { id: number; host: string; kinds: ('camera' | 'microphone' | 'screen')[] };
   /** Ad and tracker blocking on the active web tab; absent for Quiver's own pages. */
@@ -236,6 +290,15 @@ export interface ShellState {
   keys: Record<string, string>;
   /** A newer Quiver release the user hasn't dismissed. */
   update?: UpdateNotice;
+  /** Tabs sent from other devices, newest first, until opened or dismissed. */
+  handoffs?: HandoffNotice[];
+}
+
+export interface HandoffNotice {
+  id: string;
+  from: string;
+  title: string;
+  host: string;
 }
 
 export interface TabCommandTarget {
@@ -254,7 +317,7 @@ export type SuggestionAction =
   | { type: 'copy'; text: string }
   | { type: 'boost'; name: string }
   | { type: 'env'; target: EnvBadge; url: string }
-  | { type: 'internal'; page: 'boosts' | 'settings' | 'research' | 'downloads' }
+  | { type: 'internal'; page: 'boosts' | 'settings' | 'research' | 'downloads' | 'boards' }
   | { type: 'activate-tab'; target: TabCommandTarget }
   | { type: 'split-with'; target: TabCommandTarget }
   | { type: 'browser'; command: BrowserCommand }
@@ -265,6 +328,12 @@ export type SuggestionAction =
   | { type: 'research'; op: 'resume' | 'open'; topicId: string }
   | { type: 'research'; op: 'stop' }
   | { type: 'research'; op: 'note'; text: string }
+  | { type: 'remote-tab'; deviceId: string; device: string; url: string }
+  | { type: 'continue'; deviceId: string; device: string; spaceId: string; space: string; count: number }
+  | { type: 'send-tab'; deviceId: string; device: string }
+  /** An existing board by id, or a new board in the current Space by name. */
+  | { type: 'board'; op: 'open' | 'add-page' | 'capture'; boardId: string }
+  | { type: 'board'; op: 'open' | 'add-page' | 'capture'; name: string }
   | { type: 'noop' };
 
 export type BrowserCommand =
@@ -272,7 +341,18 @@ export type BrowserCommand =
   | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings' | 'downloads'
   | 'find' | 'zoom-in' | 'zoom-out' | 'zoom-reset'
   | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space'
-  | 'split' | 'unsplit' | 'private-space';
+  | 'split' | 'unsplit' | 'private-space' | 'little-open' | 'devices' | 'send-tab'
+  | 'boards' | 'board-add' | 'board-capture';
+
+/** The Little Quiver toolbar: what the page in that window shows. */
+export interface LittleQuiverState {
+  title: string;
+  host: string;
+  url: string;
+  loading: boolean;
+  /** The Space "Open in Quiver" moves the page into (the active one). */
+  space: string;
+}
 
 export interface Suggestion {
   kind: string;

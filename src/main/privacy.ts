@@ -57,6 +57,8 @@ export class PrivacyController {
       appliesTo?: (ses: Session) => boolean;
       /** A page's blocked count changed. */
       changed?: (wc: WebContents) => void;
+      /** A profile's own spell check choice for a session, when it has one (see profiles.ts). */
+      spellcheckFor?: (ses: Session) => boolean | undefined;
     } = {},
   ) {}
 
@@ -77,8 +79,13 @@ export class PrivacyController {
     return wc && !wc.isDestroyed() ? wc.getURL() : undefined;
   }
 
+  /** Apply spell check to one session again, e.g. once Quiver knows which profile it belongs to. */
+  refreshSpellcheck(ses: Session): void {
+    if (this.sessions.has(ses)) this.applySpellcheck(ses);
+  }
+
   private applySpellcheck(ses: Session): void {
-    const on = this.settings().spellcheck;
+    const on = this.blocking.spellcheckFor?.(ses) ?? this.settings().spellcheck;
     ses.setSpellCheckerEnabled(on);
     // With no languages Chromium has no dictionary to fetch; on Windows and macOS the OS checker ignores this list.
     if (process.platform === 'win32' || process.platform === 'darwin') return;

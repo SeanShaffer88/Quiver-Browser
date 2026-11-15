@@ -190,8 +190,9 @@ export class Downloads {
     this.records = normalizeDownloads(stored);
   }
 
-  list(): DownloadInfo[] {
-    return this.records.map(({ partition: _p, urlChain: _u, etag: _e, lastModified: _l, partialKey: _k, partialBytes: _b, ...info }) => {
+  /** Every download, or only those of one storage partition (one profile). */
+  list(partition?: string): DownloadInfo[] {
+    return this.records.filter((r) => partition === undefined || r.partition === partition).map(({ partition: _p, urlChain: _u, etag: _e, lastModified: _l, partialKey: _k, partialBytes: _b, ...info }) => {
       const exists = info.state === 'completed' ? fs.existsSync(info.savePath) : true;
       return { ...info, missing: !exists };
     });

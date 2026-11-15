@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+<title>Capture to board</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="capture.css">
+</head>
+<body>
+<div id="surface" class="surface" role="dialog" aria-modal="true" aria-labelledby="capture-title" aria-describedby="capture-help">
+  <div class="selection" id="selection" hidden></div>
+  <div class="bar" id="bar">
+    <strong id="capture-title">Capture to board</strong>
+    <span id="capture-help" class="help">Drag over the page to select an area. Enter captures the selection, or the whole visible page when nothing is selected. Arrow keys move the selection; Shift+arrow keys resize it. Esc cancels.</span>
+    <button class="btn primary" id="whole" type="button">Capture visible page</button>
+    <button class="btn" id="cancel" type="button">Cancel (Esc)</button>
+    <span id="status" class="status" role="status" aria-atomic="true"></span>
+  </div>
+</div>
+<script type="module" src="capture.js"></script>
+</body>
+</html>

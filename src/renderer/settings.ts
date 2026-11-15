@@ -1,6 +1,7 @@
-import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, Settings, ShortcutRow, UpdateStatus } from '../shared/types';
+import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, ProfileContext, Settings, ShortcutRow, UpdateStatus } from '../shared/types';
 import { readBookmarkExport } from './bookmark-file.js';
 import { setupArcSidebarPreview } from './arc-sidebar-preview.js';
+import { setupSpaceSettings } from './space-settings.js';
 
 setupArcSidebarPreview();
 import { currentSection, searchTerms, sectionMatches } from './settings-search.js';
@@ -26,6 +27,19 @@ let bookmarkBusy = false;
 let preview: BookmarkPreview | undefined;
 let reviewOrigin: HTMLButtonElement = importProfile;
 let undo: BookmarkLibraryView['undo'];
+let bookmarkElsewhere = 0;
+let profile: ProfileContext | undefined;
+
+function renderBookmarkProfile(): void {
+  if (!profile) return;
+  const whose = profile.kind === 'separate'
+    ? `Bookmarks of the ${profile.label}. Imports here are added to this profile only.`
+    : profile.kind === 'private'
+      ? 'This private Space shows the shared bookmarks. Imports here are added to the shared bookmarks.'
+      : 'The shared bookmarks, used by every Space without a separate profile.';
+  const kept = bookmarkElsewhere ? ` ${bookmarkElsewhere.toLocaleString()} more belong to profiles that are not on this device and are kept.` : '';
+  $('bookmarks-profile').textContent = whose + kept;
+}
 
 function bookmarkStatus(message: string, failed = false): void {
   statusEl.textContent = message;
@@ -57,6 +71,8 @@ async function refreshBookmarks(): Promise<void> {
   const library = await quiver.invoke('bookmarks:list') as BookmarkLibraryView;
   bookmarks = library.bookmarks;
   undo = library.undo;
+  bookmarkElsewhere = library.elsewhere ?? 0;
+  renderBookmarkProfile();
   bookmarkPage = Math.min(bookmarkPage, Math.max(0, Math.ceil(bookmarks.length / pageSize) - 1));
   renderBookmarks();
   updateBookmarkButtons();
@@ -299,12 +315,18 @@ function renderGroups(): void {
   renderGroups();
   $<HTMLInputElement>('engine').value = settings.searchEngine;
   $<HTMLInputElement>('scan').checked = settings.devServerScan;
-  renderSitePermissions(settings.sitePermissions);
+  profile = (await quiver.invoke('settings:profile')) as ProfileContext;
+  renderBookmarkProfile();
+  renderProfileNotes(profile);
+  void setupSpaceSettings(profile);
+  renderSitePermissions(await quiver.invoke('sitepermissions:list') as Record<string, 'allow' | 'block'>);
   $<HTMLInputElement>('history-on').checked = settings.rememberHistory;
   void showHistoryCount();
   $<HTMLInputElement>('ask-save').checked = settings.askWhereToSave;
   $<HTMLSelectElement>('archive-after').value = String(settings.archiveAfterHours);
   $<HTMLInputElement>('peek-pinned').checked = settings.peekPinnedLinks;
+  $<HTMLInputElement>('peek-shift').checked = settings.peekShiftClick;
+  $<HTMLInputElement>('little-quiver').checked = settings.littleQuiver;
   renderPrivacy(settings.privacy);
   $<HTMLSelectElement>('theme').value = settings.theme;
   renderShortcuts(await quiver.invoke('shortcuts:list') as ShortcutRow[]);
@@ -319,6 +341,21 @@ $<HTMLInputElement>('engine').addEventListener('change', async (e) => {
   await quiver.invoke('settings:set', { searchEngine: (e.target as HTMLInputElement).value.trim() });
 });
 $<HTMLInputElement>('scan').addEventListener('change', (e) => void quiver.invoke('settings:set', { devServerScan: (e.target as HTMLInputElement).checked }));
+
+function renderProfileNotes(p: ProfileContext): void {
+  $('camera-profile').textContent = p.kind === 'separate'
+    ? `Choices for the ${p.label}. Other profiles keep their own.`
+    : p.kind === 'private'
+      ? 'Choices for this private Space. They are forgotten when it closes.'
+      : 'Choices for the shared profile. Spaces with a separate profile keep their own.';
+  $('history-profile').textContent = p.kind === 'separate'
+    ? `History of the ${p.label}. The command bar in its Spaces only finds pages from this history.`
+    : p.kind === 'private'
+      ? 'This private Space keeps no history.'
+      : 'History of the shared profile. Each Space with a separate profile keeps its own history.';
+  $<HTMLButtonElement>('history-clear').disabled = p.kind === 'private';
+  $('history-clear-all').hidden = false;
+}
 
 function renderSitePermissions(saved: Record<string, 'allow' | 'block'>): void {
   const list = $('site-permissions');
@@ -351,6 +388,7 @@ interface SyncStatus {
   folder: string | null;
   deviceName: string;
   include: Record<string, boolean>;
+  openTabs: boolean;
   last?: { at: number; ok: boolean; message: string; devices: string[] };
   syncing: boolean;
 }
@@ -363,6 +401,8 @@ function renderSync(status: SyncStatus): void {
   const device = $<HTMLInputElement>('sync-device');
   if (document.activeElement !== device) device.value = status.deviceName;
   for (const box of document.querySelectorAll<HTMLInputElement>('[data-sync]')) box.checked = !!status.include[box.dataset.sync!];
+  $<HTMLInputElement>('sync-open-tabs').checked = status.openTabs;
+  void renderDevices(status);
   const el = $('sync-status');
   if (status.syncing) el.textContent = 'Syncing…';
   else if (!status.folder) el.textContent = '';
@@ -381,6 +421,107 @@ async function syncCall(channel: string, ...args: unknown[]): Promise<void> {
   }
 }
 
+interface DeviceTab { url: string; title: string; pinned: boolean; lastActiveAt: number }
+interface OtherDevice {
+  id: string;
+  name: string;
+  lastSeen: number;
+  acceptsHandoff: boolean;
+  tabs?: { activeSpaceId: string | null; spaces: { id: string; name: string; color: string; tabs: DeviceTab[] }[] };
+}
+
+function seenLabel(at: number): string {
+  const m = Math.round(Math.max(0, Date.now() - at) / 60_000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return h === 1 ? '1 hour ago' : `${h} hours ago`;
+  const d = Math.round(h / 24);
+  return d === 1 ? 'yesterday' : `${d} days ago`;
+}
+
+let lastDevices = '';
+
+async function renderDevices(status: SyncStatus): Promise<void> {
+  const wrap = $('sync-devices-wrap');
+  wrap.hidden = !status.folder;
+  if (!status.folder) return;
+  const devices = (await quiver.invoke('devices:list')) as OtherDevice[];
+  const key = JSON.stringify([devices, status.openTabs]);
+  if (key === lastDevices) return;
+  lastDevices = key;
+  const list = $('sync-devices');
+  // Rebuilding keeps the list current; focus returns to the same control by its key.
+  const focusKey = (document.activeElement as HTMLElement | null)?.dataset?.deviceKey;
+  list.replaceChildren();
+  if (!devices.length) {
+    list.append(Object.assign(document.createElement('p'), { className: 'note', textContent: 'No other devices yet. Choose the same folder in Quiver on another device.' }));
+    return;
+  }
+  for (const device of devices) {
+    const card = document.createElement('section');
+    card.className = 'sync-device';
+    const heading = document.createElement('h4');
+    heading.id = `device-${device.id}`;
+    heading.textContent = device.name;
+    card.setAttribute('aria-labelledby', heading.id);
+    const seen = document.createElement('p');
+    seen.className = 'note';
+    seen.textContent = `Last seen ${seenLabel(device.lastSeen)}${device.acceptsHandoff ? '' : ' · update Quiver there to send it tabs'}`;
+    card.append(heading, seen);
+    if (!status.openTabs) {
+      card.append(Object.assign(document.createElement('p'), { className: 'note', textContent: 'Turn on Sync open tabs to see its tabs.' }));
+    } else if (!device.tabs?.spaces.length) {
+      card.append(Object.assign(document.createElement('p'), { className: 'note', textContent: 'Not sharing open tabs.' }));
+    }
+    for (const space of status.openTabs ? device.tabs?.spaces ?? [] : []) {
+      const active = space.id === device.tabs!.activeSpaceId;
+      const block = document.createElement('div');
+      block.className = 'sync-device-space';
+      const head = document.createElement('div');
+      head.className = 'row';
+      const name = document.createElement('h5');
+      name.textContent = `${space.name}${active ? ' (active)' : ''} · ${space.tabs.length === 1 ? '1 tab' : `${space.tabs.length} tabs`}`;
+      const cont = document.createElement('button');
+      cont.className = 'btn';
+      cont.textContent = 'Continue here';
+      cont.dataset.deviceKey = `continue:${device.id}:${space.id}`;
+      cont.setAttribute('aria-label', `Continue ${space.name} from ${device.name} here`);
+      cont.addEventListener('click', async () => {
+        const opened = (await quiver.invoke('devices:continue', device.id, space.id)) as number | null;
+        flash($('sync-status'), opened === null ? 'That Space is no longer open on that device.' : opened ? `Opened ${opened === 1 ? '1 tab' : `${opened} tabs`} from ${device.name}.` : 'Those tabs are already open here.', opened === null ? 'err' : 'ok');
+      });
+      head.append(name, cont);
+      const tabs = document.createElement('ul');
+      tabs.className = 'sync-device-tabs';
+      tabs.setAttribute('aria-label', `${space.name} on ${device.name}`);
+      for (const tab of space.tabs) {
+        const item = document.createElement('li');
+        const open = document.createElement('button');
+        open.className = 'link-btn';
+        const host = (() => { try { return new URL(tab.url).host; } catch { return ''; } })();
+        open.textContent = tab.title || host || tab.url;
+        open.title = tab.url;
+        open.dataset.deviceKey = `tab:${device.id}:${tab.url}`;
+        open.setAttribute('aria-label', `Open ${tab.title || host} from ${device.name}${host ? `, ${host}` : ''}`);
+        open.addEventListener('click', async () => {
+          if (!(await quiver.invoke('devices:open-tab', device.id, tab.url))) flash($('sync-status'), 'That tab is no longer open on that device.', 'err');
+        });
+        const where = document.createElement('span');
+        where.className = 'note';
+        where.textContent = `${host}${tab.pinned ? ' · pinned' : ''}`;
+        item.append(open, where);
+        tabs.append(item);
+      }
+      block.append(head, tabs);
+      card.append(block);
+    }
+    list.append(card);
+  }
+  if (focusKey) [...list.querySelectorAll<HTMLElement>('[data-device-key]')].find((el) => el.dataset.deviceKey === focusKey)?.focus();
+}
+
+$<HTMLInputElement>('sync-open-tabs').addEventListener('change', (e) => void syncCall('sync:options', { openTabs: (e.target as HTMLInputElement).checked }));
 $('sync-choose').addEventListener('click', () => void syncCall('sync:choose'));
 $('sync-now').addEventListener('click', () => void syncCall('sync:now'));
 $('sync-disconnect').addEventListener('click', () => void syncCall('sync:disconnect'));
@@ -396,8 +537,14 @@ async function showHistoryCount(): Promise<void> {
 }
 $<HTMLInputElement>('history-on').addEventListener('change', (e) => void quiver.invoke('settings:set', { rememberHistory: (e.target as HTMLInputElement).checked }));
 $('history-clear').addEventListener('click', async () => {
-  if (!confirm('Clear all saved history on this device?')) return;
+  const whose = profile?.kind === 'separate' ? `the ${profile.label}` : 'the shared profile';
+  if (!confirm(`Clear the saved history of ${whose}?`)) return;
   await quiver.invoke('history:clear');
+  await showHistoryCount();
+});
+$('history-clear-all').addEventListener('click', async () => {
+  if (!confirm('Clear all saved history on this device, in every profile?')) return;
+  await quiver.invoke('history:clear-all');
   await showHistoryCount();
 });
 function renderPrivacy(p: Settings['privacy']): void {
@@ -467,6 +614,8 @@ $<HTMLSelectElement>('privacy-dns').addEventListener('change', (e) => {
 $('privacy-doh-save').addEventListener('click', () => void savePrivacy({ secureDns: 'custom', dohTemplate: $<HTMLInputElement>('privacy-doh').value }));
 
 $<HTMLInputElement>('peek-pinned').addEventListener('change', (e) => void quiver.invoke('settings:set', { peekPinnedLinks: (e.target as HTMLInputElement).checked }));
+$<HTMLInputElement>('peek-shift').addEventListener('change', (e) => void quiver.invoke('settings:set', { peekShiftClick: (e.target as HTMLInputElement).checked }));
+$<HTMLInputElement>('little-quiver').addEventListener('change', (e) => void quiver.invoke('settings:set', { littleQuiver: (e.target as HTMLInputElement).checked }));
 $<HTMLInputElement>('ask-save').addEventListener('change', (e) => void quiver.invoke('settings:set', { askWhereToSave: (e.target as HTMLInputElement).checked }));
 $<HTMLSelectElement>('archive-after').addEventListener('change', (e) => void quiver.invoke('settings:set', { archiveAfterHours: Number((e.target as HTMLSelectElement).value) }));
 $<HTMLSelectElement>('theme').addEventListener('change', (e) => void quiver.invoke('settings:set', { theme: (e.target as HTMLSelectElement).value }));

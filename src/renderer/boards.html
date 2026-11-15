@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'">
+<title>Boards</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="pages.css">
+</head>
+<body>
+<div class="boosts boards">
+  <aside>
+    <h1 class="research-title">Boards</h1>
+    <p class="note">Collect notes, links and captures on a canvas. From any page, use <kbd>Add page to board…</kbd> or <kbd>Capture to board…</kbd> in the command bar or the tab’s menu. Boards stay on this device.</p>
+    <form id="new-board" class="new-board">
+      <input id="new-name" type="text" maxlength="80" placeholder="New board name" aria-label="New board name" autocomplete="off">
+      <button class="btn primary" type="submit">Create</button>
+    </form>
+    <nav aria-label="Boards"><ul id="board-list" class="board-nav"></ul></nav>
+  </aside>
+  <main id="board"></main>
+</div>
+<p id="announce" class="sr-only" role="status" aria-atomic="true"></p>
+<script type="module" src="boards.js"></script>
+</body>
+</html>

@@ -60,8 +60,42 @@ export function splitPartner(order: readonly { id: number }[], activeId: number)
 }
 
 /** Whether a new-window request from a tab opens in Peek instead of a new tab. */
-export function opensInPeek(source: { pinned: boolean; internal: boolean }, enabled: boolean, url: string): boolean {
-  return enabled && source.pinned && !source.internal && /^https?:\/\//i.test(url) && URL.canParse(url);
+/**
+ * Whether a link a tab would open in a new tab or window shows in Peek. `mode` is the Space's choice ('pinned':
+ * links from pinned tabs, 'all': links from every tab, 'off': never); true / false mean 'pinned' / 'off'.
+ */
+export function opensInPeek(source: { pinned: boolean; internal: boolean }, mode: boolean | 'pinned' | 'all' | 'off', url: string): boolean {
+  const on = mode === true || mode === 'pinned' ? source.pinned : mode === 'all';
+  return on && !source.internal && /^https?:\/\//i.test(url) && URL.canParse(url);
+}
+
+/** What Electron tells a window-open handler about the request (a subset of HandlerDetails). */
+export interface OpenRequest {
+  url: string;
+  disposition: string;
+  features: string;
+}
+
+/**
+ * Whether a new-window request is a Shift+click on a link. Chromium turns an unhandled Shift+click into a
+ * "new-window" request with no window features; window.open() popups (sign-in, payment) carry features such as
+ * width or "popup", and target=_blank / Ctrl / middle clicks are tab dispositions. A page that handles Shift+click
+ * itself (and cancels the click) never reaches the handler, so Quiver only takes clicks the browser would act on.
+ */
+export function isShiftClickOpen(request: OpenRequest): boolean {
+  return request.disposition === 'new-window' && request.features.trim() === '';
+}
+
+/** Where a regular tab's new-window request goes: a Peek over the page, or a new tab. */
+export function openTarget(
+  source: { pinned: boolean; internal: boolean },
+  settings: { peekLinks: boolean | 'pinned' | 'all' | 'off'; peekShiftClick: boolean },
+  request: OpenRequest,
+): 'peek' | 'tab' | 'none' {
+  if (!/^https?:\/\//i.test(request.url) || !URL.canParse(request.url)) return 'none';
+  if (opensInPeek(source, settings.peekLinks, request.url)) return 'peek';
+  if (settings.peekShiftClick && !source.internal && isShiftClickOpen(request)) return 'peek';
+  return 'tab';
 }
 
 export interface PeekRects {
