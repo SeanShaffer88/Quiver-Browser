@@ -33,6 +33,7 @@ export type ShortcutAction =
   | 'prev-space'
   | 'split'
   | 'unsplit'
+  | 'private-space'
   | `tab-${number}`
   | `space-${number}`;
 
@@ -122,6 +123,7 @@ function reservedAction(binding: Binding): ShortcutAction | null {
   // Before zoom: Ctrl+Shift+= is the split shortcut, Ctrl+= (with or without Shift on other layouts' Plus) zooms.
   if (shift && !alt && code === 'Equal') return 'split';
   if (shift && !alt && code === 'Minus') return 'unsplit';
+  if (code === 'KeyN' && shift && !alt) return 'private-space';
   if (code === 'Tab' && !alt) return shift ? 'recent-tab-back' : 'recent-tab';
   if (!alt && (code === 'Equal' || code === 'NumpadAdd')) return 'zoom-in';
   if (!alt && !shift && (code === 'Minus' || code === 'NumpadSubtract')) return 'zoom-out';
