@@ -11,6 +11,7 @@ import { normalizeSitePermissions } from './site-permissions';
 import { DEFAULT_ARCHIVE_HOURS, normalizeArchive, normalizeArchiveHours, type ArchivedTab } from './archive';
 import { normalizeSyncState, type SyncState } from './sync-service';
 import { normalizePrivacy } from './privacy';
+import { normalizeTheme } from '../shared/theme';
 import { normalizeFolders } from './tab-tree';
 import { validArcImportUndo, type ArcImportUndo } from './arc-import';
 import { normalizeArcSpace } from './space-session';
@@ -60,6 +61,7 @@ export function defaultSettings(): Settings {
     archiveAfterHours: DEFAULT_ARCHIVE_HOURS,
     peekPinnedLinks: true,
     privacy: normalizePrivacy(undefined, process.platform),
+    theme: 'system',
   };
 }
 
@@ -134,6 +136,7 @@ export class Store {
           archiveAfterHours: normalizeArchiveHours(raw.settings?.archiveAfterHours),
           peekPinnedLinks: typeof raw.settings?.peekPinnedLinks === 'boolean' ? raw.settings.peekPinnedLinks : true,
           privacy: normalizePrivacy(raw.settings?.privacy, process.platform),
+          theme: normalizeTheme(raw.settings?.theme),
         },
       } as PersistedState;
       state.spaces = state.spaces.map((space) => ({ ...normalizeArcSpace(space), folders: normalizeFolders(space.folders) }));

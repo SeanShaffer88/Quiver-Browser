@@ -144,3 +144,8 @@ body { display: grid; grid-template-columns: var(--sb, 264px) minmax(0, 1fr); gr
 .peek-host { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font: 12px var(--mono); }
 .peek-btn { padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); color: var(--text); background: var(--panel-2); font-size: 12px; }
 .peek-btn:hover { border-color: var(--accent); }
+/* Collapsed sidebar peeking over the page. The grid keeps the collapsed column; the sidebar floats over the page
+   area at full width. html/body/#content go transparent so the page (a separate view below) shows through. */
+html:has(> body.peek), body.peek { background: transparent; }
+body.peek #sidebar { position: fixed; inset: 0 auto 0 0; width: 264px; z-index: 10; box-shadow: 4px 0 24px var(--shadow); }
+@media (forced-colors: active) { body.peek #sidebar { border-right: 1px solid CanvasText; } }

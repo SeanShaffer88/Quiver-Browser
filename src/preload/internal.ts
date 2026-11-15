@@ -11,6 +11,7 @@ const INVOKE = new Set([
   'find:query', 'find:close', 'zoom:reset',
   'split:ratio', 'split:exit', 'peek:close', 'peek:open-tab',
   'sidebar:toggle', 'preview:toggle', 'env:switch',
+  'sidebar:toggle', 'sidebar:peek', 'preview:toggle', 'env:switch',
   'cmd:open', 'cmd:close', 'cmd:suggest', 'cmd:commit', 'cmd:run',
   'settings:get', 'settings:set', 'sync:status', 'sync:choose', 'sync:disconnect', 'sync:options', 'sync:now',
   'history:clear', 'history:count',
