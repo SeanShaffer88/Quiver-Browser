@@ -123,3 +123,66 @@ test('fragmented MP4 video and audio combine into one playable file (needs ffmpe
   assert.throws(() => muxFragmentedMp4(path.join(dir, 'v.mp4'), path.join(dir, 'missing.mp4'), path.join(dir, 'x.mp4')));
   assert.ok(!fs.existsSync(path.join(dir, 'x.mp4')));
 });
+
+test('HLS: fMP4 variant with a separate audio playlist is saved as one playable .mp4 (needs ffmpeg; skipped without it)', async (t) => {
+  const { execFileSync } = await import('node:child_process');
+  try { execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' }); } catch { t.skip('ffmpeg not installed'); return; }
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'quiver-hls-src-'));
+  const hls = (prefix: string) => ['-f', 'hls', '-hls_segment_type', 'fmp4', '-hls_time', '1', '-hls_playlist_type', 'vod',
+    '-hls_fmp4_init_filename', `${prefix}_init.mp4`, '-hls_segment_filename', path.join(src, `${prefix}%d.m4s`), path.join(src, `${prefix}.m3u8`)];
+  execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc=duration=4:size=160x120:rate=25', '-c:v', 'libx264', '-g', '25', ...hls('v')]);
+  execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'sine=duration=4', '-c:a', 'aac', ...hls('a')]);
+  const routes: Record<string, Buffer | string> = Object.fromEntries(fs.readdirSync(src).map((f) => [`/s/${f}`, fs.readFileSync(path.join(src, f))]));
+  routes['/master.m3u8'] = ['#EXTM3U',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Other",LANGUAGE="fr",DEFAULT=NO,URI="/missing.m3u8"',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",LANGUAGE="en",DEFAULT=YES,URI="s/a.m3u8"',
+    '#EXT-X-STREAM-INF:BANDWIDTH=100000', 'low/index.m3u8',
+    '#EXT-X-STREAM-INF:BANDWIDTH=900000,AUDIO="aud"', 's/v.m3u8'].join('\n');
+  const s = await serve(routes);
+  const { ctx, place, dir, progress } = setup();
+  try {
+    const files = await runHls(`${s.base}/master.m3u8`, 'show', ctx, place);
+    assert.deepEqual(files.map((f) => path.basename(f)), ['show.mp4']);
+    assert.deepEqual(fs.readdirSync(dir), ['show.mp4'], 'no .part files left behind');
+    assert.ok(!s.hits.some((h) => h.startsWith('/low/') || h === '/missing.m3u8'), 'the muxed fallback and non-default audio are not fetched');
+    assert.ok(progress.includes('Combining video and audio'));
+    const streams = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', files[0]]).toString().trim().split('\n');
+    assert.deepEqual(streams.sort(), ['audio', 'video']);
+    execFileSync('ffmpeg', ['-v', 'error', '-xerror', '-i', files[0], '-f', 'null', '-']);
+  } finally { s.close(); }
+});
+
+test('HLS: separate audio that is not fMP4 falls back to the best muxed variant', async () => {
+  const s = await serve({
+    '/master.m3u8': ['#EXTM3U', '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",DEFAULT=YES,URI="a.m3u8"',
+      '#EXT-X-STREAM-INF:BANDWIDTH=100', 'low.m3u8', '#EXT-X-STREAM-INF:BANDWIDTH=900,AUDIO="aud"', 'hi.m3u8'].join('\n'),
+    '/hi.m3u8': '#EXTM3U\n#EXTINF:2,\nh0.ts\n#EXT-X-ENDLIST\n',
+    '/a.m3u8': '#EXTM3U\n#EXTINF:2,\na0.aac\n#EXT-X-ENDLIST\n',
+    '/low.m3u8': '#EXTM3U\n#EXTINF:2,\nl0.ts\n#EXTINF:2,\nl1.ts\n#EXT-X-ENDLIST\n',
+    '/l0.ts': seg(0), '/l1.ts': seg(1),
+  });
+  const { ctx, place } = setup();
+  try {
+    const [file] = await runHls(`${s.base}/master.m3u8`, 'show', ctx, place);
+    assert.ok(file.endsWith('show.ts'));
+    assert.ok(fs.readFileSync(file).equals(Buffer.concat([seg(0), seg(1)])));
+    assert.ok(!s.hits.includes('/h0.ts') && !s.hits.includes('/a0.aac'));
+  } finally { s.close(); }
+});
+
+test('HLS: separate non-fMP4 audio with no muxed variant is saved beside the video', async () => {
+  const s = await serve({
+    '/master.m3u8': ['#EXTM3U', '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",DEFAULT=YES,URI="a.m3u8"',
+      '#EXT-X-STREAM-INF:BANDWIDTH=900,AUDIO="aud"', 'hi.m3u8'].join('\n'),
+    '/hi.m3u8': '#EXTM3U\n#EXTINF:2,\nh0.ts\n#EXT-X-ENDLIST\n',
+    '/a.m3u8': '#EXTM3U\n#EXTINF:2,\na0.aac\n#EXT-X-ENDLIST\n',
+    '/h0.ts': seg(3), '/a0.aac': seg(4),
+  });
+  const { ctx, place, progress } = setup();
+  try {
+    const files = await runHls(`${s.base}/master.m3u8`, 'show', ctx, place);
+    assert.deepEqual(files.map((f) => path.basename(f)), ['show.ts', 'show.aac']);
+    assert.ok(fs.readFileSync(files[1]).equals(seg(4)));
+    assert.equal(progress.at(-1), '2 of 2 segments · audio');
+  } finally { s.close(); }
+});

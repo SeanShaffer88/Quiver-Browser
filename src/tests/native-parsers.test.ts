@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseXml } from '../main/native/xml';
-import { parseM3u8, pickVariant, segmentIv } from '../main/native/hls';
+import { audioRendition, parseM3u8, pickVariant, segmentIv } from '../main/native/hls';
 import { isoDuration, parseMpd } from '../main/native/dash';
 import { parseMetalink, strongestHash } from '../main/native/metalink';
 
@@ -24,6 +24,49 @@ test('HLS master playlists pick the best muxed variant', () => {
   assert.equal(pick.variant.uri, 'https://cdn.example/v/mid.m3u8');
   assert.equal(pick.separateAudio, false);
   assert.equal(pickVariant([{ uri: 'a', bandwidth: 1, resolution: '', audioGroup: 'x' }])!.separateAudio, true);
+});
+
+test('HLS masters list EXT-X-MEDIA audio renditions and pick the default one', () => {
+  const master = parseM3u8(['#EXTM3U',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Deutsch",LANGUAGE="de",DEFAULT=NO,URI="audio/de.m3u8"',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",LANGUAGE="en",DEFAULT=YES,AUTOSELECT=YES,URI="audio/en.m3u8"',
+    '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",URI="subs/en.m3u8"',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="inband",NAME="Main",DEFAULT=YES',
+    '#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360', 'low.m3u8',
+    '#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,AUDIO="aud"', 'hd.m3u8'].join('\n'), 'https://cdn.example/v/master.m3u8');
+  assert.equal(master.kind, 'master');
+  if (master.kind !== 'master') return;
+  assert.equal(master.variants.length, 2, 'EXT-X-MEDIA lines are not variants');
+  assert.equal(master.renditions.length, 4);
+  assert.deepEqual(master.renditions[1], { type: 'AUDIO', groupId: 'aud', uri: 'https://cdn.example/v/audio/en.m3u8', name: 'English', language: 'en', isDefault: true });
+  assert.equal(master.renditions[3].uri, null);
+  assert.equal(audioRendition(master.renditions, 'aud')!.language, 'en');
+  assert.equal(audioRendition(master.renditions, 'subs'), null, 'subtitles are not audio');
+  assert.equal(audioRendition(master.renditions, 'inband'), null);
+  assert.equal(audioRendition(master.renditions, null), null);
+  const noDefault = master.renditions.map((r) => ({ ...r, isDefault: false }));
+  assert.equal(audioRendition(noDefault, 'aud')!.language, 'de', 'without DEFAULT=YES the first with a URI');
+});
+
+test('HLS variant choice: higher bandwidth with fetchable separate audio wins, keeping the best muxed one as fallback', () => {
+  const v = (uri: string, bandwidth: number, audioGroup: string | null = null) => ({ uri, bandwidth, resolution: '', audioGroup });
+  const r = (groupId: string, uri: string | null, isDefault = true) => ({ type: 'AUDIO', groupId, uri, name: '', language: '', isDefault });
+  const variants = [v('low', 100), v('hd', 900, 'aud'), v('mid', 500)];
+  // Audio playlist available: take the HD variant, with the muxed one in reserve for non-fMP4 streams.
+  let pick = pickVariant(variants, [r('aud', 'a.m3u8')])!;
+  assert.deepEqual([pick.variant.uri, pick.audio?.uri, pick.separateAudio, pick.fallback?.uri], ['hd', 'a.m3u8', true, 'mid']);
+  // No rendition for the group at all: nothing to fetch, so the best muxed variant.
+  pick = pickVariant(variants)!;
+  assert.deepEqual([pick.variant.uri, pick.audio, pick.separateAudio], ['mid', null, false]);
+  // A group whose renditions have no URI means the audio is inside the variant: it counts as muxed.
+  pick = pickVariant(variants, [r('aud', null)])!;
+  assert.deepEqual([pick.variant.uri, pick.audio, pick.separateAudio, pick.fallback], ['hd', null, false, null]);
+  // Only separate-audio variants: the best one with a playlist, no fallback.
+  pick = pickVariant([v('x', 900, 'none'), v('y', 500, 'aud')], [r('aud', 'a.m3u8')])!;
+  assert.deepEqual([pick.variant.uri, pick.audio?.uri, pick.fallback], ['y', 'a.m3u8', null]);
+  pick = pickVariant([v('x', 900, 'none')])!;
+  assert.deepEqual([pick.variant.uri, pick.audio, pick.separateAudio], ['x', null, true]);
+  assert.equal(pickVariant([]), null);
 });
 
 test('HLS media playlists carry keys, maps, byte ranges and sequence IVs', () => {

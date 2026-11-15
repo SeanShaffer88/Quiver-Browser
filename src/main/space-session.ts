@@ -1,3 +1,4 @@
+import { privatePartition } from './private-spaces';
 import { SHARED_PARTITION } from '../shared/constants';
 import type { Space } from '../shared/types';
 
@@ -18,6 +19,8 @@ export function normalizeArcSpace(space: Space): Space {
 }
 
 export function webSpacePartition(space?: Space): string {
+  // Private Spaces use an in-memory partition (see private-spaces.ts).
+  if (space?.private) return privatePartition(space.id);
   if (space && arcSpaceId(space.id) && arcImportId(space.arcImportId) && arcImportId(space.sessionGroupId)) {
     return `persist:quiver-arc-${space.sessionGroupId}`;
   }

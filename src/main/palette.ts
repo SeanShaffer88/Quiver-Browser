@@ -1,7 +1,11 @@
 import type { Bookmark, BrowserCommand, Suggestion, TabCommandTarget } from '../shared/types';
 import type { HistoryEntry } from './history';
+import { isRebindable, shortcutLabel } from './shortcuts';
 
-/** Browser actions the command palette can run. Each maps to an existing shortcut handler. */
+/**
+ * Browser actions the command palette can run. Each maps to an existing shortcut handler. `keys` is the default hint;
+ * actions the user can rebind show their current keys instead (see commandKeys).
+ */
 export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string; keys: string; keywords?: string }[] = [
   { command: 'command-new', label: 'New tab', keys: 'Ctrl+T', keywords: 'open' },
   { command: 'close-tab', label: 'Close tab', keys: 'Ctrl+W' },
@@ -17,6 +21,7 @@ export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string
   { command: 'console', label: 'Open the console', keys: '', keywords: 'devtools errors log' },
   { command: 'next-space', label: 'Next Space', keys: '', keywords: 'switch' },
   { command: 'prev-space', label: 'Previous Space', keys: '', keywords: 'switch' },
+  { command: 'private-space', label: 'New private Space', keys: 'Ctrl+Shift+N', keywords: 'incognito private window' },
   { command: 'move-tab-up', label: 'Move tab up', keys: 'Ctrl+Shift+PageUp', keywords: 'reorder' },
   { command: 'move-tab-down', label: 'Move tab down', keys: 'Ctrl+Shift+PageDown', keywords: 'reorder' },
   { command: 'toggle-sidebar', label: 'Toggle sidebar', keys: 'Ctrl+B', keywords: 'collapse expand' },
@@ -29,8 +34,15 @@ export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string
   { command: 'find', label: 'Find in page', keys: 'Ctrl+F', keywords: 'search text' },
   { command: 'zoom-in', label: 'Zoom in', keys: 'Ctrl+=', keywords: 'bigger larger text size' },
   { command: 'zoom-out', label: 'Zoom out', keys: 'Ctrl+-', keywords: 'smaller text size' },
+  { command: 'split', label: 'Split view with the next tab', keys: 'Ctrl+Shift+\\', keywords: 'side by side two panes compare' },
+  { command: 'unsplit', label: 'Exit split view', keys: 'Ctrl+Shift+-', keywords: 'close side by side single pane unsplit' },
   { command: 'zoom-reset', label: 'Reset zoom', keys: 'Ctrl+0', keywords: '100 percent default size' },
 ];
+
+/** The key hint for a palette action, following the user's rebound shortcuts. */
+export function commandKeys(c: (typeof BROWSER_COMMANDS)[number]): string {
+  return isRebindable(c.command) ? shortcutLabel(c.command) : c.keys;
+}
 
 const PER_KIND = 8;
 const TOTAL = 20;
@@ -136,7 +148,7 @@ export function paletteSuggestions(scope: PaletteScope, query: string, sources: 
     BROWSER_COMMANDS.forEach((c, order) => {
       const s = score(c.label, c.keywords ? `${c.label} ${c.keywords}` : '');
       if (s >= 0 && (query || scope === 'actions')) {
-        actions.push({ score: s, order, suggestion: { kind: 'action', label: c.label, detail: c.keys || undefined, action: { type: 'browser', command: c.command } } });
+        actions.push({ score: s, order, suggestion: { kind: 'action', label: c.label, detail: commandKeys(c) || undefined, action: { type: 'browser', command: c.command } } });
       }
     });
   }

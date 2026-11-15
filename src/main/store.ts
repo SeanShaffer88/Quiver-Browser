@@ -11,10 +11,14 @@ import { normalizeSitePermissions } from './site-permissions';
 import { DEFAULT_ARCHIVE_HOURS, normalizeArchive, normalizeArchiveHours, type ArchivedTab } from './archive';
 import { normalizeSyncState, type SyncState } from './sync-service';
 import { normalizePrivacy } from './privacy';
+import { normalizeTheme } from '../shared/theme';
+import { normalizeShortcutOverrides } from './shortcuts';
+import { normalizeUpdateState, type UpdateState } from './updates';
 import { normalizeFolders } from './tab-tree';
 import { validArcImportUndo, type ArcImportUndo } from './arc-import';
 import { normalizeArcSpace } from './space-session';
 import { normalizeTopics, type Topic } from './research';
+import { persistableState } from './private-spaces';
 import { hasSavedNewTabPlaceholder, normalizeRecentlyClosed, type PersistedClosedTab } from './session-recovery';
 
 export interface PersistedTab {
@@ -45,6 +49,8 @@ export interface PersistedState {
   topics?: Topic[];
   sync?: SyncState;
   activeTopicBySpace?: Record<string, string>;
+  /** Opt-in release check bookkeeping (see updates.ts). */
+  updates?: UpdateState;
   bounds?: { x?: number; y?: number; width: number; height: number; maximized: boolean };
 }
 
@@ -58,7 +64,11 @@ export function defaultSettings(): Settings {
     rememberHistory: true,
     askWhereToSave: true,
     archiveAfterHours: DEFAULT_ARCHIVE_HOURS,
+    peekPinnedLinks: true,
     privacy: normalizePrivacy(undefined, process.platform),
+    theme: 'system',
+    shortcuts: {},
+    checkForUpdates: false,
   };
 }
 
@@ -131,14 +141,22 @@ export class Store {
           rememberHistory: typeof raw.settings?.rememberHistory === 'boolean' ? raw.settings.rememberHistory : true,
           askWhereToSave: typeof raw.settings?.askWhereToSave === 'boolean' ? raw.settings.askWhereToSave : true,
           archiveAfterHours: normalizeArchiveHours(raw.settings?.archiveAfterHours),
+          peekPinnedLinks: typeof raw.settings?.peekPinnedLinks === 'boolean' ? raw.settings.peekPinnedLinks : true,
           privacy: normalizePrivacy(raw.settings?.privacy, process.platform),
+          theme: normalizeTheme(raw.settings?.theme),
+          shortcuts: normalizeShortcutOverrides(raw.settings?.shortcuts) as Record<string, string>,
+          checkForUpdates: raw.settings?.checkForUpdates === true,
         },
       } as PersistedState;
       state.spaces = state.spaces.map((space) => ({ ...normalizeArcSpace(space), folders: normalizeFolders(space.folders) }));
+      // Private Spaces are never written, but a hand-edited file must not bring one back as a regular Space.
+      state.spaces = state.spaces.filter((space) => !space.private).map((space) => ({ ...space, folders: normalizeFolders(space.folders) }));
+      if (!state.spaces.length) throw new Error('bad shape');
       const knownSpaces = new Set(state.spaces.map(({ id }) => id));
       state.topics = normalizeTopics(raw.topics, knownSpaces);
       state.activeTopicBySpace = Object.fromEntries(Object.entries(raw.activeTopicBySpace ?? {})
         .filter(([space, topic]) => knownSpaces.has(space) && state.topics!.some((t) => t.id === topic && t.spaceId === space)));
+      state.updates = normalizeUpdateState(raw.updates);
       state.sync = normalizeSyncState(raw.sync, os.hostname());
       state.archive = normalizeArchive(raw.archive, new Set(state.spaces.map(({ id }) => id)));
       state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);
@@ -204,7 +222,7 @@ export class Store {
 
   private writeState(): void {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    writeFileAtomic(this.file, JSON.stringify(this.state, null, 2));
+    writeFileAtomic(this.file, JSON.stringify(persistableState(this.state), null, 2));
   }
 
   private reportSaveError(error: unknown): void {
