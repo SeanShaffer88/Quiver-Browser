@@ -5,10 +5,10 @@ export function allowsInternalNavigation(target: string, isMainFrame: boolean, c
   return isMainFrame && current !== undefined && internalPage(target) === current;
 }
 
-export type InternalTabPage = 'newtab' | 'settings' | 'boosts' | 'research' | 'downloads';
+export type InternalTabPage = 'newtab' | 'settings' | 'boosts' | 'research' | 'downloads' | 'boards';
 
 export function isInternalTabPage(page: InternalPage | undefined): page is InternalTabPage {
-  return page === 'newtab' || page === 'settings' || page === 'boosts' || page === 'research' || page === 'downloads';
+  return page === 'newtab' || page === 'settings' || page === 'boosts' || page === 'research' || page === 'downloads' || page === 'boards';
 }
 
 export function internalTabUrl(assigned: InternalTabPage, initialUrl: string, currentUrl: string): string {

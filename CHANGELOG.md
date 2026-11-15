@@ -4,6 +4,7 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+- Boards (`quiver://boards`): a canvas per Space for collecting notes (Markdown subset), links (title, site, favicon; click to open) and page captures (an area you drag out, or the whole visible page). Add from the command bar (*Add page to board…*, *Capture to board…*, `board <name>`), a tab's menu, or the Boards page; boards are listed in the sidebar. Cards can be dragged, resized, moved and resized from the keyboard, deleted, and reordered in a list view that mirrors the canvas for screen readers. Export a board as one self-contained HTML file. Saved in `boards.json` with captures as PNG files under `boards\`.
 - Deny camera, microphone, and screen sharing in Phone Preview.
 - Clear a tab's media permission prompt and page indicator when its renderer stops.
 - Resume paused and interrupted HTTP downloads from saved progress after reopening Quiver.

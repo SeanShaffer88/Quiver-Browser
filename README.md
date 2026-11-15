@@ -125,6 +125,7 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `download <address>` · `download` · `ftp://…` · `\\server\share` | Download a web, FTP, HLS, DASH or Metalink address; save the stream that's open; open a Windows share |
 | `archive` · `archive react` | Tabs archived after going unused; Enter reopens one in its Space |
 | `research webgpu` · `research` · `note read later` | Start or continue a research topic · list topics · note on this page |
+| `board` · `board ideas` · `add to board ideas` · `capture to board ideas` | Open or create a board · add this page as a link card · capture an area of this page (also *Add page to board…* and *Capture to board…* in the action list) |
 
 Matching is fuzzy: letters must start words (`rct` → *Reopen closed tab*) or follow each other (`dash` → *dashboard*), and all words must match in any order.
 
@@ -133,6 +134,20 @@ The selected result shows the action before you confirm, including the destinati
 ### Research
 
 Type `research <name>` in the command bar to start a topic for the current Space. While it records, web searches from the command bar and the web pages you open in that Space join its trail, with credentials and `#fragments` removed. `note <text>` attaches a note to the current page. The toolbar shows the recording topic; click it to open `quiver://research`, where you can write topic notes, annotate or remove trail items, reopen pages, stop or continue recording, and copy the topic as Markdown. `research` alone lists topics to continue or stop. Nothing is recorded unless a topic is recording, and topics stay in the local profile.
+
+### Boards
+
+A board is a canvas for collecting ideas, kept per Space at `quiver://boards`. It holds three kinds of card:
+
+- **Notes** in a small Markdown subset: `#`–`###` headings, `-` and `1.` lists, `>` quotes, `**bold**`, `*italic*`, `` `code` `` and web links (`[text](https://…)` or a bare address).
+- **Links**: the page's title, site and favicon. Clicking one opens the page in a new tab in the board's Space.
+- **Captures**: a screenshot of an area of a page, or the whole visible page.
+
+Add to a board from the command bar (*Add page to board…*, *Capture to board…*, or type `add to board <name>` / `capture to board <name>`; a name that matches no board creates one), or from a tab's right-click menu. Capture mode dims the page: drag a rectangle, or press Enter for the whole visible page; arrow keys move a selection and Shift+arrow keys resize it; Esc cancels. The sidebar's **Boards** section lists the Space's boards, and `board <name>` opens one.
+
+On the canvas, drag a card by its body or resize it from its corner. With a card focused, arrow keys move it (Shift for bigger steps), Ctrl+arrow keys resize it, Enter edits a note or opens a link, and Delete removes it. **List** shows the same cards in reading order (the order Tab and screen readers follow on the canvas) with *Move up* / *Move down* to reorder them. **Export HTML…** saves the board as one self-contained web page: captures and icons embedded, no scripts, cards in place on wide screens and stacked on narrow ones.
+
+Boards are saved in `boards.json` (atomic writes; up to 100 boards of 200 cards, notes up to 10,000 characters) and capture images as PNG files under `boards\<board id>\`, never inside the JSON. They stay on this device and are not synced. Private Spaces have no boards.
 
 ### Spaces
 `+` next to the Space chips creates a Space. Tick "Separate cookies & logins" for an isolated cookie jar and storage (a separate Chromium partition). Right-click or double-click a chip to rename; right-click to delete (deleting an isolated Space also clears its storage). Isolation is chosen at creation. The sidebar labels the active Space **Separate sign-in** or **Shared sign-in**.
@@ -201,7 +216,7 @@ Quiver has its own downloaders for addresses Chromium can't save, with no extra 
 ### Where data lives
 - Installed: `%APPDATA%\Quiver\`
 - PortableApps: `Data\` in the QuiverPortable folder. In addition to the profile, it holds `Cache\`, `Temp\`, `Logs\`, `CrashDumps\` and the default `Downloads\` directory.
-- Profile files: `quiver-state.json` (Spaces, tabs, settings, window bounds), `boosts\`, and Chromium partitions.
+- Profile files: `quiver-state.json` (Spaces, tabs, settings, window bounds), `history.json`, `boards.json` and `boards\` (board captures), `boosts\`, and Chromium partitions.
 
 To remove everything: uninstall, then delete that folder.
 
@@ -236,6 +251,7 @@ Quiver currently covers these Flecha workflows, plus split view and Peek (below)
 | 2 | Vertical sidebar | Collapsible sidebar, tab list, favicons, close, middle-click close, drag and keyboard reorder | Included |
 | 2 | Pinned tabs and folders | Pin, nested folders, collapse, drag between pinned and temporary, saved per Space | Included |
 | 2 | Spaces | Create / rename / delete, per-Space partition (cookies, storage), private Spaces | Included |
+| – | Boards | Canvas of notes, links and page captures per Space; keyboard moves, list view, HTML export | Included |
 | – | Ad and tracker blocking | Built-in domain list, per-page count, per-site exceptions | Included |
 | 3 | Command bar | `Ctrl+K` / `Ctrl+L` / `Ctrl+T` overlay | Included |
 | 3 | `gh` `npm` `mdn` `caniuse` `so` | Offline parser → URL | Included |
