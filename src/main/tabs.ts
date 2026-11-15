@@ -19,14 +19,12 @@ import {
 } from './browser-policy';
 import { EndpointStatus, type EndpointFailure } from './endpoint-status';
 import { internalPage, type InternalPage } from './internal-access';
-import { shortcutFor, type ShortcutAction } from './shortcuts';
 import type { PersistedTab, Store } from './store';
 import type { ArcImportSpace } from './arc-import';
 import { arcSpaceId, webSpacePartition } from './space-session';
 import { clearSessions } from './privacy';
 import { isPageFirst, REBINDABLE, shortcutFor, shortcutLabel, type ShortcutAction } from './shortcuts';
 import { PageKeys } from './page-keys';
-import type { Store } from './store';
 import {
   CANONICAL_NEW_TAB_URL,
   hasSavedNewTabPlaceholder,
@@ -369,9 +367,6 @@ export class TabManager {
   private partitionFor(spaceId: string, internal: boolean): string {
     if (internal) return INTERNAL_PARTITION;
     return webSpacePartition(this.spaces.find((space) => space.id === spaceId));
-    const space = this.spaces.find((s) => s.id === spaceId);
-    if (space?.private) return privatePartition(spaceId);
-    return space?.isolated ? `persist:quiver-space-${spaceId}` : SHARED_PARTITION;
   }
 
   /** Private Spaces keep no history, research trail, archive or saved session. */
@@ -458,9 +453,8 @@ export class TabManager {
   }
 
   // ───────── tabs ─────────
-  openTab(rawUrl: string, opts: { spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null; pinnedUrl?: string | null; lastActiveAt?: number; customTitle?: string } = {}): Tab {
   openTab(rawUrl: string, opts: {
-    spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null; pinnedUrl?: string | null; lastActiveAt?: number;
+    spaceId?: string; activate?: boolean; lazy?: boolean; index?: number; pinned?: boolean; folderId?: string | null; pinnedUrl?: string | null; lastActiveAt?: number; customTitle?: string;
     /** An already loaded web view (a Peek) that becomes this tab, keeping its page, history and scroll position. */
     adopt?: WebContentsView;
   } = {}): Tab {
@@ -1179,12 +1173,10 @@ export class TabManager {
     return true;
   }
 
-  // ───────── spaces ─────────
   // ───────── sync ─────────
   /** Spaces with their folders and pinned tabs, as published to other devices. */
   syncedSpaces(): SyncedSpace[] {
-    return this.spaces.filter((sp) => !arcSpaceId(sp.id)).map((sp) => ({
-    return publicSpaces(this.spaces).map((sp) => ({
+    return publicSpaces(this.spaces).filter((sp) => !arcSpaceId(sp.id)).map((sp) => ({
       id: sp.id, name: sp.name, color: sp.color, isolated: sp.isolated, folders: this.folders(sp.id),
       pinned: this.spaceTabs(sp.id).filter((t) => t.pinned).flatMap((t) => {
         const url = t.pinnedUrl ?? this.tabUrl(t);

@@ -531,6 +531,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (patch.theme !== undefined) {
       s.theme = normalizeTheme(patch.theme);
       d.onThemeChanged();
+    }
     if (patch.shortcuts !== undefined) {
       s.shortcuts = normalizeShortcutOverrides(patch.shortcuts) as Record<string, string>;
       setShortcutOverrides(s.shortcuts);

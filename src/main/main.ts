@@ -1,5 +1,4 @@
-import { app, BaseWindow, clipboard, crashReporter, dialog, desktopCapturer, Menu, nativeTheme, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
-import { app, BaseWindow, clipboard, net, crashReporter, dialog, desktopCapturer, Menu, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
+import { app, BaseWindow, clipboard, crashReporter, dialog, desktopCapturer, Menu, nativeTheme, net, protocol, screen, session, WebContentsView, type Display, type Event } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { INTERNAL_PARTITION, INTERNAL_SCHEME, SHARED_PARTITION } from '../shared/constants';
@@ -143,7 +142,6 @@ async function main(): Promise<void> {
   // Privacy settings must reach every session before anything (including the internal protocol) creates one.
   const store = new Store();
   setShortcutOverrides(store.state.settings.shortcuts);
-  const privacy = new PrivacyController(() => store.state.settings.privacy, (options) => app.configureHostResolver(options));
   // Quiver's own pages (settings, command bar) are not ad-blocked. Blocked counts reach the toolbar once tabs exist.
   let onBlockedChanged = () => {};
   const privacy = new PrivacyController(() => store.state.settings.privacy, (options) => app.configureHostResolver(options), {
@@ -162,10 +160,9 @@ async function main(): Promise<void> {
     // Clear web Spaces only; Quiver's own pages and settings are kept.
     event.preventDefault();
     clearedOnExit = true;
-    const partitions = new Set([SHARED_PARTITION, ...store.state.spaces.map(webSpacePartition)]);
+    // Private Spaces live in memory only, so there is nothing of theirs to clear.
+    const partitions = new Set([SHARED_PARTITION, ...store.state.spaces.filter((sp) => !sp.private).map(webSpacePartition)]);
     void clearSessions([...partitions].map((partition) => session.fromPartition(partition))).finally(() => app.quit());
-    const partitions = [SHARED_PARTITION, ...store.state.spaces.filter((sp) => sp.isolated && !sp.private).map((sp) => `persist:quiver-space-${sp.id}`)];
-    void clearSessions(partitions.map((partition) => session.fromPartition(partition))).finally(() => app.quit());
   });
   const boosts = new Boosts();
   boosts.startWatching();

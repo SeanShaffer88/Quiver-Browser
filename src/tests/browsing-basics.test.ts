@@ -26,7 +26,9 @@ test('find and zoom shortcuts', () => {
   assert.equal(key('F3', { control: false }), 'find-next');
   assert.equal(key('F3', { control: false, shift: true }), 'find-prev');
   assert.equal(key('Equal'), 'zoom-in');
-  assert.equal(key('Equal', { shift: true }), 'split');
+  assert.equal(key('Equal', { shift: true }), 'zoom-in'); // Ctrl+Plus on US layouts
+  assert.equal(key('Backslash', { shift: true }), 'split');
+  assert.equal(key('KeyN', { shift: true }), 'private-space');
   assert.equal(key('Minus', { shift: true }), 'unsplit');
   assert.equal(key('NumpadAdd'), 'zoom-in');
   assert.equal(key('Minus'), 'zoom-out');

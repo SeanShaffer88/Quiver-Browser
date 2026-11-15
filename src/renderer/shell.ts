@@ -116,12 +116,10 @@ function renderSpaces(s: ShellState): HTMLElement {
         role: 'tab',
         'aria-selected': String(sp.id === s.activeSpaceId),
         dataset: { focusKey: sp.id },
-        'aria-label': sp.name + ', ' + signInLabel(sp).toLowerCase(),
-        title: `${sp.name} — ${signInLabel(sp)}\nRight-click: rename or delete · Double-click: rename`,
-        'aria-label': sp.private ? sp.name + ', private Space' : sp.isolated ? sp.name + ', separate sign-in' : sp.name + ', shared sign-in',
+        'aria-label': sp.private ? sp.name + ', private Space' : sp.name + ', ' + signInLabel(sp).toLowerCase(),
         title: sp.private
           ? `${sp.name} — private: nothing is saved, synced or kept in history. Closing it or quitting Quiver discards everything.\nRight-click: close`
-          : `${sp.name}${sp.isolated ? ' — separate cookies & storage' : ' — shared cookies'}\nRight-click: rename or delete · Double-click: rename`,
+          : `${sp.name} — ${signInLabel(sp)}\nRight-click: rename or delete · Double-click: rename`,
         onClick: () => call('space:activate', sp.id),
         onDblclick: () => {
           renamingSpace = sp.id;
@@ -433,7 +431,6 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
     kids.push(h('span', { class: 'media-permission', title: permissionStatus, 'aria-hidden': 'true' }, 'i'));
   }
   if (t.split) kids.push(h('span', { class: 'split-mark', title: `In split view (${t.split} pane)`, 'aria-hidden': 'true' }, t.split === 'left' ? '◧' : '◨'));
-  if (t.live) kids.push(h('span', { class: 'live', title: 'Using camera, microphone or screen sharing', 'aria-label': 'live' }, '●'));
   if (t.local && t.errors > 0) {
     kids.push(h('span', {
       class: 'err', title: `${t.errors} console error(s) since last navigation. Click to open the console`,
@@ -444,8 +441,7 @@ function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active
   const select = h('button', {
     class: 'tab-select',
     role: 'treeitem',
-    'aria-label': t.title + (t.pinned ? ', pinned' : '') + (t.mediaPermissionGranted ? ', ' + permissionStatus : ''),
-    'aria-label': t.title + (t.pinned ? ', pinned' : '') + (t.split ? `, in split view, ${t.split} pane` : '') + (t.live ? ', using camera or microphone' : ''),
+    'aria-label': t.title + (t.pinned ? ', pinned' : '') + (t.split ? `, in split view, ${t.split} pane` : '') + (t.mediaPermissionGranted ? ', ' + permissionStatus : ''),
     'aria-selected': String(active),
     'aria-level': String(m.level), 'aria-setsize': String(m.setsize), 'aria-posinset': String(m.posinset),
     dataset: { focusKey: 'tab-' + t.id },
@@ -597,9 +593,6 @@ function renderSidebar(s: ShellState): void {
   },
     h('span', { class: 'recovery-expanded' }, signInLabel(active)),
     h('span', { class: 'recovery-compact' }, active.sessionGroupId ? 'Profile' : active.isolated ? 'Separate' : 'Shared'),
-  );
-    h('span', { class: 'recovery-expanded' }, active.isolated ? 'Separate sign-in' : 'Shared sign-in'),
-    h('span', { class: 'recovery-compact' }, active.isolated ? 'Separate' : 'Shared'),
   ));
   sidebar.replaceChildren(brand, renderSpaces(s), ...(isolation ? [isolation] : []),
     ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderUpdateNotice(s), ...renderRecovery(s),

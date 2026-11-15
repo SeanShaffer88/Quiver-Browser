@@ -289,9 +289,16 @@ function Invoke-PortableRuntime([string]$Root, [string]$Url, [string]$Pass, [str
                 Write-PortableFailure 'saveAs' $_
             }
         }
-        if (!$browser.CloseMainWindow() -or !$browser.WaitForExit(15000) -or $browser.ExitCode -ne 0 -or
-            !$launcher.WaitForExit(10000) -or $launcher.ExitCode -ne 0) {
-            throw 'Portable browser and launcher did not exit cleanly.'
+        $closeSent = $browser.CloseMainWindow()
+        $browserExited = $closeSent -and $browser.WaitForExit(15000)
+        $launcherExited = $browserExited -and $launcher.WaitForExit(10000)
+        if (!$launcherExited -or $browser.ExitCode -ne 0 -or $launcher.ExitCode -ne 0) {
+            # Say which step failed: the close request, the browser's exit, or the launcher's.
+            $detail = if (!$closeSent) { 'CloseMainWindow was not accepted' }
+                elseif (!$browserExited) { 'the browser was still running 15 s after the close request' }
+                elseif (!$launcherExited) { 'the launcher was still running 10 s after the browser exited' }
+                else { "exit codes browser=$($browser.ExitCode) launcher=$($launcher.ExitCode)" }
+            throw "Portable browser and launcher did not exit cleanly: $detail."
         }
         $null = Wait-For 'all portable browser processes to exit' {
             !(Get-CimInstance Win32_Process -Filter "Name='Quiver.exe'" | Where-Object ExecutablePath -IEQ $browserPath)
