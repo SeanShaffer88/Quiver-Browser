@@ -34,7 +34,7 @@ import { bookmarksElsewhere, bookmarksForProfile, profileKind, profileLabel, rea
 import type { DownloadAction, Downloads } from './downloads';
 import { splitSearchQuery, splitSuggestions, tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
-import { normalizeTheme } from '../shared/theme';
+import { normalizeMotion, normalizeTheme, spaceColor, SPACE_PRESETS } from '../shared/theme';
 import {
   bindingProblem, currentShortcutOverrides, effectiveBindings, formatBinding, isRebindable, normalizeShortcutOverrides, parseBinding,
   REBINDABLE, setShortcutOverrides,
@@ -453,15 +453,38 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   });
   handle('shell', 'space:rename', (_e, id: string, name: string) => tabs.renameSpace(String(id), String(name)));
   handle('shell', 'space:activate', (_e, id: string) => tabs.activateSpace(String(id)));
+  handle('shell', 'space:color', (_e, id: unknown, color: unknown, color2: unknown) => {
+    const main = spaceColor(color);
+    if (typeof id !== 'string' || !main || (color2 != null && !spaceColor(color2))) throw new Error('invalid Space colour');
+    tabs.setSpaceColor(id, main, spaceColor(color2));
+  });
   handle('shell', 'space:menu', (_e, id: string) => {
     const space = tabs.spaces.find((sp) => sp.id === String(id));
     if (!space) return;
     const kind = profileKind(space);
+    const colorItems = (current: string | undefined, pick: (color: string) => void): MenuItemConstructorOptions[] =>
+      SPACE_PRESETS.map((p) => ({ label: p.name, type: 'radio', checked: current === p.color, click: () => pick(p.color) }));
     const menu = Menu.buildFromTemplate([
       { label: kind === 'private' ? 'Profile: Private (in memory)' : kind === 'separate' ? 'Profile: Separate' : 'Profile: Shared', enabled: false },
       ...(kind === 'private' ? [] : [{ label: 'Space settings…', click: () => tabs.openTab(`quiver://settings?space=${encodeURIComponent(space.id)}#section-spaces`, { spaceId: space.id }) }]),
       { type: 'separator' },
       { label: 'Rename Space', click: () => shell.webContents.send('space:rename-start', id) },
+      {
+        label: 'Space color',
+        submenu: [
+          ...colorItems(space.color2 ? undefined : space.color, (color) => tabs.setSpaceColor(space.id, color, undefined)),
+          { type: 'separator' },
+          {
+            label: 'Gradient',
+            submenu: [
+              { label: 'None', type: 'radio', checked: !space.color2, click: () => tabs.setSpaceColor(space.id, space.color, undefined) },
+              { type: 'separator' },
+              ...colorItems(space.color2, (color2) => tabs.setSpaceColor(space.id, space.color, color2)),
+            ],
+          },
+          { label: 'Custom colors…', click: () => shell.webContents.send('space:color-start', id) },
+        ],
+      },
       { label: 'New private Space', accelerator: 'Ctrl+Shift+N', click: () => tabs.createPrivateSpace() },
       { type: 'separator' },
       { label: tabs.isPrivate(String(id)) ? 'Close private Space and discard everything' : 'Delete Space and its tabs', enabled: tabs.canDeleteSpace(String(id)), click: () => void tabs.deleteSpace(String(id)).then(() => {
@@ -877,6 +900,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       s.theme = normalizeTheme(patch.theme);
       d.onThemeChanged();
     }
+    if (patch.reduceMotion !== undefined) s.reduceMotion = normalizeMotion(patch.reduceMotion);
     if (patch.shortcuts !== undefined) {
       s.shortcuts = normalizeShortcutOverrides(patch.shortcuts) as Record<string, string>;
       setShortcutOverrides(s.shortcuts);
@@ -1155,7 +1179,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     tabs.setOverlayOpen(true, false, invoker);
     const tooLong = prefill.length > MAX_COMMAND_LENGTH;
     overlay.webContents.send('cmd:opened', {
-      id: command.id, mode, text: tooLong ? '' : prefill, maxInputLength: MAX_COMMAND_LENGTH,
+      id: command.id, mode, text: tooLong ? '' : prefill, maxInputLength: MAX_COMMAND_LENGTH, motion: store.state.settings.reduceMotion,
       message: tooLong ? 'This address is too long to edit here. Enter a shorter command.' : undefined,
     });
   }

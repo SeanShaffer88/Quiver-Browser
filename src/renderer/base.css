@@ -44,13 +44,18 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; overflow: hidden; user-select: none; }
 button { font: inherit; color: inherit; background: transparent; border: 0; padding: 0; cursor: pointer; }
-button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+:root { --focus-ring: 2px solid var(--accent); --ease-out: cubic-bezier(.2, .8, .2, 1); --t-fast: 120ms; }
+/* One focus ring everywhere: 2px accent, just outside the control, rounded with it. */
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: var(--focus-ring); outline-offset: 1px; }
+:focus:not(:focus-visible) { outline: none; }
 input, textarea, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; user-select: text; }
-.icon-btn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); }
+.icon-btn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); transition: background-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out); }
+.icon-btn:active:not(:disabled) { transform: scale(.94); }
 .icon-btn:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
 .icon-btn:disabled { opacity: .35; cursor: default; }
 .icon-btn.on { color: var(--accent); background: var(--panel-2); }
-.btn { padding: 6px 12px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); }
+.btn { padding: 6px 12px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); transition: border-color var(--t-fast) var(--ease-out), background-color var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out); }
+.btn:active { transform: translateY(1px); }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 .btn.danger:hover { border-color: var(--prod); color: var(--prod); }
@@ -59,4 +64,9 @@ input, textarea, select { font: inherit; color: var(--text); background: var(--b
 .pill.STAGING { background: var(--staging); }
 .pill.PROD { background: var(--prod); color: #fff; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+/* Reduced motion: Settings → Appearance → Reduce motion sets data-motion on Quiver's pages ('reduce' or 'full');
+   without it (pages that do not read the setting) the system preference decides. */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) *, :root:not([data-motion="full"]) *::before, :root:not([data-motion="full"]) *::after { transition: none !important; animation: none !important; }
+}
+:root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after { transition: none !important; animation: none !important; }

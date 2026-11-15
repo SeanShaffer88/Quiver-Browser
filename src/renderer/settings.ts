@@ -5,6 +5,7 @@ import { setupSpaceSettings } from './space-settings.js';
 
 setupArcSidebarPreview();
 import { currentSection, searchTerms, sectionMatches } from './settings-search.js';
+import { setMotion } from './motion.js';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let groups: EnvGroup[] = [];
@@ -329,6 +330,8 @@ function renderGroups(): void {
   $<HTMLInputElement>('little-quiver').checked = settings.littleQuiver;
   renderPrivacy(settings.privacy);
   $<HTMLSelectElement>('theme').value = settings.theme;
+  $<HTMLSelectElement>('reduce-motion').value = settings.reduceMotion ?? 'system';
+  setMotion(settings.reduceMotion);
   renderShortcuts(await quiver.invoke('shortcuts:list') as ShortcutRow[]);
   renderUpdates(await quiver.invoke('update:status') as UpdateStatus);
 })();
@@ -619,6 +622,11 @@ $<HTMLInputElement>('little-quiver').addEventListener('change', (e) => void quiv
 $<HTMLInputElement>('ask-save').addEventListener('change', (e) => void quiver.invoke('settings:set', { askWhereToSave: (e.target as HTMLInputElement).checked }));
 $<HTMLSelectElement>('archive-after').addEventListener('change', (e) => void quiver.invoke('settings:set', { archiveAfterHours: Number((e.target as HTMLSelectElement).value) }));
 $<HTMLSelectElement>('theme').addEventListener('change', (e) => void quiver.invoke('settings:set', { theme: (e.target as HTMLSelectElement).value }));
+$<HTMLSelectElement>('reduce-motion').addEventListener('change', (e) => {
+  const value = (e.target as HTMLSelectElement).value;
+  setMotion(value);
+  void quiver.invoke('settings:set', { reduceMotion: value });
+});
 
 // ───────── section list and search ─────────
 const sections = [...document.querySelectorAll<HTMLElement>('.settings-section')];
