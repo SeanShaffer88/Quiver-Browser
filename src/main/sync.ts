@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { normalizeDeviceTabs, normalizeHandoffs, normalizeIds, type DeviceTabs, type Handoff } from './continuity';
 
 // Folder sync: every device writes only its own file into a folder the user already syncs (OneDrive, Dropbox,
 // Syncthing…), so cloud providers never see two writers on one file. Each section is last-writer-wins by the time
@@ -18,6 +19,14 @@ export interface DeviceFile {
   deviceName: string;
   writtenAt: number;
   sections: Partial<Record<SyncSection, SectionCopy>>;
+  /** This device can receive tabs sent from other devices (older Quivers cannot). */
+  acceptsHandoff?: boolean;
+  /** Open tabs per Space, when "Sync open tabs" is on. Never private Spaces, internal pages or credentials. */
+  tabs?: DeviceTabs;
+  /** Tabs sent from this device to others, until each receiver acknowledges or they expire. */
+  handoffs?: Handoff[];
+  /** Ids of handoffs this device has received, so their senders can drop them. */
+  handoffAck?: string[];
 }
 
 /** What this device last published per section, so local edits can be told apart from synced ones. */
@@ -37,7 +46,7 @@ export function hashSection(data: unknown): string {
 
 export const DEVICE_ID = /^[\w-]{1,64}$/;
 
-export function normalizeDeviceFile(raw: unknown): DeviceFile | null {
+export function normalizeDeviceFile(raw: unknown, now = Date.now()): DeviceFile | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   if (r.version !== 1 || typeof r.deviceId !== 'string' || !DEVICE_ID.test(r.deviceId)) return null;
@@ -50,7 +59,17 @@ export function normalizeDeviceFile(raw: unknown): DeviceFile | null {
     }
   }
   const name = typeof r.deviceName === 'string' ? r.deviceName.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 60) : '';
-  return { version: 1, deviceId: r.deviceId, deviceName: name || r.deviceId, writtenAt: typeof r.writtenAt === 'number' ? r.writtenAt : 0, sections };
+  const tabs = normalizeDeviceTabs(r.tabs, now);
+  const handoffs = normalizeHandoffs(r.handoffs, now);
+  const handoffAck = normalizeIds(r.handoffAck);
+  return {
+    version: 1, deviceId: r.deviceId, deviceName: name || r.deviceId,
+    writtenAt: typeof r.writtenAt === 'number' && Number.isFinite(r.writtenAt) ? r.writtenAt : 0, sections,
+    ...(r.acceptsHandoff === true ? { acceptsHandoff: true } : {}),
+    ...(tabs ? { tabs } : {}),
+    ...(handoffs.length ? { handoffs } : {}),
+    ...(handoffAck.length ? { handoffAck } : {}),
+  };
 }
 
 /**

@@ -7,6 +7,10 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 - Little Quiver: links from other apps open in a small window (title and host, *Copy link*, *Open in Quiver* with `Ctrl+O`, *Close* with `Esc` / `Ctrl+W`) in the active Space's storage instead of adding tabs. *Open in Quiver* moves the live page into the active Space as a tab. Windows cascade and open at the last size you chose. Setting in Settings → Tabs, on by default.
 - Peek any link: Shift+click a link in any tab, or *Peek link* in the new link menu (with *Open link in new tab* and *Copy link address*), opens it in Peek. Pages that handle Shift+click themselves keep it. Setting in Settings → Tabs, on by default.
 
+- Tabs on other devices: with **Sync open tabs** (Settings → Sync), each device publishes its open tabs per Space (address, title, pinned, last used) in its own sync file, about 2 seconds after they change, and watches the sync folder (checking every 5 seconds where it can't be watched) so other devices' tabs appear within seconds. Private Spaces, Quiver's own pages, local files and addresses with credentials are never published. See them with `devices` in the command bar, in command-bar results, or in Settings → Sync → Other devices; open one tab or **Continue here** to open a device's Space into the matching Space (or a new one) without duplicating open tabs. Devices not seen for 30 days are hidden.
+- Send tab to device (tab menu, `send` in the command bar): the other device shows a dismissible "Tab from <device>" notice with **Open**.
+- **Sync open tabs defaults:** on when you set up sync from this version on; off on devices that were already syncing before it, so upgrading never starts sharing tabs without you turning it on.
+- Sync no longer rewrites an unchanged device file every minute; it is rewritten when something changes and otherwise every 5 minutes, so sync clients upload less.
 - Deny camera, microphone, and screen sharing in Phone Preview.
 - Clear a tab's media permission prompt and page indicator when its renderer stops.
 - Resume paused and interrupted HTTP downloads from saved progress after reopening Quiver.

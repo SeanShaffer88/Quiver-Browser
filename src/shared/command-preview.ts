@@ -106,6 +106,20 @@ export function commandChoice(suggestion: Suggestion, context: CommandContext): 
       preview = { title: label, destination: detail ? `Shortcut: ${detail}` : undefined, canRun: true };
       accessibleLabel = detail ? `${label}, ${detail}` : label;
       break;
+    case 'remote-tab':
+      preview = { title: `Open from ${action.device}`, destination: displayDestination(action.url), space: context.spaceName, tab: 'new', canRun: true };
+      accessibleLabel = [`Open ${label} from ${action.device}`, destinationHost(action.url)].filter(Boolean).join(', ');
+      break;
+    case 'continue':
+      preview = {
+        title: 'Continue here', destination: `${action.space} from ${action.device} · ${action.count === 1 ? '1 tab' : `${action.count} tabs`}, skipping any already open`,
+        space: action.space, tab: 'new', canRun: true,
+      };
+      accessibleLabel = `Continue ${action.space} from ${action.device} here, ${action.count === 1 ? '1 tab' : `${action.count} tabs`}`;
+      break;
+    case 'send-tab':
+      preview = { title: `Send to ${action.device}`, destination: context.internal ? undefined : displayDestination(context.url), space: context.spaceName, tab: 'existing', canRun: true };
+      break;
     case 'noop':
       preview = { title: kind === 'jwt' ? 'Decode locally' : label, destination: detail, canRun: false };
       if (kind === 'jwt') accessibleLabel = 'JWT decode result';

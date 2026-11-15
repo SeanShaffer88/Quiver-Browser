@@ -23,6 +23,10 @@ const recoveryStatus = document.getElementById('recovery-status')!;
 const phoneLabel = document.getElementById('phone-label')!;
 const developerStatus = h('div', { class: 'sr-only', role: 'status', 'aria-atomic': 'true' });
 document.body.append(developerStatus);
+const handoffStatus = h('div', { class: 'sr-only', role: 'status', 'aria-atomic': 'true' });
+document.body.append(handoffStatus);
+/** Handoffs already announced, so each is read out once when it arrives. */
+const announcedHandoffs = new Set<string>();
 let state: ShellState | null = null;
 let addingSpace = false;
 let renamingSpace: string | null = null;
@@ -76,6 +80,24 @@ function renderUpdateNotice(s: ShellState): HTMLElement[] {
     h('button', { class: 'btn', title: `Open the Quiver ${u.version} release page`, 'aria-label': `Open the Quiver ${u.version} release page`, dataset: { focusKey: 'update-open' }, onClick: () => call('update:open') },
       h('span', { class: 'recovery-expanded' }, 'Release notes'), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, '↑')),
     h('button', { class: 'btn', title: 'Dismiss', 'aria-label': `Dismiss the Quiver ${u.version} notice`, dataset: { focusKey: 'update-dismiss' }, onClick: () => call('update:dismiss') }, '×'))];
+}
+
+/** "Tab from <device>": a tab another device sent here, until it is opened or dismissed. */
+function renderHandoffs(s: ShellState): HTMLElement[] {
+  return (s.handoffs ?? []).map((handoff) => {
+    const what = `${handoff.title}${handoff.host && handoff.host !== handoff.title ? ` (${handoff.host})` : ''}`;
+    return h('div', { class: 'recovery-card handoff-card', role: 'group', 'aria-label': `Tab from ${handoff.from}` },
+      h('p', { class: 'recovery-copy recovery-expanded', title: what },
+        h('strong', {}, `Tab from ${handoff.from}`), h('span', { class: 'handoff-title' }, handoff.title)),
+      h('button', {
+        class: 'btn', title: `Open ${what} from ${handoff.from}`, 'aria-label': `Open ${handoff.title} from ${handoff.from}`,
+        dataset: { focusKey: `handoff-open-${handoff.id}` }, onClick: () => call('handoff:open', handoff.id),
+      }, h('span', { class: 'recovery-expanded' }, 'Open'), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, '⇄')),
+      h('button', {
+        class: 'icon-btn recovery-expanded', title: 'Dismiss', 'aria-label': `Dismiss tab from ${handoff.from}`,
+        dataset: { focusKey: `handoff-dismiss-${handoff.id}` }, onClick: () => call('handoff:dismiss', handoff.id),
+      }, '×'));
+  });
 }
 
 const call = (ch: string, ...a: unknown[]) => quiver.invoke(ch, ...a).catch((e: Error) => console.error(ch, e.message));
@@ -549,7 +571,7 @@ function sidebarKey(s: ShellState): string {
     s.tabs.filter((t) => t.spaceId === s.activeSpaceId),
     devServers,
     rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.recentlyClosed, rest.recoveryNotice, rest.localServerStatus,
-    rest.settings.sidebarCollapsed, rest.settings.devServerScan, rest.keys, rest.update, addingSpace, renamingSpace, renamingFolder,
+    rest.settings.sidebarCollapsed, rest.settings.devServerScan, rest.keys, rest.update, rest.handoffs, addingSpace, renamingSpace, renamingFolder,
   ]);
 }
 
@@ -595,7 +617,7 @@ function renderSidebar(s: ShellState): void {
     h('span', { class: 'recovery-compact' }, active.sessionGroupId ? 'Profile' : active.isolated ? 'Separate' : 'Shared'),
   ));
   sidebar.replaceChildren(brand, renderSpaces(s), ...(isolation ? [isolation] : []),
-    ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderUpdateNotice(s), ...renderRecovery(s),
+    ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderUpdateNotice(s), ...renderHandoffs(s), ...renderRecovery(s),
     ...(s.localServerStatus ? [renderLocalServerStatus(s.localServerStatus)] : []), tabsEl, servers);
   tabsEl.scrollTop = previousScroll;
   tabList = { scroller: tabsEl, inner, rows: s.sidebar, meta: rowMeta(s.sidebar), tabs: new Map(spaceTabs.map((t) => [t.id, t])), activeId: s.activeTabId };
@@ -776,6 +798,9 @@ function render(): void {
   const devMessage = state.localServerStatus?.state === 'recovered' ? 'Local server is back. Retry the failed page.' :
     state.localServerStatus?.state === 'missing' ? 'Local server unavailable.' : '';
   if (developerStatus.textContent !== devMessage) developerStatus.textContent = devMessage;
+  const arrived = (state.handoffs ?? []).filter((x) => !announcedHandoffs.has(x.id));
+  for (const x of arrived) announcedHandoffs.add(x.id);
+  if (arrived.length) handoffStatus.textContent = `Tab from ${arrived[0].from}: ${arrived[0].title}`;
   if (focused?.dataset.focusKey && !focused.isConnected && !focusShellControl(focused.dataset.focusKey)) {
     if (!focusShellControl('tab-' + state.activeTabId)) focusShellControl('address');
   }

@@ -17,6 +17,7 @@ import { MediaPermissions } from './site-permissions';
 import { clearSessions, PrivacyController } from './privacy';
 import { normalizeTopics, Research } from './research';
 import { normalizeSyncState, SyncService } from './sync-service';
+import { collectDeviceTabs } from './continuity';
 import os from 'node:os';
 import { parseLaunchArgs } from './launch-args';
 import { setShortcutOverrides, type ShortcutAction } from './shortcuts';
@@ -452,11 +453,23 @@ async function main(): Promise<void> {
         for (const [name, content] of wanted) if (boosts.readIfExists(name) !== content) boosts.save(name, content);
       },
     },
-  }, () => store.save(), () => {
+  }, () => store.save(), notifySettings, undefined, {
+    tabs: () => {
+      const { spaces, tabs: open, activeSpaceId } = tabs.openTabsForSync();
+      return collectDeviceTabs(spaces, open, activeSpaceId, Date.now());
+    },
+    changed: () => {
+      tabs.emit();
+      notifySettings();
+    },
+  });
+  function notifySettings() {
     for (const tab of tabs.tabs.values()) {
       if (tab.internalPage === 'settings' && !tab.view.webContents.isDestroyed()) tab.view.webContents.send('sync:changed');
     }
-  });
+  }
+  tabs.onChanged = () => sync.tabsChanged();
+  tabs.handoffNotices = () => sync.pendingHandoffs().slice(0, 3).map(({ id, from, title, url }) => ({ id, from, title: title || (URL.parse(url)?.host ?? url), host: URL.parse(url)?.host ?? '' }));
   const updates = new UpdateChecker(
     () => store.state.updates ?? { lastCheckedAt: 0 },
     (next) => {
@@ -481,6 +494,8 @@ async function main(): Promise<void> {
     runCommand: (command) => {
       if (command === 'settings') tabs.navigate('quiver://settings');
       else if (command === 'little-open') littleWindows.openMostRecentInQuiver();
+      else if (command === 'devices') actions?.openCommandBar('devices ');
+      else if (command === 'send-tab') actions?.openCommandBar('send to ');
       else onShortcut(command);
     },
   });

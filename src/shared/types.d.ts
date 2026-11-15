@@ -240,6 +240,15 @@ export interface ShellState {
   keys: Record<string, string>;
   /** A newer Quiver release the user hasn't dismissed. */
   update?: UpdateNotice;
+  /** Tabs sent from other devices, newest first, until opened or dismissed. */
+  handoffs?: HandoffNotice[];
+}
+
+export interface HandoffNotice {
+  id: string;
+  from: string;
+  title: string;
+  host: string;
 }
 
 export interface TabCommandTarget {
@@ -269,6 +278,9 @@ export type SuggestionAction =
   | { type: 'research'; op: 'resume' | 'open'; topicId: string }
   | { type: 'research'; op: 'stop' }
   | { type: 'research'; op: 'note'; text: string }
+  | { type: 'remote-tab'; deviceId: string; device: string; url: string }
+  | { type: 'continue'; deviceId: string; device: string; spaceId: string; space: string; count: number }
+  | { type: 'send-tab'; deviceId: string; device: string }
   | { type: 'noop' };
 
 export type BrowserCommand =
@@ -276,7 +288,7 @@ export type BrowserCommand =
   | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings' | 'downloads'
   | 'find' | 'zoom-in' | 'zoom-out' | 'zoom-reset'
   | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space'
-  | 'split' | 'unsplit' | 'private-space' | 'little-open';
+  | 'split' | 'unsplit' | 'private-space' | 'little-open' | 'devices' | 'send-tab';
 
 /** The Little Quiver toolbar: what the page in that window shows. */
 export interface LittleQuiverState {

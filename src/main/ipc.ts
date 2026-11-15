@@ -1,4 +1,4 @@
-import { clipboard, dialog, ipcMain, Menu, session, shell as electronShell, type IpcMainInvokeEvent, type WebContentsView, type WebFrameMain } from 'electron';
+import { clipboard, dialog, ipcMain, Menu, session, shell as electronShell, type IpcMainInvokeEvent, type MenuItemConstructorOptions, type WebContentsView, type WebFrameMain } from 'electron';
 import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
 import { detectEnv } from '../shared/env';
 import { parseCommand } from '../shared/parser';
@@ -20,6 +20,8 @@ import { archiveSuggestions, normalizeArchiveHours } from './archive';
 import { nativeKind } from './native/runners';
 import { shareTarget } from './native/share';
 import type { SyncService } from './sync-service';
+import { planContinue, publishableUrl } from './continuity';
+import { deviceSuggestions, devicesQuery, remoteTabMatches, sendMatches, sendQuery, sendSuggestions } from './device-commands';
 import type { History } from './history';
 import type { DownloadAction, Downloads } from './downloads';
 import { splitSearchQuery, splitSuggestions, tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
@@ -164,6 +166,22 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     }
   }
 
+  /** Why a tab cannot be sent to another device, or undefined when it can. */
+  const sendBlocker = (tab: NonNullable<TabManager['activeTab']> | undefined | null): string | undefined => {
+    if (!tab) return 'Open a web page to send it';
+    if (tabs.isPrivate(tab.spaceId)) return 'Tabs in a private Space are never sent to other devices';
+    if (tab.internal) return 'Quiver’s own pages stay on this device';
+    if (!publishableUrl(tabs.tabUrl(tab))) return 'Only web pages without a user name or password in the address can be sent';
+    return undefined;
+  };
+
+  const deviceContext = () => ({
+    syncing: d.sync.status().folder !== null,
+    openTabs: d.sync.status().openTabs,
+    now: Date.now(),
+    localUrls: new Set([...tabs.tabs.values()].map((t) => tabs.tabUrl(t))),
+  });
+
   /** Tab search (`tab …`), palette scopes (`> …`, `bm …`), else the parser with palette matches below its default result. */
   const suggestionsFor = (text: string, context: CommandContext): Suggestion[] => {
     const meet = meetSuggestions(text);
@@ -178,13 +196,19 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (splitQuery !== undefined) return splitSuggestions(splitQuery, context.spaceId, context.tabId, openTabTargets());
     const tabQuery = tabSearchQuery(text);
     if (tabQuery !== undefined) return tabSearchSuggestions(tabQuery, context.spaceId, openTabTargets());
+    const devicesText = devicesQuery(text);
+    if (devicesText !== undefined) return deviceSuggestions(devicesText, d.sync.devices(), deviceContext());
+    const send = sendQuery(text);
+    if (send && (send.explicit || sendMatches(send.query, d.sync.sendTargets()))) {
+      return sendSuggestions(send.query, d.sync.sendTargets(), deviceContext(), sendBlocker(tabs.activeTab));
+    }
     const palette = paletteQuery(text);
     const sources = () => ({ activeSpaceId: context.spaceId, tabs: openTabTargets(), bookmarks: store.state.bookmarks, history: d.history.list(), littleWindows: d.little?.count ?? 0 });
     if (palette && palette.scope !== 'all') return paletteSuggestions(palette.scope, palette.query, sources());
     const parsed = parseCommand(text, parseContext(context));
     const fellThrough = parsed.length === 1 && (parsed[0].kind === 'url' || parsed[0].kind === 'search');
     if (!palette || !fellThrough || palette.query.length < 2) return parsed;
-    return [...parsed, ...paletteSuggestions('all', palette.query, sources())];
+    return [...parsed, ...paletteSuggestions('all', palette.query, sources()), ...remoteTabMatches(palette.query, d.sync.devices(), deviceContext())];
   };
 
   handle('shell', 'state:get', () => tabs.snapshot());
@@ -243,6 +267,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       { label: 'Copy link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(false); if (link) clipboard.writeText(link); } },
       { label: 'Copy Markdown link', enabled: !tab.internal, click: () => { tabs.activateTab(tab.id); const link = tabs.activeLink(true); if (link) clipboard.writeText(link); } },
       { label: 'Open the console', enabled: !tab.internal, click: () => tabs.openConsole(tab.id) },
+      sendMenu(tab),
       ...(!tab.internal && store.state.settings.privacy.blockTrackers ? [{
         label: 'Allow ads on this site',
         type: 'checkbox' as const,
@@ -257,6 +282,41 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       ] : [{ label: 'Close tab', click: () => tabs.closeTab(tab.id) }]),
     ]).popup();
   });
+
+  /** "Send tab to device" with one item per device that can receive it. */
+  function sendMenu(tab: NonNullable<TabManager['activeTab']>): MenuItemConstructorOptions {
+    const blocked = d.sync.status().folder === null ? 'Choose a sync folder in Settings first' : sendBlocker(tab);
+    const targets = blocked ? [] : d.sync.sendTargets();
+    if (blocked || !targets.length) {
+      return { label: 'Send tab to device', enabled: false, toolTip: blocked ?? 'No other devices can receive tabs yet' };
+    }
+    return {
+      label: 'Send tab to device',
+      submenu: targets.map((device) => ({
+        label: device.name,
+        click: () => {
+          // Re-read the tab: it may have navigated since the menu opened.
+          const now = tabs.tabs.get(tab.id);
+          if (now && !sendBlocker(now)) d.sync.sendTab(device.id, tabs.tabUrl(now), now.customTitle || now.title);
+        },
+      })),
+    };
+  }
+
+  /** Open one tab another device has open, in a new tab in the current Space. */
+  const openRemoteTab = (deviceId: unknown, url: unknown): boolean => {
+    if (typeof deviceId !== 'string' || typeof url !== 'string' || !d.sync.remoteTab(deviceId, url)) return false;
+    tabs.openTab(url);
+    return true;
+  };
+
+  /** "Continue here": open another device's Space into the matching Space here, or a new one. */
+  const continueHere = (deviceId: unknown, spaceId: unknown): number | null => {
+    if (typeof deviceId !== 'string' || (spaceId !== undefined && typeof spaceId !== 'string')) return null;
+    const remote = d.sync.remoteSpace(deviceId, spaceId as string | undefined);
+    if (!remote) return null;
+    return tabs.continueSession(planContinue(remote, tabs.spaces, (id) => tabs.openUrls(id)));
+  };
 
   // pinned-tab folders
   const folderId = (id: unknown) => (typeof id === 'string' ? id : '');
@@ -471,6 +531,18 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
         closeOverlay(true);
         return tabs.startSplit(tab.id) ? 'done' : 'unavailable';
       }
+      case 'remote-tab':
+        if (!openRemoteTab(action.deviceId, action.url)) return 'stale';
+        break;
+      case 'continue':
+        if (continueHere(action.deviceId, action.spaceId) === null) return 'stale';
+        break;
+      case 'send-tab': {
+        const tab = tabs.activeTab;
+        if (!tab || sendBlocker(tab) || !d.sync.sendTab(action.deviceId, tabs.tabUrl(tab), tab.customTitle || tab.title)) return 'unavailable';
+        closeOverlay(true);
+        return 'done';
+      }
     }
     closeOverlay(false);
     return 'done';
@@ -642,6 +714,18 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('settings', 'sync:now', async () => {
     await d.sync.syncNow();
     return d.sync.status();
+  });
+  // other devices and tabs sent between them
+  handle('settings', 'devices:list', () => d.sync.devices());
+  handle('settings', 'devices:open-tab', (_e, deviceId: unknown, url: unknown) => openRemoteTab(deviceId, url));
+  handle('settings', 'devices:continue', (_e, deviceId: unknown, spaceId: unknown) => continueHere(deviceId, spaceId));
+  handle('shell', 'handoff:open', (_e, id: unknown) => {
+    const handoff = typeof id === 'string' ? d.sync.takeHandoff(id) : undefined;
+    // The address was validated when the sender's file was read; it opens in the Space you are in.
+    if (handoff) tabs.openTab(handoff.url);
+  });
+  handle('shell', 'handoff:dismiss', (_e, id: unknown) => {
+    if (typeof id === 'string') d.sync.takeHandoff(id);
   });
 
   handle('settings', 'sitepermissions:forget', (_e, origin: string) => {
