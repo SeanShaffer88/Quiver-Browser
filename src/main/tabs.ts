@@ -1,4 +1,4 @@
-import { BaseWindow, WebContentsView, session, webContents, type DesktopCapturerSource, type Rectangle, type WebContents } from 'electron';
+import { BaseWindow, Menu, WebContentsView, clipboard, session, webContents, type DesktopCapturerSource, type Rectangle, type WebContents } from 'electron';
 import path from 'node:path';
 import {
   INTERNAL_PARTITION,
@@ -47,7 +47,7 @@ import { canNest, deleteFolder, displayOrder, folderName, normalizeFolders, plac
 import type { Downloads } from './downloads';
 import { nextZoom } from './browsing';
 import { markdownLink, recentOrder } from './keyboard-workflows';
-import { clampSplitRatio, opensInPeek, peekRects, relativeTo, splitPairKey, splitPartner, splitRects } from './split';
+import { clampSplitRatio, openTarget, peekRects, relativeTo, splitPairKey, splitPartner, splitRects } from './split';
 
 interface Peek {
   view: WebContentsView;
@@ -183,6 +183,8 @@ export class TabManager {
 
   private phone: WebContentsView | null = null;
   private readonly phoneContents = new WeakSet<WebContents>();
+  /** Pages in Little Quiver windows: outside the main window, so they get no camera, microphone or screen prompts. */
+  private readonly externalContents = new WeakSet<WebContents>();
   private phonePartition = '';
   private phoneSpaceId = '';
   private phoneUrl = '';
@@ -432,6 +434,39 @@ export class TabManager {
     return view;
   }
 
+  /**
+   * A web view for a page shown outside the main window (Little Quiver), in the active Space's storage partition and
+   * under the same navigation and site-permission rules as a tab. Camera, microphone and screen sharing are denied
+   * until the page is moved into Quiver, where the permission prompt can be shown.
+   */
+  createExternalView(): { view: WebContentsView; spaceId: string; partition: string; private: boolean } {
+    const spaceId = this.activeSpaceId;
+    const partition = this.partitionFor(spaceId, false);
+    const view = this.createView(partition);
+    this.externalContents.add(view.webContents);
+    return { view, spaceId, partition, private: this.isPrivate(spaceId) };
+  }
+
+  /**
+   * Move a page from outside the main window into the active Space as a temporary tab. The loaded page (history,
+   * scroll position, form state) is kept when its storage partition is the Space's; otherwise the address is opened
+   * fresh there and the caller closes its view. Returns whether the view was adopted.
+   */
+  adoptExternalView(view: WebContentsView, partition: string, fallbackUrl: string): boolean {
+    const wc = view.webContents;
+    const live = !wc.isDestroyed() ? wc.getURL() : '';
+    const url = /^https?:\/\//i.test(live) ? live : fallbackUrl;
+    const spaceId = this.activeSpaceId;
+    if (this.peek) this.closePeek();
+    if (!wc.isDestroyed() && url === live && this.partitionFor(spaceId, false) === partition) {
+      this.externalContents.delete(wc);
+      this.openTab(url, { spaceId, adopt: view });
+      return true;
+    }
+    if (/^https?:\/\//i.test(url)) this.openTab(url, { spaceId });
+    return false;
+  }
+
   private bringOverlayToTop(): void {
     // A view added later (a new tab, the phone) lands on top; keep a peeking sidebar above it.
     if (this.sidebarPeek) this.win.contentView.addChildView(this.shell);
@@ -628,12 +663,25 @@ export class TabManager {
         touch();
       }
     });
-    wc.setWindowOpenHandler(({ url }) => {
+    wc.setWindowOpenHandler(({ url, disposition, features }) => {
       // Pinned tabs are long-lived apps (mail, chat, docs); links they spawn are usually a quick look, so they
-      // open in a Peek over the page instead of piling up temporary tabs.
-      if (opensInPeek(tab, this.settings.peekPinnedLinks, url)) this.openPeek(tab, url);
-      else if (/^https?:/i.test(url)) this.openTab(url, { spaceId: tab.spaceId });
+      // open in a Peek over the page instead of piling up temporary tabs. Shift+click on a link in any web tab
+      // (which Chromium would open in a new window) peeks it too; see openTarget for what counts as one.
+      const target = openTarget(tab, this.settings, { url, disposition, features });
+      if (target === 'peek' && this.canPeekFrom(tab)) this.openPeek(tab, url);
+      else if (target !== 'none') this.openTab(url, { spaceId: tab.spaceId });
       return { action: 'deny' };
+    });
+    wc.on('context-menu', (_event, params) => {
+      if (tab.internal || this.tabs.get(tab.id) !== tab) return;
+      const link = params.linkURL;
+      if (!/^https?:\/\//i.test(link) || !URL.canParse(link)) return;
+      Menu.buildFromTemplate([
+        { label: 'Peek link', click: () => this.peekLink(tab.id, link) },
+        { label: 'Open link in new tab', click: () => this.openTab(link, { spaceId: tab.spaceId, activate: false }) },
+        { type: 'separator' },
+        { label: 'Copy link address', click: () => clipboard.writeText(link) },
+      ]).popup({ window: this.win });
     });
     // Clicking into the other pane of a split view makes it the active tab, so the address bar follows.
     wc.on('focus', () => {
@@ -822,7 +870,7 @@ export class TabManager {
 
   private mediaDelegate(): MediaDelegate {
     const top = (wc: WebContents) => (
-      wc.isDestroyed() || this.phoneContents.has(wc) ? undefined : wc.getURL()
+      wc.isDestroyed() || this.phoneContents.has(wc) || this.externalContents.has(wc) ? undefined : wc.getURL()
     );
     return {
       check: (wc, isMainFrame) => {
@@ -1505,6 +1553,23 @@ export class TabManager {
   }
 
   // ───────── peek ─────────
+  /** A Peek opens over the page it came from, so only a tab on screen in the active Space can show one. */
+  private canPeekFrom(tab: Tab): boolean {
+    return !tab.internal && tab.spaceId === this.activeSpaceId && (tab.id === this.activeTabId || this.inSplit(tab.id));
+  }
+
+  /** "Peek link" in a page's link menu. Returns false when the link was opened as a tab instead. */
+  peekLink(tabId: number, url: string): boolean {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.internal || !/^https?:\/\//i.test(url) || !URL.canParse(url)) return false;
+    if (this.canPeekFrom(tab)) {
+      this.openPeek(tab, url);
+      return true;
+    }
+    this.openTab(url, { spaceId: tab.spaceId });
+    return false;
+  }
+
   private peek: (Peek & { url: string; ready: boolean }) | null = null;
   private peekToken = 0;
 

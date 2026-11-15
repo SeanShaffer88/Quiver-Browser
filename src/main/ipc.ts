@@ -30,6 +30,7 @@ import {
   REBINDABLE, setShortcutOverrides,
 } from './shortcuts';
 import type { UpdateChecker } from './updates';
+import type { LittleQuiver } from './little-quiver';
 
 export interface IpcDeps {
   tabs: TabManager;
@@ -48,6 +49,8 @@ export interface IpcDeps {
   onPrivacyChanged: () => void;
   onThemeChanged: () => void;
   updates: UpdateChecker;
+  /** Little Quiver windows (links from other apps); their toolbars are the 'little' page. */
+  little?: LittleQuiver;
 }
 
 const MAX_COMMAND_LENGTH = 65536;
@@ -106,6 +109,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
             break;
           }
         }
+        if (!assignedPage && d.little?.isToolbar(e.sender)) assignedPage = 'little';
       }
       if (internalRole(frame.url, assignedPage, frame === e.sender.mainFrame) !== role) throw new Error('forbidden sender');
       return fn(e as AuthorizedInvokeEvent, ...args);
@@ -175,7 +179,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     const tabQuery = tabSearchQuery(text);
     if (tabQuery !== undefined) return tabSearchSuggestions(tabQuery, context.spaceId, openTabTargets());
     const palette = paletteQuery(text);
-    const sources = () => ({ activeSpaceId: context.spaceId, tabs: openTabTargets(), bookmarks: store.state.bookmarks, history: d.history.list() });
+    const sources = () => ({ activeSpaceId: context.spaceId, tabs: openTabTargets(), bookmarks: store.state.bookmarks, history: d.history.list(), littleWindows: d.little?.count ?? 0 });
     if (palette && palette.scope !== 'all') return paletteSuggestions(palette.scope, palette.query, sources());
     const parsed = parseCommand(text, parseContext(context));
     const fellThrough = parsed.length === 1 && (parsed[0].kind === 'url' || parsed[0].kind === 'search');
@@ -310,6 +314,17 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('shell', 'split:exit', () => tabs.exitSplit());
   handle('shell', 'peek:close', () => tabs.closePeek());
   handle('shell', 'peek:open-tab', () => tabs.peekToTab());
+
+  // Little Quiver toolbar. The window is the sender's own; nothing the page sends names another one.
+  const littleOf = (e: AuthorizedInvokeEvent) => {
+    const lw = d.little?.fromToolbar(e.sender);
+    if (!lw) throw new Error('forbidden sender');
+    return lw;
+  };
+  handle('little', 'little:get', (e) => d.little!.state(littleOf(e)));
+  handle('little', 'little:copy', (e) => d.little!.copyLink(littleOf(e)));
+  handle('little', 'little:open', (e) => d.little!.openInQuiver(littleOf(e)));
+  handle('little', 'little:close', (e) => d.little!.close(littleOf(e)));
 
   // spaces
   handle('shell', 'space:create', (_e, name: string, isolated: boolean) => {
@@ -527,6 +542,8 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       s.peekPinnedLinks = patch.peekPinnedLinks;
       if (!s.peekPinnedLinks) tabs.closePeek();
     }
+    if (typeof patch.peekShiftClick === 'boolean') s.peekShiftClick = patch.peekShiftClick;
+    if (typeof patch.littleQuiver === 'boolean') s.littleQuiver = patch.littleQuiver;
     if (patch.archiveAfterHours !== undefined) s.archiveAfterHours = normalizeArchiveHours(patch.archiveAfterHours);
     if (patch.theme !== undefined) {
       s.theme = normalizeTheme(patch.theme);

@@ -6,7 +6,7 @@ import { isRebindable, shortcutLabel } from './shortcuts';
  * Browser actions the command palette can run. Each maps to an existing shortcut handler. `keys` is the default hint;
  * actions the user can rebind show their current keys instead (see commandKeys).
  */
-export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string; keys: string; keywords?: string }[] = [
+export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string; keys: string; keywords?: string; whenLittle?: true }[] = [
   { command: 'command-new', label: 'New tab', keys: 'Ctrl+T', keywords: 'open' },
   { command: 'close-tab', label: 'Close tab', keys: 'Ctrl+W' },
   { command: 'reopen-tab', label: 'Reopen closed tab', keys: 'Ctrl+Shift+T', keywords: 'restore undo' },
@@ -37,6 +37,8 @@ export const BROWSER_COMMANDS: readonly { command: BrowserCommand; label: string
   { command: 'split', label: 'Split view with the next tab', keys: 'Ctrl+Shift+\\', keywords: 'side by side two panes compare' },
   { command: 'unsplit', label: 'Exit split view', keys: 'Ctrl+Shift+-', keywords: 'close side by side single pane unsplit' },
   { command: 'zoom-reset', label: 'Reset zoom', keys: 'Ctrl+0', keywords: '100 percent default size' },
+  // Offered only while a Little Quiver window is open; it moves the one used most recently.
+  { command: 'little-open', label: 'Open in Quiver', keys: 'Ctrl+O', keywords: 'little quiver window move keep tab external link', whenLittle: true },
 ];
 
 /** The key hint for a palette action, following the user's rebound shortcuts. */
@@ -131,6 +133,8 @@ export interface PaletteSources {
   tabs: Iterable<TabCommandTarget>;
   bookmarks: readonly Bookmark[];
   history?: readonly HistoryEntry[];
+  /** Open Little Quiver windows; "Open in Quiver" is listed only when there is one. */
+  littleWindows?: number;
 }
 
 type Scored = { score: number; order: number; suggestion: Suggestion };
@@ -146,6 +150,7 @@ export function paletteSuggestions(scope: PaletteScope, query: string, sources: 
   const bookmarks: Scored[] = [];
   if (scope !== 'bookmarks') {
     BROWSER_COMMANDS.forEach((c, order) => {
+      if (c.whenLittle && !sources.littleWindows) return;
       const s = score(c.label, c.keywords ? `${c.label} ${c.keywords}` : '');
       if (s >= 0 && (query || scope === 'actions')) {
         actions.push({ score: s, order, suggestion: { kind: 'action', label: c.label, detail: commandKeys(c) || undefined, action: { type: 'browser', command: c.command } } });

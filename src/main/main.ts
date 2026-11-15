@@ -25,6 +25,8 @@ import { Store } from './store';
 import { webSpacePartition } from './space-session';
 import { restrictInternalNavigation, TabManager } from './tabs';
 import { placeWindow } from './window-placement';
+import { LittleQuiver } from './little-quiver';
+import { opensInLittle } from './little-quiver-layout';
 
 function createPortableDirectory(parent: string, name: string): string {
   const directory = path.join(parent, name);
@@ -134,6 +136,13 @@ async function main(): Promise<void> {
     if (handleSecondInstance) handleSecondInstance(targets);
     else pendingLaunches.push(targets);
   });
+  // macOS hands links to the running app (or to a launch in progress) as open-url rather than argv.
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    const targets = { urls: parseLaunchArgs(['', url]).urls, importBookmarks: false };
+    if (handleSecondInstance) handleSecondInstance(targets);
+    else pendingLaunches.push(targets);
+  });
   // Before any session exists, so every page and request sees the plain Chromium user agent.
   app.userAgentFallback = cleanUserAgent(app.userAgentFallback, app.getName());
   await app.whenReady();
@@ -209,6 +218,7 @@ async function main(): Promise<void> {
   overlay.setVisible(false);
 
   let actions: ReturnType<typeof registerIpc> | null = null;
+  let little: LittleQuiver | undefined;
   const devWatcher = new DevServerWatcher((list) => tabs.setDevServers(list));
 
   const onShortcut = (a: ShortcutAction) => {
@@ -329,6 +339,8 @@ async function main(): Promise<void> {
     boosts,
     (state) => {
       if (!shell.webContents.isDestroyed()) shell.webContents.send('state', state);
+      // Little Quiver's "Open in Quiver" names the active Space.
+      little?.refresh();
     },
     onShortcut,
     portableDownloadPath,
@@ -457,11 +469,20 @@ async function main(): Promise<void> {
     (url, init) => net.fetch(url, init),
   );
   tabs.updateNotice = () => updates.notice();
+  little = new LittleQuiver({
+    tabs, store, mainWindow: win, internalPrefs: () => prefs(),
+    icon: process.platform === 'win32' ? path.join(RENDERER_DIR, 'quiver-icon.ico') : undefined,
+  });
+  const littleWindows = little;
   actions = registerIpc({
-    tabs, store, boosts, devWatcher, overlay, shell, research, sync, history, downloads, updates,
+    tabs, store, boosts, devWatcher, overlay, shell, research, sync, history, downloads, updates, little: littleWindows,
     onPrivacyChanged: () => privacy.apply(),
     onThemeChanged: () => { nativeTheme.themeSource = store.state.settings.theme; },
-    runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings') : onShortcut(command)),
+    runCommand: (command) => {
+      if (command === 'settings') tabs.navigate('quiver://settings');
+      else if (command === 'little-open') littleWindows.openMostRecentInQuiver();
+      else onShortcut(command);
+    },
   });
 
   await Promise.all([shell.webContents.loadURL('quiver://app/shell.html'), overlay.webContents.loadURL('quiver://app/commandbar.html')]);
@@ -472,11 +493,23 @@ async function main(): Promise<void> {
   store.state.bounds = { ...launchPlacement.bounds, maximized: launchPlacement.maximized };
   store.state.sessionOpen = true;
   store.flush();
-  const openLaunchTargets = ({ urls, importBookmarks }: LaunchTargets) => {
-    for (const url of urls) tabs.openTab(url);
+  /**
+   * Open links handed over by another app. With Little Quiver on (the default) each one gets a small window of its
+   * own and the main window's tabs are left alone; otherwise they become tabs as before. Returns whether anything
+   * was opened in the main window, which is then brought forward.
+   */
+  const openLaunchTargets = ({ urls, importBookmarks }: LaunchTargets): boolean => {
+    let inMain = importBookmarks;
+    for (const url of urls) {
+      if (opensInLittle(store.state.settings.littleQuiver, url)) littleWindows.open(url);
+      else {
+        tabs.openTab(url);
+        inMain = true;
+      }
+    }
     if (importBookmarks) tabs.navigate('quiver://settings?import=bookmarks');
+    return inMain;
   };
-  openLaunchTargets(parseLaunchArgs(process.argv));
   sync.start();
   // Archive unused temporary tabs shortly after launch and then every few minutes.
   setTimeout(() => tabs.archiveStale(), 60_000).unref();
@@ -487,10 +520,16 @@ async function main(): Promise<void> {
   setInterval(checkForUpdates, 60 * 60_000).unref();
   tabs.layout();
   win.show();
+  // After the main window is shown, so a Little Quiver window from the launch opens in front of it.
+  openLaunchTargets(parseLaunchArgs(process.argv));
   handleSecondInstance = (targets) => {
     if (win.isDestroyed()) return;
-    if (win.isMinimized()) win.restore();
-    win.focus();
+    const raise = targets.urls.length === 0 || targets.urls.some((url) => !opensInLittle(store.state.settings.littleQuiver, url));
+    // Starting Quiver again with no links (or links meant for tabs) brings the main window forward.
+    if (raise || targets.importBookmarks) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
     openLaunchTargets(targets);
   };
   for (const targets of pendingLaunches) handleSecondInstance(targets);
@@ -582,6 +621,7 @@ async function main(): Promise<void> {
   win.on('closed', () => {
     screen.removeListener('display-removed', repairPlacement);
     screen.removeListener('display-metrics-changed', onDisplayMetrics);
+    littleWindows.closeAll();
     tabs.dispose();
     for (const view of [shell, overlay]) {
       if (!view.webContents.isDestroyed()) view.webContents.close();

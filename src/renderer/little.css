@@ -1,0 +1,23 @@
+/* Little Quiver's compact toolbar, drawn above the page in a small window (see src/main/little-quiver.ts). */
+html, body { background: var(--panel); }
+.little-bar { position: relative; height: 40px; display: flex; align-items: center; gap: 6px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--border); }
+.little-label { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; white-space: nowrap; }
+.little-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.little-host { flex-shrink: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font: 12px var(--mono); }
+.little-status { color: var(--muted); font-size: 12px; }
+.little-status:empty { display: none; }
+.little-btn { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font-size: 12px; white-space: nowrap; }
+.little-btn:hover { border-color: var(--accent); }
+.little-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.little-btn.icon { width: 28px; padding: 0; display: grid; place-items: center; color: var(--muted); }
+.little-btn.icon:hover { color: var(--text); }
+.little-progress { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); background-size: 40% 100%; background-repeat: no-repeat; animation: little-load 1.2s linear infinite; }
+.little-progress[hidden] { display: none; }
+@keyframes little-load { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+@media (prefers-reduced-motion: reduce) { .little-progress { animation: none; background: var(--accent); opacity: .6; } }
+@media (max-width: 520px) { .little-host { display: none; } }
+@media (forced-colors: active) {
+  .little-btn { border-color: ButtonText; }
+  .little-btn.primary { forced-color-adjust: none; background: Highlight; border-color: Highlight; color: HighlightText; }
+  .little-progress { forced-color-adjust: none; background: Highlight; }
+}

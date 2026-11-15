@@ -50,6 +50,10 @@ export interface Settings {
   archiveAfterHours: number;
   /** Links a pinned tab opens in a new tab or window open in a floating Peek instead. */
   peekPinnedLinks: boolean;
+  /** Shift+click on a link in a regular tab (or "Peek link" in its menu) opens it in a Peek. */
+  peekShiftClick: boolean;
+  /** Links from other apps (default-browser launches) open in a small Little Quiver window instead of a tab. */
+  littleQuiver: boolean;
   privacy: PrivacySettings;
   /** Light, dark, or follow Windows. Applied through nativeTheme so every page's prefers-color-scheme follows. */
   theme: 'system' | 'light' | 'dark';
@@ -272,7 +276,17 @@ export type BrowserCommand =
   | 'move-tab-up' | 'move-tab-down' | 'toggle-sidebar' | 'preview' | 'env' | 'devtools' | 'boosts' | 'settings' | 'downloads'
   | 'find' | 'zoom-in' | 'zoom-out' | 'zoom-reset'
   | 'recent-tab' | 'copy-link' | 'copy-markdown-link' | 'console' | 'next-space' | 'prev-space'
-  | 'split' | 'unsplit' | 'private-space';
+  | 'split' | 'unsplit' | 'private-space' | 'little-open';
+
+/** The Little Quiver toolbar: what the page in that window shows. */
+export interface LittleQuiverState {
+  title: string;
+  host: string;
+  url: string;
+  loading: boolean;
+  /** The Space "Open in Quiver" moves the page into (the active one). */
+  space: string;
+}
 
 export interface Suggestion {
   kind: string;

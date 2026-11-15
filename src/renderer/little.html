@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+<title>Little Quiver</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="little.css">
+</head>
+<body>
+<div class="little-bar" role="toolbar" aria-label="Little Quiver">
+  <div class="little-label">
+    <span class="little-title" id="title"></span>
+    <span class="little-host" id="host"></span>
+  </div>
+  <span class="little-status" id="status" role="status" aria-live="polite"></span>
+  <button class="little-btn" id="copy" type="button" title="Copy this page's link">Copy link</button>
+  <button class="little-btn primary" id="open" type="button" aria-keyshortcuts="Control+O">Open in Quiver</button>
+  <button class="little-btn icon" id="close" type="button" title="Close (Esc)" aria-label="Close Little Quiver (Esc)" aria-keyshortcuts="Escape"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+  <div class="little-progress" id="progress" hidden></div>
+</div>
+<script type="module" src="little.js"></script>
+</body>
+</html>

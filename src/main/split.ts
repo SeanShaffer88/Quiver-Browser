@@ -64,6 +64,35 @@ export function opensInPeek(source: { pinned: boolean; internal: boolean }, enab
   return enabled && source.pinned && !source.internal && /^https?:\/\//i.test(url) && URL.canParse(url);
 }
 
+/** What Electron tells a window-open handler about the request (a subset of HandlerDetails). */
+export interface OpenRequest {
+  url: string;
+  disposition: string;
+  features: string;
+}
+
+/**
+ * Whether a new-window request is a Shift+click on a link. Chromium turns an unhandled Shift+click into a
+ * "new-window" request with no window features; window.open() popups (sign-in, payment) carry features such as
+ * width or "popup", and target=_blank / Ctrl / middle clicks are tab dispositions. A page that handles Shift+click
+ * itself (and cancels the click) never reaches the handler, so Quiver only takes clicks the browser would act on.
+ */
+export function isShiftClickOpen(request: OpenRequest): boolean {
+  return request.disposition === 'new-window' && request.features.trim() === '';
+}
+
+/** Where a regular tab's new-window request goes: a Peek over the page, or a new tab. */
+export function openTarget(
+  source: { pinned: boolean; internal: boolean },
+  settings: { peekPinnedLinks: boolean; peekShiftClick: boolean },
+  request: OpenRequest,
+): 'peek' | 'tab' | 'none' {
+  if (!/^https?:\/\//i.test(request.url) || !URL.canParse(request.url)) return 'none';
+  if (opensInPeek(source, settings.peekPinnedLinks, request.url)) return 'peek';
+  if (settings.peekShiftClick && !source.internal && isShiftClickOpen(request)) return 'peek';
+  return 'tab';
+}
+
 export interface PeekRects {
   /** The whole floating card: header plus page. */
   frame: Rectangle;

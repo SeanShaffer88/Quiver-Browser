@@ -305,6 +305,8 @@ function renderGroups(): void {
   $<HTMLInputElement>('ask-save').checked = settings.askWhereToSave;
   $<HTMLSelectElement>('archive-after').value = String(settings.archiveAfterHours);
   $<HTMLInputElement>('peek-pinned').checked = settings.peekPinnedLinks;
+  $<HTMLInputElement>('peek-shift').checked = settings.peekShiftClick;
+  $<HTMLInputElement>('little-quiver').checked = settings.littleQuiver;
   renderPrivacy(settings.privacy);
   $<HTMLSelectElement>('theme').value = settings.theme;
   renderShortcuts(await quiver.invoke('shortcuts:list') as ShortcutRow[]);
@@ -467,6 +469,8 @@ $<HTMLSelectElement>('privacy-dns').addEventListener('change', (e) => {
 $('privacy-doh-save').addEventListener('click', () => void savePrivacy({ secureDns: 'custom', dohTemplate: $<HTMLInputElement>('privacy-doh').value }));
 
 $<HTMLInputElement>('peek-pinned').addEventListener('change', (e) => void quiver.invoke('settings:set', { peekPinnedLinks: (e.target as HTMLInputElement).checked }));
+$<HTMLInputElement>('peek-shift').addEventListener('change', (e) => void quiver.invoke('settings:set', { peekShiftClick: (e.target as HTMLInputElement).checked }));
+$<HTMLInputElement>('little-quiver').addEventListener('change', (e) => void quiver.invoke('settings:set', { littleQuiver: (e.target as HTMLInputElement).checked }));
 $<HTMLInputElement>('ask-save').addEventListener('change', (e) => void quiver.invoke('settings:set', { askWhereToSave: (e.target as HTMLInputElement).checked }));
 $<HTMLSelectElement>('archive-after').addEventListener('change', (e) => void quiver.invoke('settings:set', { archiveAfterHours: Number((e.target as HTMLSelectElement).value) }));
 $<HTMLSelectElement>('theme').addEventListener('change', (e) => void quiver.invoke('settings:set', { theme: (e.target as HTMLSelectElement).value }));

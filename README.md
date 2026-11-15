@@ -84,6 +84,7 @@ Type `tab` in the command bar to list up to 20 open tabs across Spaces, or add a
 | `Ctrl+Shift+B` | Boosts page |
 | `Ctrl+Shift+N` | New private Space |
 | `Ctrl+W` | Close tab |
+| `Ctrl+O` (in Little Quiver) | Open the page in Quiver as a tab |
 | `Ctrl+Shift+T` | Reopen the latest closed tab in its original Space |
 | `Ctrl+Tab` | Back to the tab you used last; keep holding `Ctrl` and press `Tab` again to go further back |
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Next / previous tab in sidebar order |
@@ -223,12 +224,14 @@ Quiver-Browser/
 
 ## Feature-parity checklist
 
-Quiver currently covers these Flecha workflows, plus split view and Peek (below).
+Quiver currently covers these Flecha workflows, plus split view, Peek and Little Quiver (below).
 
-### Split view and Peek
+### Split view, Peek and Little Quiver
 
 - **Split view**: two tabs of the same Space side by side. Right-click a tab → *Open in split view* (pairs it with the active tab), type `split …` in the command bar (*Split view with …*), or press `Ctrl+Shift+=` to split the active tab with the next tab (a new tab when there is none). `Ctrl+Shift+-` or *Exit split view* ends it. Drag the divider (or focus it and use the arrow keys) to resize between 20% and 80%; double-click resets. The position is remembered per pair until Quiver closes. Clicking into a pane makes it the active tab, so the address bar, find bar, zoom and phone preview follow it. Both tabs are marked in the sidebar; closing either ends the split. `Ctrl+Shift+=` replaces the Shift variant of zoom in: `Ctrl+=` and `Ctrl+Numpad+` still zoom.
 - **Peek**: a link a pinned tab opens in a new tab or window (`target=_blank`, `window.open`) shows in a floating preview over the page, in the same storage partition and under the same navigation and site-permission rules. *Open as tab* keeps the page as a temporary tab, with its history. *Close*, `Esc`, `Ctrl+W` or a click on the dimmed page closes it. Turn it off in Settings → Tabs → *Open links from pinned tabs in Peek*.
+- **Peek any link**: Shift+click a link in any web tab, or right-click it and choose *Peek link*, to open it in Peek (the link menu also has *Open link in new tab* and *Copy link address*). Turn Shift+click off in Settings → Tabs → *Shift+click a link to Peek it*. Quiver takes the click only through the browser's own new-window request, after the page has had it: a page that handles Shift+click itself and cancels it (selecting a range of rows, say) keeps its behaviour, and no script is added to pages. The trade-off is that a page which only *reads* Shift on a link click without cancelling it gets a Peek, where Chromium would have opened a new window. Sign-in and payment popups (`window.open` with window features) still open as tabs, as before.
+- **Little Quiver**: a link another app opens (Quiver as the default browser: the launch link, a link handed to an already running Quiver, or macOS `open-url`) shows in a small window of its own instead of adding a tab. Its toolbar shows the page title and host, **Copy link**, **Open in Quiver** (`Ctrl+O`, or *Open in Quiver* in the command bar for the little window used last) and **Close** (`Esc` or `Ctrl+W`; `Esc` first leaves a fullscreen video). *Open in Quiver* moves the page into the active Space as a temporary tab, keeping its history, scroll position and form contents when the window uses that Space's storage; otherwise it opens the address fresh there. Each window uses the storage (cookies, sign-ins) of the Space that was active when it opened, follows the same navigation and site-permission rules as tabs, and records history unless that Space is private. Camera, microphone and screen-sharing requests are declined until the page is opened in Quiver. Links that ask for a new tab open in the same little window. Several can be open at once; each opens a step below and right of the last, at the size you last resized one to (960 × 720 at first). Turn it off in Settings → Tabs → *Open external links in Little Quiver* to get tabs, as before.
 
 | # | Flecha feature | Quiver (Windows) | Status |
 |---|---|---|---|
@@ -236,6 +239,7 @@ Quiver currently covers these Flecha workflows, plus split view and Peek (below)
 | 2 | Vertical sidebar | Collapsible sidebar, tab list, favicons, close, middle-click close, drag and keyboard reorder | Included |
 | 2 | Pinned tabs and folders | Pin, nested folders, collapse, drag between pinned and temporary, saved per Space | Included |
 | 2 | Spaces | Create / rename / delete, per-Space partition (cookies, storage), private Spaces | Included |
+| – | Little Quiver and Peek any link | External links in a small window with *Open in Quiver*; Shift+click or *Peek link* on any link | Included |
 | – | Ad and tracker blocking | Built-in domain list, per-page count, per-site exceptions | Included |
 | 3 | Command bar | `Ctrl+K` / `Ctrl+L` / `Ctrl+T` overlay | Included |
 | 3 | `gh` `npm` `mdn` `caniuse` `so` | Offline parser → URL | Included |

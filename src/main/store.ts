@@ -17,6 +17,7 @@ import { normalizeUpdateState, type UpdateState } from './updates';
 import { normalizeFolders } from './tab-tree';
 import { validArcImportUndo, type ArcImportUndo } from './arc-import';
 import { normalizeArcSpace } from './space-session';
+import { normalizeLittleSize } from './little-quiver-layout';
 import { normalizeTopics, type Topic } from './research';
 import { persistableState } from './private-spaces';
 import { hasSavedNewTabPlaceholder, normalizeRecentlyClosed, type PersistedClosedTab } from './session-recovery';
@@ -52,6 +53,8 @@ export interface PersistedState {
   /** Opt-in release check bookkeeping (see updates.ts). */
   updates?: UpdateState;
   bounds?: { x?: number; y?: number; width: number; height: number; maximized: boolean };
+  /** The size of the last Little Quiver window the person resized; new ones open at this size. */
+  littleQuiverSize?: { width: number; height: number };
 }
 
 export function defaultSettings(): Settings {
@@ -65,6 +68,8 @@ export function defaultSettings(): Settings {
     askWhereToSave: true,
     archiveAfterHours: DEFAULT_ARCHIVE_HOURS,
     peekPinnedLinks: true,
+    peekShiftClick: true,
+    littleQuiver: true,
     privacy: normalizePrivacy(undefined, process.platform),
     theme: 'system',
     shortcuts: {},
@@ -142,6 +147,8 @@ export class Store {
           askWhereToSave: typeof raw.settings?.askWhereToSave === 'boolean' ? raw.settings.askWhereToSave : true,
           archiveAfterHours: normalizeArchiveHours(raw.settings?.archiveAfterHours),
           peekPinnedLinks: typeof raw.settings?.peekPinnedLinks === 'boolean' ? raw.settings.peekPinnedLinks : true,
+          peekShiftClick: typeof raw.settings?.peekShiftClick === 'boolean' ? raw.settings.peekShiftClick : true,
+          littleQuiver: typeof raw.settings?.littleQuiver === 'boolean' ? raw.settings.littleQuiver : true,
           privacy: normalizePrivacy(raw.settings?.privacy, process.platform),
           theme: normalizeTheme(raw.settings?.theme),
           shortcuts: normalizeShortcutOverrides(raw.settings?.shortcuts) as Record<string, string>,
@@ -157,6 +164,9 @@ export class Store {
       state.activeTopicBySpace = Object.fromEntries(Object.entries(raw.activeTopicBySpace ?? {})
         .filter(([space, topic]) => knownSpaces.has(space) && state.topics!.some((t) => t.id === topic && t.spaceId === space)));
       state.updates = normalizeUpdateState(raw.updates);
+      const littleSize = normalizeLittleSize(raw.littleQuiverSize);
+      if (littleSize) state.littleQuiverSize = littleSize;
+      else delete state.littleQuiverSize;
       state.sync = normalizeSyncState(raw.sync, os.hostname());
       state.archive = normalizeArchive(raw.archive, new Set(state.spaces.map(({ id }) => id)));
       state.bookmarkUndo = validBookmarkUndo(raw.bookmarkUndo, state.bookmarks);
