@@ -1,5 +1,7 @@
 import type { LocalServerStatus, PeekView, PhoneStatus, ShellState, SidebarRow, SplitView, TabInfo, Space } from '../shared/types';
 import { scrollToReveal, visibleRows } from './virtual-list.js';
+import { animate, DURATION, EASE_IN, reduced, setMotion } from './motion.js';
+import { monogram, spaceTheme } from './space-theme.js';
 
 type Child = Node | string | null | undefined | false;
 
@@ -26,6 +28,8 @@ document.body.append(developerStatus);
 let state: ShellState | null = null;
 let addingSpace = false;
 let renamingSpace: string | null = null;
+/** The Space whose custom-colour editor is open in the sidebar. */
+let coloringSpace: string | null = null;
 let lastShellFocus: string | undefined;
 
 function focusShellControl(key?: string): boolean {
@@ -55,7 +59,7 @@ const ICON = {
 };
 
 function icon(svg: string, label: string, onClick: () => void, extra: Record<string, any> = {}): HTMLButtonElement {
-  const b = h('button', { class: 'icon-btn' + (extra.on ? ' on' : ''), title: label, 'aria-label': label, disabled: extra.disabled, dataset: { focusKey: extra.focusKey ?? label }, onClick });
+  const b = h('button', { class: 'icon-btn' + (extra.on ? ' on' : ''), title: extra.tip ?? label, 'aria-label': label, disabled: extra.disabled, dataset: { focusKey: extra.focusKey ?? label }, onClick });
   b.innerHTML = svg;
   return b;
 }
@@ -71,7 +75,7 @@ function renderUpdateNotice(s: ShellState): HTMLElement[] {
   const u = s.update;
   if (!u) return [];
   const label = `Quiver ${u.version} is available`;
-  return [h('div', { class: 'recovery-card update-card', role: 'status', title: label },
+  return [h('div', { class: 'recovery-card update-card', role: 'status', title: label, dataset: { animKey: 'update-' + u.version } },
     h('p', { class: 'recovery-copy recovery-expanded' }, label),
     h('button', { class: 'btn', title: `Open the Quiver ${u.version} release page`, 'aria-label': `Open the Quiver ${u.version} release page`, dataset: { focusKey: 'update-open' }, onClick: () => call('update:open') },
       h('span', { class: 'recovery-expanded' }, 'Release notes'), h('span', { class: 'recovery-compact', 'aria-hidden': 'true' }, '↑')),
@@ -87,7 +91,9 @@ function signInLabel(space: Space): string {
 
 function renderSpaces(s: ShellState): HTMLElement {
   const wrap = h('div', { class: 'spaces', role: 'tablist', 'aria-label': 'Spaces' });
-  for (const sp of s.spaces) {
+  for (const [index, sp] of s.spaces.entries()) {
+    // Alt+1…Alt+9 switch to the first nine Spaces (a fixed shortcut, see shortcuts.ts).
+    const key = index < 9 ? ` (Alt+${index + 1})` : '';
     if (renamingSpace === sp.id) {
       const input = h('input', { class: 'space-edit', value: sp.name, 'aria-label': 'Rename space', maxLength: 40, dataset: { focusKey: `rename-${sp.id}` } });
       const finish = (save: boolean) => {
@@ -118,8 +124,8 @@ function renderSpaces(s: ShellState): HTMLElement {
         dataset: { focusKey: sp.id },
         'aria-label': sp.private ? sp.name + ', private Space' : sp.name + ', ' + signInLabel(sp).toLowerCase(),
         title: sp.private
-          ? `${sp.name} — private: nothing is saved, synced or kept in history. Closing it or quitting Quiver discards everything.\nRight-click: close`
-          : `${sp.name} — ${signInLabel(sp)}\nRight-click: rename or delete · Double-click: rename`,
+          ? `${sp.name}${key} — private: nothing is saved, synced or kept in history. Closing it or quitting Quiver discards everything.\nRight-click: close`
+          : `${sp.name}${key} — ${signInLabel(sp)}\nRight-click: rename, color or delete · Double-click: rename`,
         onClick: () => call('space:activate', sp.id),
         onDblclick: () => {
           renamingSpace = sp.id;
@@ -140,7 +146,7 @@ function renderSpaces(s: ShellState): HTMLElement {
       addingSpace = !addingSpace;
       render();
       if (addingSpace) focusShellControl('space-name');
-    }),
+    }, { tip: 'New Space · Ctrl+Shift+N opens a private Space' }),
   );
   return wrap;
 }
@@ -172,6 +178,38 @@ function renderAddForm(): HTMLElement {
       dataset: { focusKey: 'space-private' },
       onClick: () => { addingSpace = false; void call('space:create-private'); render(); },
     }, 'New private Space'),
+  );
+}
+
+/** Custom Space colours: one colour, or two for a gradient. The sidebar previews the choice while it is open. */
+function renderColorForm(sp: Space): HTMLElement {
+  const first = h('input', { type: 'color', value: sp.color, dataset: { focusKey: 'space-color-1' } });
+  const gradient = h('input', { type: 'checkbox', checked: !!sp.color2, dataset: { focusKey: 'space-gradient' } });
+  const second = h('input', { type: 'color', value: sp.color2 ?? sp.color, disabled: !sp.color2, dataset: { focusKey: 'space-color-2' } });
+  const chosen = (): Space => ({ ...sp, color: first.value, color2: gradient.checked ? second.value : undefined });
+  const preview = () => applySpaceTheme(chosen());
+  const finish = (save: boolean) => {
+    if (coloringSpace !== sp.id) return;
+    coloringSpace = null;
+    if (save) void call('space:color', sp.id, first.value, gradient.checked ? second.value : null);
+    lastThemeKey = '';
+    render();
+    focusShellControl(sp.id);
+  };
+  first.addEventListener('input', preview);
+  second.addEventListener('input', preview);
+  gradient.addEventListener('change', () => { second.disabled = !gradient.checked; preview(); });
+  return h('div', {
+    class: 'add-space-form color-form', role: 'group', 'aria-label': `Colors for ${sp.name}`,
+    onKeydown: (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); finish(false); } },
+  },
+    h('label', {}, first, 'Space color'),
+    h('label', {}, gradient, 'Blend into a second color'),
+    h('label', {}, second, 'Gradient end'),
+    h('p', { class: 'color-note' }, 'Quiver softens the tint when needed so text stays easy to read.'),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn primary', dataset: { focusKey: 'space-color-save' }, onClick: () => finish(true) }, 'Save'),
+      h('button', { class: 'btn', dataset: { focusKey: 'space-color-cancel' }, onClick: () => finish(false) }, 'Cancel')),
   );
 }
 
@@ -422,9 +460,18 @@ function renderFolder(row: Extract<SidebarRow, { kind: 'folder' }>, index: numbe
   }, select);
 }
 
+/** The page's favicon, or a monogram on the Space's tint when it has none or it fails to load. */
+function favicon(t: TabInfo): HTMLElement {
+  const mono = () => h('span', { class: 'fav monogram', 'aria-hidden': 'true' }, monogram(t.url, t.title));
+  if (!t.favicon) return mono();
+  const img = h('img', { class: 'fav', src: t.favicon, alt: '' });
+  img.addEventListener('error', () => img.replaceWith(mono()), { once: true });
+  return img;
+}
+
 function renderTab(t: TabInfo, row: Extract<SidebarRow, { kind: 'tab' }>, active: boolean, index: number, m: RowMeta): HTMLElement {
   const permissionStatus = 'Camera, microphone or screen sharing permitted on this page';
-  const fav = t.favicon ? h('img', { class: 'fav', src: t.favicon, alt: '' }) : h('span', { class: 'fav' });
+  const fav = favicon(t);
   const kids: Child[] = [fav, h('span', { class: 'title' }, t.title)];
   if (t.env) kids.push(h('span', { class: `pill ${t.env}`, title: `Environment: ${t.env}` }, t.env === 'STAGING' ? 'STG' : t.env));
   if (t.mediaPermissionGranted) {
@@ -488,7 +535,7 @@ function renderRecovery(s: ShellState): HTMLElement[] {
   const cards: HTMLElement[] = [];
   const message = recoveryMessage(s);
   if (message) {
-    cards.push(h('div', { class: 'recovery-card recovery-notice' },
+    cards.push(h('div', { class: 'recovery-card recovery-notice', dataset: { animKey: 'recovery' } },
       h('p', { class: 'recovery-copy' }, message),
       h('button', {
         class: 'icon-btn recovery-expanded',
@@ -511,7 +558,7 @@ function renderRecovery(s: ShellState): HTMLElement[] {
   if (closed && original) {
     const signIn = signInLabel(original);
     const description = 'Reopen ' + closed.title + ' in ' + original.name;
-    cards.push(h('div', { class: 'recovery-card recovery-closed' },
+    cards.push(h('div', { class: 'recovery-card recovery-closed', dataset: { animKey: 'closed-' + closed.id } },
       h('p', { class: 'recovery-copy', title: closed.title }, 'Closed ' + closed.title),
       h('button', {
         class: 'btn',
@@ -525,7 +572,7 @@ function renderRecovery(s: ShellState): HTMLElement[] {
   }
   const crashed = s.tabs.find((t) => t.id === s.activeTabId && t.canRetryCrash);
   if (crashed) {
-    cards.push(h('div', { class: 'recovery-card recovery-crash' },
+    cards.push(h('div', { class: 'recovery-card recovery-crash', dataset: { animKey: 'crash-' + crashed.id } },
       h('p', { class: 'recovery-copy' }, 'This page stopped.'),
       h('button', {
         class: 'btn',
@@ -549,7 +596,8 @@ function sidebarKey(s: ShellState): string {
     s.tabs.filter((t) => t.spaceId === s.activeSpaceId),
     devServers,
     rest.spaces, rest.activeSpaceId, rest.activeTabId, rest.sidebar, rest.recentlyClosed, rest.recoveryNotice, rest.localServerStatus,
-    rest.settings.sidebarCollapsed, rest.settings.devServerScan, rest.keys, rest.update, addingSpace, renamingSpace, renamingFolder,
+    rest.settings.sidebarCollapsed, rest.settings.devServerScan, rest.settings.archiveAfterHours, rest.archive?.count, rest.keys, rest.update,
+    addingSpace, renamingSpace, renamingFolder, coloringSpace,
   ]);
 }
 
@@ -565,10 +613,24 @@ function renderSidebar(s: ShellState): void {
   const newtab = h('button', { class: 'newtab', title: 'Open the command bar in a new tab (Ctrl+T)', dataset: { focusKey: 'new-tab' }, onClick: () => call('cmd:open', '', 'new', 'new-tab') }, h('span', {}, '＋ New tab'), h('kbd', {}, 'Ctrl+T'));
 
   const previousTabs = sidebar.querySelector<HTMLElement>('.tabs');
-  const previousScroll = previousTabs?.dataset.spaceId === s.activeSpaceId ? previousTabs.scrollTop : 0;
+  const sameSpace = previousTabs?.dataset.spaceId === s.activeSpaceId;
+  const previousScroll = sameSpace ? previousTabs!.scrollTop : 0;
+  const before = sameSpace ? rowSnapshot() : null;
   const inner = h('div', { class: 'tabs-window' });
   inner.style.height = s.sidebar.length * TAB_ROW_H + 'px';
-  const tabsEl = h('div', { class: 'tabs', role: 'tree', 'aria-label': 'Tabs', dataset: { spaceId: s.activeSpaceId }, onScroll: queuePaintTabs }, inner);
+  const ghosts = h('div', { class: 'tab-ghosts', 'aria-hidden': 'true' });
+  const tabsEl = h('div', { class: 'tabs', role: 'tree', 'aria-label': 'Tabs', dataset: { spaceId: s.activeSpaceId }, onScroll: queuePaintTabs }, inner, ghosts);
+  const empty = emptyState(s, spaceTabs);
+  if (empty) tabsEl.append(empty);
+  const archived = s.archive?.count ?? 0;
+  const archiveEntry = (archived > 0 || s.settings.archiveAfterHours > 0) ? h('button', {
+    class: 'archive-entry',
+    title: archived ? `${archived} archived ${archived === 1 ? 'tab' : 'tabs'} from this Space. Search and reopen them in the command bar`
+      : 'Tabs you have not looked at for a while move here. Search and reopen them in the command bar',
+    'aria-label': `Archived tabs, ${archived}`,
+    dataset: { focusKey: 'archive' },
+    onClick: () => call('cmd:open', 'archive ', 'current'),
+  }, h('span', { class: 'archive-icon', 'aria-hidden': 'true' }, '▤'), h('span', { class: 'label' }, 'Archive'), h('span', { class: 'count', 'aria-hidden': 'true' }, String(archived))) : null;
 
   const servers = h('section', { class: 'servers', 'aria-label': 'Local servers' }, h('h3', {}, h('span', {}, 'Local servers'), h('button', { class: 'icon-btn', disabled: !s.settings.devServerScan, title: 'Rescan now', 'aria-label': 'Rescan local servers', dataset: { focusKey: 'rescan' }, onClick: () => call('devserver:refresh') }, '↻')));
   if (!s.settings.devServerScan) servers.append(h('div', { class: 'empty' }, 'Scanning is off (Settings).'));
@@ -594,9 +656,12 @@ function renderSidebar(s: ShellState): void {
     h('span', { class: 'recovery-expanded' }, signInLabel(active)),
     h('span', { class: 'recovery-compact' }, active.sessionGroupId ? 'Profile' : active.isolated ? 'Separate' : 'Shared'),
   ));
+  const coloring = coloringSpace ? s.spaces.find((sp) => sp.id === coloringSpace) : undefined;
+  if (coloringSpace && !coloring) coloringSpace = null;
+  const cards = [...renderUpdateNotice(s), ...renderRecovery(s), ...(s.localServerStatus ? [renderLocalServerStatus(s.localServerStatus)] : [])];
   sidebar.replaceChildren(brand, renderSpaces(s), ...(isolation ? [isolation] : []),
-    ...(addingSpace ? [renderAddForm()] : []), newtab, ...renderUpdateNotice(s), ...renderRecovery(s),
-    ...(s.localServerStatus ? [renderLocalServerStatus(s.localServerStatus)] : []), tabsEl, servers);
+    ...(addingSpace ? [renderAddForm()] : []), ...(coloring ? [renderColorForm(coloring)] : []), newtab, ...cards,
+    tabsEl, ...(archiveEntry ? [archiveEntry] : []), servers);
   tabsEl.scrollTop = previousScroll;
   tabList = { scroller: tabsEl, inner, rows: s.sidebar, meta: rowMeta(s.sidebar), tabs: new Map(spaceTabs.map((t) => [t.id, t])), activeId: s.activeTabId };
   const reveal = s.activeSpaceId + ':' + s.activeTabId;
@@ -606,6 +671,132 @@ function renderSidebar(s: ShellState): void {
     if (index >= 0) revealRow(index);
   }
   paintTabs();
+
+  // ── motion: everything below only moves transform and opacity, and is skipped when motion is reduced ──
+  animateCards(cards);
+  const switchedFrom = lastSpaceId;
+  lastSpaceId = s.activeSpaceId;
+  const collapsedNow = s.settings.sidebarCollapsed;
+  const collapseChanged = lastCollapsed !== null && lastCollapsed !== collapsedNow;
+  lastCollapsed = collapsedNow;
+  if (reduced()) return;
+  if (collapseChanged) {
+    // The column snaps to its new width (the page views follow at once); the content settles in after it.
+    for (const el of sidebar.children) {
+      animate(el, [{ opacity: 0.2, transform: `translateX(${collapsedNow ? 6 : -10}px)` }, { opacity: 1, transform: 'none' }], { duration: DURATION.base });
+    }
+  } else if (switchedFrom && switchedFrom !== s.activeSpaceId) {
+    const order = s.spaces.map(({ id }) => id);
+    const dir = order.indexOf(s.activeSpaceId) > order.indexOf(switchedFrom) ? 1 : -1;
+    for (const el of [isolation, tabsEl, archiveEntry]) {
+      if (el) animate(el, [{ opacity: 0, transform: `translateX(${dir * 28}px)` }, { opacity: 1, transform: 'none' }], { duration: DURATION.slow });
+    }
+  } else if (before) {
+    animateRows(before, s, ghosts, archiveEntry);
+  }
+}
+
+let lastSpaceId = '';
+let lastCollapsed: boolean | null = null;
+
+interface RowSnapshot { keys: Set<string>; tops: Map<string, number>; els: Map<string, HTMLElement>; scrollTop: number }
+
+/** Where each painted row sat before a rebuild, so rows can glide from there to their new place. */
+function rowSnapshot(): RowSnapshot | null {
+  if (!tabList) return null;
+  const tops = new Map<string, number>();
+  const els = new Map<string, HTMLElement>();
+  for (const el of tabList.inner.children as HTMLCollectionOf<HTMLElement>) {
+    const key = el.dataset.rowKey;
+    if (!key) continue;
+    tops.set(key, parseFloat(el.style.top));
+    els.set(key, el);
+  }
+  return { keys: new Set(tabList.rows.map(rowKey)), tops, els, scrollTop: tabList.scroller.scrollTop };
+}
+
+/**
+ * Tab open and close. A new row grows in from its top edge; rows below it glide down from where they were (and up
+ * when a row leaves). A closed row's copy fades and folds away in a separate, inert layer; an archived one slides
+ * into the Archive entry. Big changes (a sync, an import) just appear.
+ */
+function animateRows(before: RowSnapshot, s: ShellState, ghosts: HTMLElement, archiveEntry: HTMLElement | null): void {
+  if (!tabList) return;
+  const now = new Set(s.sidebar.map(rowKey));
+  const added = [...now].filter((k) => !before.keys.has(k));
+  const removed = [...before.keys].filter((k) => !now.has(k));
+  if (!added.length && !removed.length) return;
+  if (added.length + removed.length > 6) return;
+  for (const el of tabList.inner.children as HTMLCollectionOf<HTMLElement>) {
+    const key = el.dataset.rowKey ?? '';
+    const top = parseFloat(el.style.top);
+    if (!before.keys.has(key)) {
+      animate(el, [{ opacity: 0, transform: 'scaleY(.5)' }, { opacity: 1, transform: 'none' }], { duration: DURATION.base });
+    } else {
+      const old = before.tops.get(key);
+      if (old !== undefined && old !== top) animate(el, [{ transform: `translateY(${old - top}px)` }, { transform: 'none' }], { duration: DURATION.base });
+    }
+  }
+  const recent = new Set((s.archive?.recent ?? []).map((id) => 'tab-' + id));
+  for (const key of removed) {
+    const old = before.els.get(key);
+    if (!old) continue;
+    const ghost = old.cloneNode(true) as HTMLElement;
+    ghost.classList.add('row-ghost');
+    ghost.classList.remove('drop-before', 'drop-after', 'drop-into');
+    delete ghost.dataset.rowKey;
+    for (const el of [ghost, ...ghost.querySelectorAll<HTMLElement>('*')]) {
+      delete el.dataset.focusKey;
+      el.removeAttribute('id');
+      el.removeAttribute('role');
+      el.removeAttribute('title');
+      el.removeAttribute('aria-label');
+      if (el instanceof HTMLButtonElement) el.tabIndex = -1;
+    }
+    ghost.inert = true;
+    ghosts.append(ghost);
+    let anim: Animation | null;
+    if (recent.has(key) && archiveEntry) {
+      const dy = archiveEntry.getBoundingClientRect().top - ghost.getBoundingClientRect().top;
+      anim = animate(ghost, [{ opacity: 1, transform: 'none' }, { opacity: 0.6, offset: 0.7 }, { opacity: 0, transform: `translateY(${dy}px) scale(.7)` }],
+        { duration: DURATION.slow + 80, easing: EASE_IN, fill: 'forwards' });
+      if (anim) anim.finished.then(() => animate(archiveEntry, [{ transform: 'scale(1.06)' }, { transform: 'none' }], { duration: DURATION.fast }), () => undefined);
+    } else {
+      anim = animate(ghost, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(-10px) scaleY(.5)' }],
+        { duration: DURATION.base, easing: EASE_IN, fill: 'forwards' });
+    }
+    if (anim) anim.finished.finally(() => ghost.remove()).catch(() => undefined);
+    else ghost.remove();
+  }
+}
+
+/** Notices and cards (recovery, reopen, update, local server) slide in the first time they show. */
+let shownCards = new Set<string>();
+function animateCards(cards: HTMLElement[]): void {
+  const next = new Set<string>();
+  for (const card of cards) {
+    const key = card.dataset.animKey;
+    if (!key) continue;
+    next.add(key);
+    if (!shownCards.has(key)) animate(card, [{ opacity: 0, transform: 'translateY(-6px) scale(.98)' }, { opacity: 1, transform: 'none' }], { duration: DURATION.slow });
+  }
+  shownCards = next;
+}
+
+/** Friendly copy for an empty Space, or for a fresh one that only has the new-tab page. */
+function emptyState(s: ShellState, spaceTabs: TabInfo[]): HTMLElement | null {
+  const space = s.spaces.find(({ id }) => id === s.activeSpaceId);
+  const name = space?.name ?? 'this Space';
+  const fresh = spaceTabs.length === 1 && !spaceTabs[0].pinned && (!spaceTabs[0].url || /^quiver:\/\/(app\/)?newtab/.test(spaceTabs[0].url));
+  if (spaceTabs.length && !fresh) return null;
+  const top = s.sidebar.length * TAB_ROW_H + 8;
+  const card = h('div', { class: 'empty-state' },
+    h('p', { class: 'empty-title' }, spaceTabs.length ? `${name} is ready` : `Nothing open in ${name}`),
+    h('p', { class: 'empty-copy' }, spaceTabs.length
+      ? 'Open what you are working on here. Right-click a tab to pin it above the divider, where it stays.'
+      : 'Press Ctrl+T to open a tab. Pinned tabs and folders you add here stay put.'));
+  card.style.top = top + 'px';
+  return card;
 }
 
 function activeTab(s: ShellState): TabInfo | undefined {
@@ -624,7 +815,7 @@ const PHONE_LABELS: Record<PhoneStatus, { label: string; compact: string }> = {
 function renderLocalServerStatus(status: LocalServerStatus): HTMLElement {
   const recovered = status.state === 'recovered';
   const label = recovered ? 'Local server is back' : 'Local server unavailable';
-  const card = h('div', { class: 'local-status', title: label, dataset: { state: status.state } },
+  const card = h('div', { class: 'local-status', title: label, dataset: { state: status.state, animKey: 'local-' + status.state } },
     h('span', { class: 'recovery-expanded' }, label));
   if (recovered) {
     card.append(h('button', {
@@ -754,6 +945,28 @@ function renderToolbar(s: ShellState): void {
   if (focusFindPending && s.find) focusFindPending = !focusFind();
 }
 
+// ───────── Space themes ─────────
+// The active Space's colour tints the sidebar (a gradient when it has two) and becomes the accent. space-theme.ts
+// keeps every text colour at 4.5:1 on the result in both palettes.
+const darkScheme = matchMedia('(prefers-color-scheme: dark)');
+let lastThemeKey = '';
+darkScheme.addEventListener('change', () => { lastThemeKey = ''; render(); });
+
+function applySpaceTheme(sp: Space | undefined): void {
+  const dark = darkScheme.matches;
+  const key = [sp?.color, sp?.color2, dark].join();
+  if (key === lastThemeKey) return;
+  lastThemeKey = key;
+  const t = spaceTheme(sp?.color ?? '#5b8cff', sp?.color2, dark);
+  const body = document.body.style;
+  body.setProperty('--accent', t.accent);
+  body.setProperty('--on-accent', t.onAccent);
+  body.setProperty('--monogram-bg', t.monogramBg);
+  body.setProperty('--monogram-text', t.monogramText);
+  sidebar.style.setProperty('--sidebar-bg', t.sidebar.length === 2 ? `linear-gradient(172deg, ${t.sidebar[0]}, ${t.sidebar[1]})` : t.sidebar[0]);
+  sidebar.style.setProperty('--panel-2', t.row);
+}
+
 function render(): void {
   if (!state) return;
   const focused = document.hasFocus() && document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -767,6 +980,9 @@ function render(): void {
   const sp: Space | undefined = state.spaces.find((x) => x.id === state!.activeSpaceId);
   document.title = `Quiver — ${sp?.name ?? ''}`;
   document.body.classList.toggle('private-space', sp?.private === true);
+  setMotion(state.settings.reduceMotion);
+  // While the colour editor is open it previews the colours being picked instead.
+  if (!coloringSpace) applySpaceTheme(sp);
   renderSidebar(state);
   renderToolbar(state);
   renderSplit(state.split, state.activeTabId);
@@ -854,9 +1070,14 @@ function place(el: HTMLElement, r: { x: number; y: number; width: number; height
 }
 
 function renderSplit(split: SplitView | undefined, activeTabId: number | null): void {
+  const opening = !splitNow && !!split;
   splitNow = split;
   splitLayer.hidden = !split;
   if (!split) return;
+  if (opening) {
+    animate(divider, [{ opacity: 0, transform: 'scaleY(.6)' }, { opacity: 1, transform: 'none' }], { duration: DURATION.slow });
+    for (const strip of [leftStrip, rightStrip]) animate(strip, [{ opacity: 0 }, { opacity: 1 }], { duration: DURATION.slow });
+  }
   place(divider, split.divider);
   place(leftStrip, { x: split.leftPane.x, y: split.area.y, width: split.leftPane.width, height: split.leftPane.y - split.area.y });
   place(rightStrip, { x: split.rightPane.x, y: split.area.y, width: split.rightPane.width, height: split.rightPane.y - split.area.y });
@@ -882,10 +1103,16 @@ peekLayer.append(peekBackdrop, peekHeader);
 content.append(peekLayer);
 
 function renderPeek(peek: PeekView | undefined): void {
+  const opening = peekLayer.hidden && !!peek;
   peekLayer.hidden = !peek;
   if (!peek) {
     peekBackdrop.replaceChildren();
     return;
+  }
+  if (opening) {
+    // The page dims behind the Peek and its header rises into place.
+    animate(peekBackdrop, [{ opacity: 1 }, { opacity: 0.45 }], { duration: DURATION.slow });
+    animate(peekHeader, [{ opacity: 0, transform: 'translateY(10px)' }, { opacity: 1, transform: 'none' }], { duration: DURATION.slow });
   }
   place(peekHeader, peek.header);
   peekHost.textContent = peek.host || peek.url;
@@ -938,7 +1165,9 @@ function startPeek(): void {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (peek !== 'opening') return;
     peek = 'on';
-    void call('sidebar:peek', true);
+    void call('sidebar:peek', true).then(() => {
+      if (peek === 'on') animate(sidebar, [{ opacity: 0.7, transform: 'translateX(-14px)' }, { opacity: 1, transform: 'none' }], { duration: DURATION.base });
+    });
   }));
 }
 
@@ -947,8 +1176,12 @@ async function endPeek(): Promise<void> {
   if (peek === 'off') return;
   const wasRaised = peek === 'on';
   peek = 'off';
-  // Lower the shell first, then collapse: the page covers the content area again before it repaints.
-  if (wasRaised) await call('sidebar:peek', false);
+  // Slide away, lower the shell, then collapse: the page covers the content area again before it repaints.
+  const out = wasRaised ? animate(sidebar, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(-18px)' }],
+    { duration: DURATION.fast, easing: EASE_IN, fill: 'forwards' }) : null;
+  if (out) await out.finished.catch(() => undefined);
+  if (wasRaised && peek === 'off') await call('sidebar:peek', false);
+  out?.cancel();
   if (peek === 'off') {
     document.body.classList.remove('peek');
     render();
@@ -1017,6 +1250,13 @@ function focusFind(): boolean {
 // The bar may not exist yet: the state that opens it can arrive just after this message.
 quiver.on('find:focus', () => {
   focusFindPending = !focusFind();
+});
+quiver.on('space:color-start', (id: unknown) => {
+  if (typeof id !== 'string' || !state?.spaces.some((sp) => sp.id === id)) return;
+  coloringSpace = id;
+  addingSpace = false;
+  render();
+  focusShellControl('space-color-1');
 });
 quiver.on('space:rename-start', (id: string) => {
   renamingSpace = id;

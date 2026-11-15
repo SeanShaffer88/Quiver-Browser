@@ -114,3 +114,5 @@ kbd, code { font: 12px var(--mono); background: var(--panel-2); border: 1px soli
 .shortcuts td:last-child .btn { margin-left: 6px; }
 .shortcuts .tag { margin-left: 8px; font-size: 11px; color: var(--muted); }
 .shortcuts tr.recording td { background: var(--panel-2); }
+.empty-state { display: grid; gap: 4px; padding: 16px; border: 1px dashed var(--border); border-radius: var(--radius); list-style: none; }
+.empty-state strong { font-weight: 600; }

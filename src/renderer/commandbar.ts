@@ -1,4 +1,5 @@
 import type { CommandChoice, CommandCommitResult, CommandOpen } from '../shared/types';
+import { animate, DURATION, setMotion } from './motion.js';
 
 const input = document.getElementById('input') as HTMLInputElement;
 const list = document.getElementById('list')!;
@@ -245,4 +246,8 @@ quiver.on('cmd:opened', (payload: CommandOpen) => {
   input.focus();
   input.select();
   void refresh(payload.message);
+  // Scale and fade in from just below the bar's resting place; the backdrop fades with it.
+  setMotion(payload.motion);
+  animate(document.getElementById('panel')!, [{ opacity: 0, transform: 'translateY(-4px) scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: DURATION.base });
+  animate(document.getElementById('backdrop')!, [{ opacity: 0 }, { opacity: 1 }], { duration: DURATION.fast });
 });

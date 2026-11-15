@@ -4,6 +4,8 @@ export interface Space {
   id: string;
   name: string;
   color: string;
+  /** Second colour: the sidebar shows a gradient from `color` to this. */
+  color2?: string;
   /** true = own cookie jar / storage partition; false = shared default partition */
   isolated: boolean;
   /** Spaces in one imported Arc profile share a fresh, local storage partition. */
@@ -53,6 +55,8 @@ export interface Settings {
   privacy: PrivacySettings;
   /** Light, dark, or follow Windows. Applied through nativeTheme so every page's prefers-color-scheme follows. */
   theme: 'system' | 'light' | 'dark';
+  /** Skip Quiver's interface animations: 'system' follows Windows' animation setting. */
+  reduceMotion: 'system' | 'on' | 'off';
   /** Rebound shortcuts: action → binding such as "Ctrl+Shift+KeyB" ('' = no key). Missing actions use defaults. */
   shortcuts: Record<string, string>;
   /** Opt-in: look up the latest Quiver release on GitHub at most once a day. Never downloads anything. */
@@ -236,6 +240,8 @@ export interface ShellState {
   keys: Record<string, string>;
   /** A newer Quiver release the user hasn't dismissed. */
   update?: UpdateNotice;
+  /** Archived tabs from the active Space, and the tabs the latest auto-archive pass just took out of the sidebar. */
+  archive?: { count: number; recent: number[] };
 }
 
 export interface TabCommandTarget {
@@ -289,6 +295,8 @@ export interface CommandOpen {
   mode: CommandMode;
   maxInputLength: number;
   message?: string;
+  /** Settings → Appearance → Reduce motion, for the open animation. */
+  motion?: 'system' | 'on' | 'off';
 }
 
 export interface CommandPreview {

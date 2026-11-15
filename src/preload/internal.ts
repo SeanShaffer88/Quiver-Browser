@@ -5,7 +5,7 @@ const INVOKE = new Set([
   'state:get',
   'tab:close', 'tab:activate', 'tab:place', 'tab:menu', 'tab:console', 'tab:back', 'tab:forward', 'tab:reload',
   'tab:reopen', 'tab:retry-crash', 'recovery:dismiss',
-  'space:create', 'space:create-private', 'adblock:toggle-site', 'space:menu', 'space:rename', 'space:activate',
+  'space:create', 'space:create-private', 'adblock:toggle-site', 'space:menu', 'space:color', 'space:rename', 'space:activate',
   'folder:toggle', 'folder:rename', 'folder:move', 'folder:menu',
   'permission:decide', 'sitepermissions:forget',
   'find:query', 'find:close', 'zoom:reset',
@@ -26,7 +26,7 @@ const INVOKE = new Set([
   'research:list', 'research:get', 'research:rename', 'research:notes', 'research:item-note', 'research:item-remove',
   'research:delete', 'research:resume', 'research:stop', 'research:open', 'research:export',
 ]);
-const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'folder:rename-start', 'research:changed', 'sync:changed', 'downloads:changed', 'find:focus', 'peek:backdrop']);
+const ON = new Set(['state', 'cmd:opened', 'cmd:restore-focus', 'boost:changed', 'space:rename-start', 'space:color-start', 'folder:rename-start', 'research:changed', 'sync:changed', 'downloads:changed', 'find:focus', 'peek:backdrop']);
 
 contextBridge.exposeInMainWorld('quiver', {
   invoke: (channel: string, ...args: unknown[]): Promise<unknown> =>

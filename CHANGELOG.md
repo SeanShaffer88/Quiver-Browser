@@ -4,6 +4,9 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+- Give each Space a theme: its color (or a two-color gradient) tints the sidebar and sets the accent, picked from the Space's right-click menu with presets or custom colors. Quiver keeps text at 4.5:1 contrast or better in light and dark.
+- Add short animations for opening and closing tabs, archiving, switching Spaces, collapsing and peeking the sidebar, the command bar, Peek, split view and sidebar notices. Settings → Appearance → Reduce motion turns them off or follows Windows.
+- Show a monogram on the Space's tint for tabs without a favicon, an Archive entry in the sidebar, friendlier empty states for a new Space and the downloads page, consistent focus rings, and shortcut hints in more tooltips.
 - Deny camera, microphone, and screen sharing in Phone Preview.
 - Clear a tab's media permission prompt and page indicator when its renderer stops.
 - Resume paused and interrupted HTTP downloads from saved progress after reopening Quiver.

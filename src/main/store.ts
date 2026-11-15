@@ -11,7 +11,7 @@ import { normalizeSitePermissions } from './site-permissions';
 import { DEFAULT_ARCHIVE_HOURS, normalizeArchive, normalizeArchiveHours, type ArchivedTab } from './archive';
 import { normalizeSyncState, type SyncState } from './sync-service';
 import { normalizePrivacy } from './privacy';
-import { normalizeTheme } from '../shared/theme';
+import { normalizeMotion, normalizeSpaceColors, normalizeTheme } from '../shared/theme';
 import { normalizeShortcutOverrides } from './shortcuts';
 import { normalizeUpdateState, type UpdateState } from './updates';
 import { normalizeFolders } from './tab-tree';
@@ -67,6 +67,7 @@ export function defaultSettings(): Settings {
     peekPinnedLinks: true,
     privacy: normalizePrivacy(undefined, process.platform),
     theme: 'system',
+    reduceMotion: 'system',
     shortcuts: {},
     checkForUpdates: false,
   };
@@ -144,11 +145,12 @@ export class Store {
           peekPinnedLinks: typeof raw.settings?.peekPinnedLinks === 'boolean' ? raw.settings.peekPinnedLinks : true,
           privacy: normalizePrivacy(raw.settings?.privacy, process.platform),
           theme: normalizeTheme(raw.settings?.theme),
+          reduceMotion: normalizeMotion(raw.settings?.reduceMotion),
           shortcuts: normalizeShortcutOverrides(raw.settings?.shortcuts) as Record<string, string>,
           checkForUpdates: raw.settings?.checkForUpdates === true,
         },
       } as PersistedState;
-      state.spaces = state.spaces.map((space) => ({ ...normalizeArcSpace(space), folders: normalizeFolders(space.folders) }));
+      state.spaces = state.spaces.map((space) => ({ ...normalizeArcSpace(space), folders: normalizeFolders(space.folders) })).map(normalizeSpaceColors);
       // Private Spaces are never written, but a hand-edited file must not bring one back as a regular Space.
       state.spaces = state.spaces.filter((space) => !space.private).map((space) => ({ ...space, folders: normalizeFolders(space.folders) }));
       if (!state.spaces.length) throw new Error('bad shape');
