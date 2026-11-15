@@ -82,15 +82,15 @@ test('Shift+click is told apart from popups and tab clicks', () => {
 test('new-window requests go to Peek, a tab, or nowhere', () => {
   const regular = { pinned: false, internal: false };
   const pinned = { pinned: true, internal: false };
-  const on = { peekPinnedLinks: true, peekShiftClick: true };
+  const on = { peekLinks: true, peekShiftClick: true };
   const shift = { url: 'https://a.test/', disposition: 'new-window', features: '' };
   const blank = { url: 'https://a.test/', disposition: 'foreground-tab', features: '' };
   assert.equal(openTarget(regular, on, shift), 'peek');
   assert.equal(openTarget(regular, on, blank), 'tab');
   assert.equal(openTarget(regular, { ...on, peekShiftClick: false }, shift), 'tab');
   assert.equal(openTarget(pinned, on, blank), 'peek');
-  assert.equal(openTarget(pinned, { peekPinnedLinks: false, peekShiftClick: true }, blank), 'tab');
-  assert.equal(openTarget(pinned, { peekPinnedLinks: false, peekShiftClick: true }, shift), 'peek');
+  assert.equal(openTarget(pinned, { peekLinks: false, peekShiftClick: true }, blank), 'tab');
+  assert.equal(openTarget(pinned, { peekLinks: false, peekShiftClick: true }, shift), 'peek');
   // A sign-in popup stays a tab, as before.
   assert.equal(openTarget(regular, on, { ...shift, features: 'width=500' }), 'tab');
   assert.equal(openTarget({ pinned: false, internal: true }, on, shift), 'tab');

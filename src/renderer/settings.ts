@@ -1,6 +1,7 @@
-import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, Settings, ShortcutRow, UpdateStatus } from '../shared/types';
+import type { Bookmark, BookmarkLibraryView, BookmarkPreview, BookmarkProfile, EnvGroup, ProfileContext, Settings, ShortcutRow, UpdateStatus } from '../shared/types';
 import { readBookmarkExport } from './bookmark-file.js';
 import { setupArcSidebarPreview } from './arc-sidebar-preview.js';
+import { setupSpaceSettings } from './space-settings.js';
 
 setupArcSidebarPreview();
 import { currentSection, searchTerms, sectionMatches } from './settings-search.js';
@@ -26,6 +27,19 @@ let bookmarkBusy = false;
 let preview: BookmarkPreview | undefined;
 let reviewOrigin: HTMLButtonElement = importProfile;
 let undo: BookmarkLibraryView['undo'];
+let bookmarkElsewhere = 0;
+let profile: ProfileContext | undefined;
+
+function renderBookmarkProfile(): void {
+  if (!profile) return;
+  const whose = profile.kind === 'separate'
+    ? `Bookmarks of the ${profile.label}. Imports here are added to this profile only.`
+    : profile.kind === 'private'
+      ? 'This private Space shows the shared bookmarks. Imports here are added to the shared bookmarks.'
+      : 'The shared bookmarks, used by every Space without a separate profile.';
+  const kept = bookmarkElsewhere ? ` ${bookmarkElsewhere.toLocaleString()} more belong to profiles that are not on this device and are kept.` : '';
+  $('bookmarks-profile').textContent = whose + kept;
+}
 
 function bookmarkStatus(message: string, failed = false): void {
   statusEl.textContent = message;
@@ -57,6 +71,8 @@ async function refreshBookmarks(): Promise<void> {
   const library = await quiver.invoke('bookmarks:list') as BookmarkLibraryView;
   bookmarks = library.bookmarks;
   undo = library.undo;
+  bookmarkElsewhere = library.elsewhere ?? 0;
+  renderBookmarkProfile();
   bookmarkPage = Math.min(bookmarkPage, Math.max(0, Math.ceil(bookmarks.length / pageSize) - 1));
   renderBookmarks();
   updateBookmarkButtons();
@@ -299,7 +315,11 @@ function renderGroups(): void {
   renderGroups();
   $<HTMLInputElement>('engine').value = settings.searchEngine;
   $<HTMLInputElement>('scan').checked = settings.devServerScan;
-  renderSitePermissions(settings.sitePermissions);
+  profile = (await quiver.invoke('settings:profile')) as ProfileContext;
+  renderBookmarkProfile();
+  renderProfileNotes(profile);
+  void setupSpaceSettings(profile);
+  renderSitePermissions(await quiver.invoke('sitepermissions:list') as Record<string, 'allow' | 'block'>);
   $<HTMLInputElement>('history-on').checked = settings.rememberHistory;
   void showHistoryCount();
   $<HTMLInputElement>('ask-save').checked = settings.askWhereToSave;
@@ -321,6 +341,21 @@ $<HTMLInputElement>('engine').addEventListener('change', async (e) => {
   await quiver.invoke('settings:set', { searchEngine: (e.target as HTMLInputElement).value.trim() });
 });
 $<HTMLInputElement>('scan').addEventListener('change', (e) => void quiver.invoke('settings:set', { devServerScan: (e.target as HTMLInputElement).checked }));
+
+function renderProfileNotes(p: ProfileContext): void {
+  $('camera-profile').textContent = p.kind === 'separate'
+    ? `Choices for the ${p.label}. Other profiles keep their own.`
+    : p.kind === 'private'
+      ? 'Choices for this private Space. They are forgotten when it closes.'
+      : 'Choices for the shared profile. Spaces with a separate profile keep their own.';
+  $('history-profile').textContent = p.kind === 'separate'
+    ? `History of the ${p.label}. The command bar in its Spaces only finds pages from this history.`
+    : p.kind === 'private'
+      ? 'This private Space keeps no history.'
+      : 'History of the shared profile. Each Space with a separate profile keeps its own history.';
+  $<HTMLButtonElement>('history-clear').disabled = p.kind === 'private';
+  $('history-clear-all').hidden = false;
+}
 
 function renderSitePermissions(saved: Record<string, 'allow' | 'block'>): void {
   const list = $('site-permissions');
@@ -502,8 +537,14 @@ async function showHistoryCount(): Promise<void> {
 }
 $<HTMLInputElement>('history-on').addEventListener('change', (e) => void quiver.invoke('settings:set', { rememberHistory: (e.target as HTMLInputElement).checked }));
 $('history-clear').addEventListener('click', async () => {
-  if (!confirm('Clear all saved history on this device?')) return;
+  const whose = profile?.kind === 'separate' ? `the ${profile.label}` : 'the shared profile';
+  if (!confirm(`Clear the saved history of ${whose}?`)) return;
   await quiver.invoke('history:clear');
+  await showHistoryCount();
+});
+$('history-clear-all').addEventListener('click', async () => {
+  if (!confirm('Clear all saved history on this device, in every profile?')) return;
+  await quiver.invoke('history:clear-all');
   await showHistoryCount();
 });
 function renderPrivacy(p: Settings['privacy']): void {

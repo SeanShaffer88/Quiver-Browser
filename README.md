@@ -136,7 +136,34 @@ The selected result shows the action before you confirm, including the destinati
 Type `research <name>` in the command bar to start a topic for the current Space. While it records, web searches from the command bar and the web pages you open in that Space join its trail, with credentials and `#fragments` removed. `note <text>` attaches a note to the current page. The toolbar shows the recording topic; click it to open `quiver://research`, where you can write topic notes, annotate or remove trail items, reopen pages, stop or continue recording, and copy the topic as Markdown. `research` alone lists topics to continue or stop. Nothing is recorded unless a topic is recording, and topics stay in the local profile.
 
 ### Spaces
-`+` next to the Space chips creates a Space. Tick "Separate cookies & logins" for an isolated cookie jar and storage (a separate Chromium partition). Right-click or double-click a chip to rename; right-click to delete (deleting an isolated Space also clears its storage). Isolation is chosen at creation. The sidebar labels the active Space **Separate sign-in** or **Shared sign-in**.
+`+` next to the Space chips creates a Space. Tick **Separate profile** to give it its own profile (below); leave it off to share the shared profile with the other shared Spaces. Right-click or double-click a chip to rename; right-click to delete (deleting a Space with a separate profile also clears its storage). The profile is chosen at creation. The sidebar labels the active Space **Separate sign-in** or **Shared sign-in**, and its right-click menu starts with **Profile: Shared** or **Profile: Separate**.
+
+#### Profiles
+A profile is one Chromium storage partition and everything Quiver keeps for it. Each separate profile has its own:
+
+- cookies, sign-ins, site storage and cache;
+- **history** (`history-profiles\<profile>.json`): the command bar's `h …` and the history results under a search only show pages from the active Space's profile;
+- **bookmarks**: `bm …` and Settings → Bookmarks show the active Space's profile, and imports made from Settings in that Space go to it. Shared Spaces keep the shared library. The same page can be bookmarked in several profiles;
+- **downloads list**: the Downloads page shows the profile of the Space it is open in, with **Downloads from every profile** a choice away;
+- **camera, microphone and screen-sharing choices**, listed in Settings for the Space Settings is open in;
+- **spell check**, when the Space sets one in Settings → Spaces and profiles (spell check is per Chromium session, so shared Spaces can't differ from each other).
+
+The Spaces of one imported Arc profile share one separate profile. Ad blocking, Global Privacy Control, Secure DNS, clear-on-exit, Boosts, environments and the search engine are app-wide. Private Spaces have no saved profile: they show the shared history and bookmarks but add nothing to them, and their camera choices are kept in memory until the Space closes.
+
+**Not in a profile:** Quiver has no password manager, and Chromium's password and address autofill is not available in Electron, so passwords are whatever each site's own sign-in keeps (cookies) or what your system password manager fills. Browser extensions are not supported.
+
+**Upgrading:** history, bookmarks and camera choices from before profiles existed stay in the shared profile; nothing is moved or deleted. Spaces that already had separate cookies become separate profiles that start with empty history and bookmarks. Deleting the last Space of a separate profile deletes its history and camera choices with its cookies, and moves its bookmarks to the shared library.
+
+#### Space settings
+Right-click a Space and choose **Space settings…**, or open **Settings → Spaces and profiles**, to set for each Space:
+
+- an **icon** (one emoji, shown before the name) and **color**;
+- **Archive unused tabs** after a different time than Settings → Tabs, or never;
+- whether **new tabs open at** the top or the bottom of its tab list;
+- which links **open in Peek**: from pinned tabs, from every tab, or never;
+- **spell check** for a separate profile.
+
+The icon and color sync with Spaces; the other Space settings stay on the device.
 
 **Private Spaces** (`Ctrl+Shift+N`, **New private Space** in the command bar, the `+` form or a Space's right-click menu) are temporary. Their cookies, storage and cache live in memory only (an Electron partition without `persist:`); their pages are not added to history or research topics, are never auto-archived, and the Space is not saved to `quiver-state.json` or synced. Downloads from them are saved to disk as usual but drop out of the downloads list after a restart. A private Space has a striped purple chip labelled **Private**; right-click it and choose **Close private Space and discard everything**, or quit Quiver, to throw it all away. You can open more than one; each is separate from the others. The last regular Space can't be deleted while a private one is open.
 
@@ -211,7 +238,7 @@ Quiver has its own downloaders for addresses Chromium can't save, with no extra 
 ### Where data lives
 - Installed: `%APPDATA%\Quiver\`
 - PortableApps: `Data\` in the QuiverPortable folder. In addition to the profile, it holds `Cache\`, `Temp\`, `Logs\`, `CrashDumps\` and the default `Downloads\` directory.
-- Profile files: `quiver-state.json` (Spaces, tabs, settings, window bounds), `boosts\`, and Chromium partitions.
+- Profile files: `quiver-state.json` (Spaces, tabs, settings, bookmarks, window bounds), `history.json` (the shared profile's history), `history-profiles\` (each separate profile's history), `boosts\`, and Chromium partitions.
 
 To remove everything: uninstall, then delete that folder.
 
@@ -250,6 +277,7 @@ Quiver currently covers these Flecha workflows, plus split view, Peek and Little
 | 2 | Spaces | Create / rename / delete, per-Space partition (cookies, storage), private Spaces | Included |
 | – | Little Quiver and Peek any link | External links in a small window with *Open in Quiver*; Shift+click or *Peek link* on any link | Included |
 | – | Tabs on other devices | Open tabs per Space through the sync folder, `devices`, Continue here, send tab to device | Included |
+| 2 | Space profiles and settings | Separate profile per Space (history, bookmarks, downloads list, camera choices, spell check); per-Space icon, color, archive time, new-tab position and Peek links. No passwords or extensions | Included |
 | – | Ad and tracker blocking | Built-in domain list, per-page count, per-site exceptions | Included |
 | 3 | Command bar | `Ctrl+K` / `Ctrl+L` / `Ctrl+T` overlay | Included |
 | 3 | `gh` `npm` `mdn` `caniuse` `so` | Offline parser → URL | Included |

@@ -141,7 +141,7 @@ function renderSpaces(s: ShellState): HTMLElement {
         'aria-label': sp.private ? sp.name + ', private Space' : sp.name + ', ' + signInLabel(sp).toLowerCase(),
         title: sp.private
           ? `${sp.name} — private: nothing is saved, synced or kept in history. Closing it or quitting Quiver discards everything.\nRight-click: close`
-          : `${sp.name} — ${signInLabel(sp)}\nRight-click: rename or delete · Double-click: rename`,
+          : `${sp.name} — ${signInLabel(sp)} · ${sp.isolated ? 'separate profile' : 'shared profile'}\nRight-click: Space settings, rename or delete · Double-click: rename`,
         onClick: () => call('space:activate', sp.id),
         onDblclick: () => {
           renamingSpace = sp.id;
@@ -153,7 +153,8 @@ function renderSpaces(s: ShellState): HTMLElement {
         },
       },
       dot,
-      h('span', { class: 'label' }, (sp.private ? '' : sp.isolated ? '🔒 ' : '') + sp.name),
+      // The Space's own icon, else a lock for a separate profile. Both are decoration: the accessible name says it.
+      h('span', { class: 'label' }, (sp.private ? '' : sp.icon ? sp.icon + ' ' : sp.isolated ? '🔒 ' : '') + sp.name),
     );
     wrap.append(chip);
   }
@@ -186,7 +187,7 @@ function renderAddForm(): HTMLElement {
     'div',
     { class: 'add-space-form' },
     name,
-    h('label', { title: 'Own cookie jar, logins and storage, separate from other Spaces' }, iso, 'Separate cookies & logins'),
+    h('label', { title: 'Its own cookies and sign-ins, history, bookmarks, downloads list and camera and microphone choices, separate from other Spaces' }, iso, 'Separate profile'),
     h('div', { class: 'row' }, h('button', { class: 'btn primary', dataset: { focusKey: 'space-create' }, onClick: submit }, 'Create'), h('button', { class: 'btn', dataset: { focusKey: 'space-cancel' }, onClick: () => { addingSpace = false; render(); } }, 'Cancel')),
     h('button', {
       class: 'btn private-space-btn',

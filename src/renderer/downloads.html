@@ -10,7 +10,15 @@
 <body>
 <div class="page">
   <div class="toolbar"><h1 class="name">Downloads</h1><button class="btn" id="clear">Clear finished</button></div>
-  <p class="sub">Files from every Space. <kbd>Ctrl+J</kbd> opens this page. Change where files go in Settings.</p>
+  <p class="sub"><kbd>Ctrl+J</kbd> opens this page. Change where files go in Settings.</p>
+  <div class="row">
+    <label for="scope">Show</label>
+    <select id="scope" aria-describedby="scope-note">
+      <option value="profile">Downloads from this profile</option>
+      <option value="all">Downloads from every profile</option>
+    </select>
+    <span class="note" id="scope-note"></span>
+  </div>
   <p class="status" id="status" role="status"></p>
   <ol class="downloads" id="list" aria-label="Downloads"></ol>
 </div>

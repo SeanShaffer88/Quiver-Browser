@@ -11,6 +11,9 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 - Send tab to device (tab menu, `send` in the command bar): the other device shows a dismissible "Tab from <device>" notice with **Open**.
 - **Sync open tabs defaults:** on when you set up sync from this version on; off on devices that were already syncing before it, so upgrading never starts sharing tabs without you turning it on.
 - Sync no longer rewrites an unchanged device file every minute; it is rewritten when something changes and otherwise every 5 minutes, so sync clients upload less.
+- Space profiles: a Space created with **Separate profile** keeps its own history (command bar `h` and history results), bookmarks (`bm`, Settings → Bookmarks, imports), downloads list, camera/microphone/screen choices and, optionally, spell check. Shared Spaces share the shared profile; Spaces of an imported Arc profile share theirs. Existing history, bookmarks and choices stay in the shared profile. The Space menu shows **Profile: Shared / Separate**. Quiver has no password manager and no extension support; neither is part of a profile.
+- Space settings (Space menu → **Space settings…**, or Settings → Spaces and profiles): an emoji icon and color (synced), and, kept on the device, archive time, new tabs at the top or bottom, and which links open in Peek (pinned tabs, every tab, or never).
+- Private Spaces keep camera and microphone choices in memory instead of saving them to the shared list.
 - Deny camera, microphone, and screen sharing in Phone Preview.
 - Clear a tab's media permission prompt and page indicator when its renderer stops.
 - Resume paused and interrupted HTTP downloads from saved progress after reopening Quiver.

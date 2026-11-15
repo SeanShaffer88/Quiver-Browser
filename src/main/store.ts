@@ -18,6 +18,8 @@ import { normalizeFolders } from './tab-tree';
 import { validArcImportUndo, type ArcImportUndo } from './arc-import';
 import { normalizeArcSpace } from './space-session';
 import { normalizeLittleSize } from './little-quiver-layout';
+import { normalizeProfilePermissions, normalizeSpaceProfileFields, separateProfiles } from './profiles';
+import type { SiteDecision } from './site-permissions';
 import { normalizeTopics, type Topic } from './research';
 import { persistableState } from './private-spaces';
 import { hasSavedNewTabPlaceholder, normalizeRecentlyClosed, type PersistedClosedTab } from './session-recovery';
@@ -43,6 +45,8 @@ export interface PersistedState {
   settings: Settings;
   bookmarks: Bookmark[];
   bookmarkUndo?: BookmarkUndo;
+  /** Camera / microphone / screen decisions of separate profiles, by profile id (see profiles.ts). */
+  profilePermissions?: Record<string, Record<string, SiteDecision>>;
   arcImportUndo?: ArcImportUndo;
   sessionOpen?: boolean;
   downloads?: unknown[];
@@ -157,8 +161,9 @@ export class Store {
       } as PersistedState;
       state.spaces = state.spaces.map((space) => ({ ...normalizeArcSpace(space), folders: normalizeFolders(space.folders) }));
       // Private Spaces are never written, but a hand-edited file must not bring one back as a regular Space.
-      state.spaces = state.spaces.filter((space) => !space.private).map((space) => ({ ...space, folders: normalizeFolders(space.folders) }));
+      state.spaces = state.spaces.filter((space) => !space.private).map((space) => normalizeSpaceProfileFields({ ...space, folders: normalizeFolders(space.folders) }));
       if (!state.spaces.length) throw new Error('bad shape');
+      state.profilePermissions = normalizeProfilePermissions(raw.profilePermissions, separateProfiles(state.spaces));
       const knownSpaces = new Set(state.spaces.map(({ id }) => id));
       state.topics = normalizeTopics(raw.topics, knownSpaces);
       state.activeTopicBySpace = Object.fromEntries(Object.entries(raw.activeTopicBySpace ?? {})

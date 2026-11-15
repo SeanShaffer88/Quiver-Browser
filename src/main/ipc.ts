@@ -2,7 +2,7 @@ import { clipboard, dialog, ipcMain, Menu, session, shell as electronShell, type
 import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
 import { detectEnv } from '../shared/env';
 import { parseCommand } from '../shared/parser';
-import type { BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, Settings, ShortcutRow, Suggestion } from '../shared/types';
+import type { BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, ProfileContext, Settings, ShortcutRow, Space, SpaceSettingsView, Suggestion } from '../shared/types';
 import { BookmarkImports } from './bookmark-import';
 import { ArcImports } from './arc-import';
 import { isValidBoostName, type Boosts } from './boosts';
@@ -22,7 +22,8 @@ import { shareTarget } from './native/share';
 import type { SyncService } from './sync-service';
 import { planContinue, publishableUrl } from './continuity';
 import { deviceSuggestions, devicesQuery, remoteTabMatches, sendMatches, sendQuery, sendSuggestions } from './device-commands';
-import type { History } from './history';
+import type { ProfileHistories } from './history';
+import { bookmarksElsewhere, bookmarksForProfile, profileKind, profileLabel, readingProfile, separateProfiles, SHARED_PROFILE, spaceProfile, spacesInProfile } from './profiles';
 import type { DownloadAction, Downloads } from './downloads';
 import { splitSearchQuery, splitSuggestions, tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
@@ -45,7 +46,7 @@ export interface IpcDeps {
   runCommand: (command: BrowserCommand) => void;
   research: Research;
   sync: SyncService;
-  history: History;
+  history: ProfileHistories;
   downloads: Downloads;
   /** Reapply privacy settings after they change. */
   onPrivacyChanged: () => void;
@@ -96,6 +97,35 @@ export function sanitizeEnvGroups(input: unknown): EnvGroup[] {
 
 export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?: CommandMode) => void; toggleSidebar: () => void; applySettings: (patch: Partial<Settings>) => void } {
   const { tabs, store, boosts, devWatcher, overlay, shell, research } = d;
+
+  /** The Space a Quiver page (Settings, Downloads) was opened in, which decides the profile it shows. */
+  const senderSpace = (e: IpcMainInvokeEvent) => {
+    let spaceId = tabs.activeSpaceId;
+    for (const tab of tabs.tabs.values()) {
+      if (tab.view.webContents === e.sender) {
+        spaceId = tab.spaceId;
+        break;
+      }
+    }
+    return tabs.spaces.find((sp) => sp.id === spaceId) ?? tabs.spaces.find((sp) => sp.id === tabs.activeSpaceId);
+  };
+  const profileContext = (e: IpcMainInvokeEvent): ProfileContext => {
+    const space = senderSpace(e);
+    const profile = readingProfile(space);
+    const kind = profileKind(space);
+    return {
+      spaceId: space?.id ?? '',
+      spaceName: space?.name ?? '',
+      kind,
+      label: kind === 'private' ? 'Private Space' : profileLabel(tabs.spaces, profile),
+      spaces: kind === 'private' ? [] : spacesInProfile(tabs.spaces, profile).map(({ name }) => name),
+    };
+  };
+  /** The profile a separate-profile Space adds bookmarks to; undefined for the shared library (and private Spaces). */
+  const bookmarkOwner = (e: IpcMainInvokeEvent) => {
+    const profile = spaceProfile(senderSpace(e));
+    return profile && profile !== SHARED_PROFILE ? profile : undefined;
+  };
 
   const handle = (role: InternalRole, channel: string, fn: (e: AuthorizedInvokeEvent, ...args: any[]) => unknown) => {
     ipcMain.handle(channel, (e, ...args) => {
@@ -203,7 +233,13 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       return sendSuggestions(send.query, d.sync.sendTargets(), deviceContext(), sendBlocker(tabs.activeTab));
     }
     const palette = paletteQuery(text);
-    const sources = () => ({ activeSpaceId: context.spaceId, tabs: openTabTargets(), bookmarks: store.state.bookmarks, history: d.history.list(), littleWindows: d.little?.count ?? 0 });
+    // History and bookmarks come from the profile of the Space the command bar was opened in.
+    const profile = readingProfile(tabs.spaces.find((sp) => sp.id === context.spaceId));
+    const sources = () => ({
+      activeSpaceId: context.spaceId, tabs: openTabTargets(),
+      bookmarks: bookmarksForProfile(store.state.bookmarks, profile), history: d.history.list(profile),
+      littleWindows: d.little?.count ?? 0,
+    });
     if (palette && palette.scope !== 'all') return paletteSuggestions(palette.scope, palette.query, sources());
     const parsed = parseCommand(text, parseContext(context));
     const fellThrough = parsed.length === 1 && (parsed[0].kind === 'url' || parsed[0].kind === 'search');
@@ -400,7 +436,13 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   handle('shell', 'space:rename', (_e, id: string, name: string) => tabs.renameSpace(String(id), String(name)));
   handle('shell', 'space:activate', (_e, id: string) => tabs.activateSpace(String(id)));
   handle('shell', 'space:menu', (_e, id: string) => {
+    const space = tabs.spaces.find((sp) => sp.id === String(id));
+    if (!space) return;
+    const kind = profileKind(space);
     const menu = Menu.buildFromTemplate([
+      { label: kind === 'private' ? 'Profile: Private (in memory)' : kind === 'separate' ? 'Profile: Separate' : 'Profile: Shared', enabled: false },
+      ...(kind === 'private' ? [] : [{ label: 'Space settings…', click: () => tabs.openTab(`quiver://settings?space=${encodeURIComponent(space.id)}#section-spaces`, { spaceId: space.id }) }]),
+      { type: 'separator' },
       { label: 'Rename Space', click: () => shell.webContents.send('space:rename-start', id) },
       { label: 'New private Space', accelerator: 'Ctrl+Shift+N', click: () => tabs.createPrivateSpace() },
       { type: 'separator' },
@@ -558,7 +600,30 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
   });
   // downloads page
   const DOWNLOAD_ACTIONS = new Set<DownloadAction>(['pause', 'resume', 'cancel', 'retry', 'open', 'show', 'remove']);
-  handle('downloads', 'downloads:list', () => d.downloads.list());
+  // The Downloads page lists its own profile's downloads unless it asks for every profile.
+  handle('downloads', 'downloads:list', (e, scope: unknown) => {
+    if (scope === 'all') return d.downloads.list();
+    return d.downloads.list(tabs.webPartition(senderSpace(e)?.id ?? tabs.activeSpaceId));
+  });
+  handle('downloads', 'profile:context', (e) => profileContext(e));
+  handle('settings', 'settings:profile', (e) => profileContext(e));
+
+  // Settings > Spaces
+  const spaceView = (space: Space): SpaceSettingsView => {
+    const profile = spaceProfile(space);
+    return {
+      id: space.id, name: space.name, color: space.color, icon: space.icon ?? '', kind: profileKind(space),
+      sharesWith: profile && profile !== SHARED_PROFILE ? spacesInProfile(tabs.spaces, profile).filter((sp) => sp !== space).map(({ name }) => name) : [],
+      behavior: { ...space.behavior },
+    };
+  };
+  handle('settings', 'spaces:list', () => tabs.spaces.filter((sp) => !sp.private).map(spaceView));
+  handle('settings', 'spaces:update', (_e, id: unknown, patch: unknown) => {
+    if (typeof id !== 'string' || !patch || typeof patch !== 'object' || Array.isArray(patch)) return null;
+    const { icon, color, behavior } = patch as Record<string, unknown>;
+    const space = tabs.updateSpace(id, { icon, color, behavior });
+    return space ? spaceView(space) : null;
+  });
   handle('downloads', 'downloads:act', (_e, id: unknown, action: unknown, confirmedRisky: unknown) => {
     if (typeof id !== 'string' || !DOWNLOAD_ACTIONS.has(action as DownloadAction)) return 'Unknown action.';
     return d.downloads.act(id, action as DownloadAction, confirmedRisky === true);
@@ -728,16 +793,37 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (typeof id === 'string') d.sync.takeHandoff(id);
   });
 
-  handle('settings', 'sitepermissions:forget', (_e, origin: string) => {
-    if (typeof origin === 'string' && origin in store.state.settings.sitePermissions) tabs.media?.forget(origin);
-    return store.state.settings.sitePermissions;
+  // Camera / microphone decisions belong to the profile of the Space Settings is open in.
+  const decisionsOf = (e: IpcMainInvokeEvent) => {
+    const space = senderSpace(e);
+    const partition = tabs.webPartition(space?.id ?? tabs.activeSpaceId);
+    const profile = spaceProfile(space);
+    const saved = profile === SHARED_PROFILE ? store.state.settings.sitePermissions
+      : profile ? store.state.profilePermissions?.[profile] ?? {} : tabs.media?.savedFor(partition) ?? {};
+    return { partition, saved };
+  };
+  handle('settings', 'sitepermissions:list', (e) => ({ ...decisionsOf(e).saved }));
+  handle('settings', 'sitepermissions:forget', (e, origin: string) => {
+    const { partition, saved } = decisionsOf(e);
+    if (typeof origin === 'string' && Object.hasOwn(saved, origin)) tabs.media?.forget(origin, partition);
+    return { ...decisionsOf(e).saved };
   });
 
-  handle('settings', 'history:clear', () => {
-    d.history.clear();
-    return d.history.list().length;
+  // History is kept per profile; private Spaces keep none.
+  const historyProfile = (e: IpcMainInvokeEvent) => spaceProfile(senderSpace(e));
+  handle('settings', 'history:clear', (e) => {
+    const profile = historyProfile(e);
+    if (profile) d.history.clear(profile);
+    return profile ? d.history.list(profile).length : 0;
   });
-  handle('settings', 'history:count', () => d.history.list().length);
+  handle('settings', 'history:clear-all', () => {
+    d.history.clearAll(separateProfiles(tabs.spaces));
+    return 0;
+  });
+  handle('settings', 'history:count', (e) => {
+    const profile = historyProfile(e);
+    return profile ? d.history.list(profile).length : 0;
+  });
 
   const arcImports = new ArcImports<WebFrameMain>(store.state, () => store.flush(), () => store.save(), {
     stage: (entries) => tabs.stageArcSpaces(entries),
@@ -808,8 +894,10 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     return imports.begin(frame);
   };
   const browserData = process.platform === 'win32' ? process.env.LOCALAPPDATA ?? '' : '';
-  handle('settings', 'bookmarks:list', (): BookmarkLibraryView => {
-    return { bookmarks: store.state.bookmarks, undo: imports.getUndo() };
+  handle('settings', 'bookmarks:list', (e): BookmarkLibraryView => {
+    const bookmarks = bookmarksForProfile(store.state.bookmarks, readingProfile(senderSpace(e)));
+    const elsewhere = bookmarksElsewhere(store.state.bookmarks, tabs.spaces);
+    return { bookmarks, undo: imports.getUndo(), ...(elsewhere ? { elsewhere } : {}) };
   });
   handle('settings', 'bookmarks:profiles', () => discoverBookmarkProfiles(browserData));
   handle('settings', 'bookmarks:review-profile', async (event, browser: unknown, profile: unknown) => {
@@ -819,7 +907,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
       const source = bookmarkProfileLabel(browser, profile);
       if (!source) throw new BookmarkProfileReadError('The selected browser profile is no longer available.');
       const scan = await readChromiumBookmarkCandidates(browserData, browser, profile);
-      return imports.finish(frame, generation, source, scan.candidates, scan.scanLimited);
+      return imports.finish(frame, generation, source, scan.candidates, scan.scanLimited, bookmarkOwner(event));
     } catch (error) {
       if (imports.isCurrent(frame, generation)) clearBookmarkReview(frame);
       return { error: error instanceof BookmarkProfileReadError ? error.message : 'Quiver could not read this browser profile.' };
@@ -829,7 +917,7 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     const frame = event.senderFrame;
     const generation = beginBookmarkReview(event, frame);
     const file = typeof name === 'string' ? name.slice(0, 260).split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 120) : '';
-    return imports.finish(frame, generation, file || 'HTML bookmark export', input, scanLimited === true);
+    return imports.finish(frame, generation, file || 'HTML bookmark export', input, scanLimited === true, bookmarkOwner(event));
   });
   handle('settings', 'bookmarks:cancel-review', (event) => clearBookmarkReview(event.senderFrame));
   handle('settings', 'bookmarks:confirm', (event, id: unknown) => {
@@ -843,9 +931,10 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if ('removed' in result && trackedBookmarkReview) clearBookmarkReview(trackedBookmarkReview.frame);
     return result;
   });
-  handle('settings', 'bookmarks:open', (_event, url: unknown) => {
-    const bookmark = store.state.bookmarks.find((item) => item.url === url);
-    if (bookmark) tabs.openTab(bookmark.url);
+  handle('settings', 'bookmarks:open', (event, url: unknown) => {
+    const space = senderSpace(event);
+    const bookmark = bookmarksForProfile(store.state.bookmarks, readingProfile(space)).find((item) => item.url === url);
+    if (bookmark) tabs.openTab(bookmark.url, space ? { spaceId: space.id } : {});
   });
 
   // boosts

@@ -8,7 +8,8 @@ import { normalizeBookmarks } from './bookmarks';
 import { Boosts, isValidBoostName } from './boosts';
 import { configureSitePermissions } from './browser-policy';
 import { DevServerWatcher } from './devservers';
-import { History } from './history';
+import { ProfileHistories } from './history';
+import { localOnlyProfiles, profileOfPartition, SHARED_PROFILE, spaceProfile, syncableBookmarks, withLocalOnlyBookmarks } from './profiles';
 import { Downloads } from './downloads';
 import { cleanUserAgent } from './browsing';
 import { registerIpc } from './ipc';
@@ -157,7 +158,9 @@ async function main(): Promise<void> {
   const privacy = new PrivacyController(() => store.state.settings.privacy, (options) => app.configureHostResolver(options), {
     appliesTo: (ses) => ses !== session.fromPartition(INTERNAL_PARTITION),
     changed: () => onBlockedChanged(),
+    spellcheckFor: (ses) => spellcheckFor(ses),
   });
+  let spellcheckFor: (ses: Electron.Session) => boolean | undefined = () => undefined;
   app.on('session-created', (ses) => privacy.configureSession(ses));
   app.on('web-contents-created', (_event, contents) => privacy.configureContents(contents));
   privacy.configureSession(session.defaultSession);
@@ -347,16 +350,35 @@ async function main(): Promise<void> {
     portableDownloadPath,
   );
   tabs.attachShortcuts(shell.webContents);
+  spellcheckFor = (ses) => tabs.spellcheckFor(ses);
+  tabs.onSessionPrepared = (ses) => privacy.refreshSpellcheck(ses);
+  tabs.onProfileSettingsChanged = () => privacy.apply();
+  // Decisions are kept per profile: the shared profile in settings.sitePermissions (where they always were), each
+  // separate profile in profilePermissions, and private Spaces in memory only.
+  const privateDecisions = new Map<string, Record<string, 'allow' | 'block'>>();
+  const decisionsFor = (scope: string): Record<string, 'allow' | 'block'> => {
+    const profile = scope ? profileOfPartition(scope) : SHARED_PROFILE;
+    if (profile === SHARED_PROFILE) return store.state.settings.sitePermissions;
+    if (profile) return (store.state.profilePermissions ??= {})[profile] ??= {};
+    let decisions = privateDecisions.get(scope);
+    if (!decisions) privateDecisions.set(scope, decisions = {});
+    return decisions;
+  };
   tabs.media = new MediaPermissions(
-    () => store.state.settings.sitePermissions,
-    (origin, decision) => {
-      if (decision) store.state.settings.sitePermissions[origin] = decision;
-      else delete store.state.settings.sitePermissions[origin];
-      store.save();
+    decisionsFor,
+    (origin, decision, scope) => {
+      const decisions = decisionsFor(scope);
+      if (decision) decisions[origin] = decision;
+      else delete decisions[origin];
+      const profile = scope ? profileOfPartition(scope) : SHARED_PROFILE;
+      if (profile && profile !== SHARED_PROFILE && !Object.keys(decisions).length) delete store.state.profilePermissions?.[profile];
+      if (profile) store.save();
     },
     () => tabs.emit(),
     (url) => meetingProvider(url) !== undefined,
+    (contentsId) => tabs.partitionOfContents(contentsId),
   );
+  tabs.forgetPrivateDecisions = (partition) => privateDecisions.delete(partition);
   tabs.pickScreen = async () => {
     // A native menu keeps the choice in Quiver's own UI, out of reach of the requesting page.
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
@@ -414,12 +436,16 @@ async function main(): Promise<void> {
     }
   });
   research.prune(new Set(tabs.spaces.map(({ id }) => id)));
-  const history = new History(path.join(app.getPath('userData'), 'history.json'), () => store.state.settings.rememberHistory);
+  const history = new ProfileHistories(app.getPath('userData'), () => store.state.settings.rememberHistory);
   tabs.onVisit = (spaceId, url, title, kind) => {
     research.recordPage(spaceId, url, title);
-    if (kind === 'title') history.title(url, title);
-    else history.visit(url, title);
+    // Each profile keeps its own history; private Spaces never get here.
+    const profile = spaceProfile(tabs.spaces.find((sp) => sp.id === spaceId));
+    if (!profile) return;
+    if (kind === 'title') history.title(profile, url, title);
+    else history.visit(profile, url, title);
   };
+  tabs.onProfileRemoved = (profile) => history.remove(profile);
   tabs.researchStatus = (spaceId) => {
     const topic = research.active(spaceId);
     return topic && { id: topic.id, name: topic.name, count: topic.items.length };
@@ -431,9 +457,10 @@ async function main(): Promise<void> {
       set: (data) => actions?.applySettings((data && typeof data === 'object' ? data : {}) as Partial<Settings>),
     },
     bookmarks: {
-      get: () => store.state.bookmarks,
+      // Bookmarks of imported Arc profiles stay on this device, like those profiles' Spaces.
+      get: () => syncableBookmarks(store.state.bookmarks, localOnlyProfiles(tabs.spaces)),
       set: (data) => {
-        store.state.bookmarks = normalizeBookmarks(data);
+        store.state.bookmarks = normalizeBookmarks(withLocalOnlyBookmarks(normalizeBookmarks(data), store.state.bookmarks, localOnlyProfiles(tabs.spaces)));
         delete store.state.bookmarkUndo;
         store.save();
       },

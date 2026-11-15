@@ -14,6 +14,48 @@ export interface Space {
   private?: true;
   /** Pinned-tab folders, nested by parentId. */
   folders?: Folder[];
+  /** One emoji shown before the name in the sidebar. */
+  icon?: string;
+  /** How this Space behaves; anything left out follows Settings. Kept on this device only. */
+  behavior?: SpaceBehavior;
+}
+
+/** Per-Space overrides of app-wide settings. A missing field means "use the Settings default". */
+export interface SpaceBehavior {
+  /** Archive unused temporary tabs after this many hours (0 = never). */
+  archiveAfterHours?: number;
+  /** Where a new temporary tab goes in the sidebar list. Default: bottom. */
+  newTabPosition?: 'top' | 'bottom';
+  /** Which links that would open a new tab or window open in Peek instead. */
+  peekLinks?: 'pinned' | 'all' | 'off';
+  /** Spell check for this Space's own profile (separate profiles only: spell check is set per storage session). */
+  spellcheck?: boolean;
+}
+
+/** Which profile a Space's tabs use: Quiver's shared one, a separate one, or a private in-memory one. */
+export type ProfileKind = 'shared' | 'separate' | 'private';
+
+/** The profile a Quiver page (Settings, Downloads) is showing, for its own Space. */
+export interface ProfileContext {
+  spaceId: string;
+  spaceName: string;
+  kind: ProfileKind;
+  /** e.g. "Shared profile" or "Work profile". */
+  label: string;
+  /** The Spaces that use this profile. */
+  spaces: string[];
+}
+
+/** A Space as Settings → Spaces edits it. */
+export interface SpaceSettingsView {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  kind: ProfileKind;
+  /** Spaces sharing the profile with this one (Arc profiles), not counting itself. */
+  sharesWith: string[];
+  behavior: SpaceBehavior;
 }
 
 export interface Folder {
@@ -112,6 +154,8 @@ export interface PrivacySettings {
 export interface Bookmark {
   title: string;
   url: string;
+  /** The separate profile this bookmark belongs to (see profiles.ts); absent for the shared library. */
+  profile?: string;
 }
 
 export interface BookmarkProfile {
@@ -133,6 +177,8 @@ export interface BookmarkPreview {
 
 export interface BookmarkLibraryView {
   bookmarks: Bookmark[];
+  /** Bookmarks kept for profiles that are not on this device (not shown). */
+  elsewhere?: number;
   undo?: { id: string; count: number };
 }
 
