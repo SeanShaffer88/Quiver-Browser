@@ -2,7 +2,7 @@ import { clipboard, dialog, ipcMain, Menu, session, shell as electronShell, type
 import { commandChoice, commandContextMatches, type CommandContext } from '../shared/command-preview';
 import { detectEnv } from '../shared/env';
 import { parseCommand } from '../shared/parser';
-import type { BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, Settings, Suggestion } from '../shared/types';
+import type { BookmarkLibraryView, BrowserCommand, CommandCommitResult, CommandMode, EnvGroup, Settings, ShortcutRow, Suggestion } from '../shared/types';
 import { BookmarkImports } from './bookmark-import';
 import { ArcImports } from './arc-import';
 import { isValidBoostName, type Boosts } from './boosts';
@@ -24,6 +24,11 @@ import type { DownloadAction, Downloads } from './downloads';
 import { splitSearchQuery, splitSuggestions, tabCommandTarget, tabSearchQuery, tabSearchSuggestions, tabTargetMatches } from './tab-search';
 import { displayUrl, type TabManager } from './tabs';
 import { normalizeTheme } from '../shared/theme';
+import {
+  bindingProblem, currentShortcutOverrides, effectiveBindings, formatBinding, isRebindable, normalizeShortcutOverrides, parseBinding,
+  REBINDABLE, setShortcutOverrides,
+} from './shortcuts';
+import type { UpdateChecker } from './updates';
 
 export interface IpcDeps {
   tabs: TabManager;
@@ -41,6 +46,7 @@ export interface IpcDeps {
   /** Reapply privacy settings after they change. */
   onPrivacyChanged: () => void;
   onThemeChanged: () => void;
+  updates: UpdateChecker;
 }
 
 const MAX_COMMAND_LENGTH = 65536;
@@ -510,6 +516,14 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     if (patch.theme !== undefined) {
       s.theme = normalizeTheme(patch.theme);
       d.onThemeChanged();
+    if (patch.shortcuts !== undefined) {
+      s.shortcuts = normalizeShortcutOverrides(patch.shortcuts) as Record<string, string>;
+      setShortcutOverrides(s.shortcuts);
+    }
+    if (typeof patch.checkForUpdates === 'boolean' && patch.checkForUpdates !== s.checkForUpdates) {
+      s.checkForUpdates = patch.checkForUpdates;
+      // Turning the check on is the user's go-ahead to contact GitHub; check right away if a day has passed.
+      if (s.checkForUpdates) void d.updates.maybeCheck().then(() => tabs.emit());
     }
     if (patch.privacy !== undefined && typeof patch.privacy === 'object') {
       s.privacy = normalizePrivacy({ ...s.privacy, ...patch.privacy }, process.platform);
@@ -525,6 +539,56 @@ export function registerIpc(d: IpcDeps): { openCommandBar: (text?: string, mode?
     tabs.emit();
   };
   handle('settings', 'settings:set', (_e, patch: Partial<Settings>) => applySettings(patch));
+
+  // shortcuts
+  const shortcutRows = (): ShortcutRow[] => {
+    const overrides = currentShortcutOverrides();
+    return REBINDABLE.map((r) => {
+      const bindings = effectiveBindings(r.action, overrides);
+      return { action: r.action, label: r.label, bindings, keys: bindings.map(formatBinding), isDefault: overrides[r.action] === undefined, pageFirst: r.pageFirst };
+    });
+  };
+  handle('settings', 'shortcuts:list', () => shortcutRows());
+  handle('settings', 'shortcuts:set', (_e, action: unknown, raw: unknown) => {
+    if (typeof action !== 'string' || !isRebindable(action)) return { error: 'Unknown action', rows: shortcutRows() };
+    const binding = raw === '' ? '' : parseBinding(raw);
+    if (binding === null) return { error: 'Use Ctrl or Alt with a key, or a function key (F1–F24)', rows: shortcutRows() };
+    const overrides = { ...currentShortcutOverrides() };
+    if (binding) {
+      const problem = bindingProblem(action, binding, overrides);
+      if (problem) return { error: problem, rows: shortcutRows() };
+    }
+    overrides[action] = binding;
+    applySettings({ shortcuts: overrides as Record<string, string> });
+    return { rows: shortcutRows() };
+  });
+  handle('settings', 'shortcuts:reset', (_e, action: unknown) => {
+    const overrides = { ...currentShortcutOverrides() };
+    if (action === undefined || action === null) applySettings({ shortcuts: {} });
+    else if (typeof action === 'string' && isRebindable(action)) {
+      delete overrides[action];
+      applySettings({ shortcuts: overrides as Record<string, string> });
+    }
+    return shortcutRows();
+  });
+  handle('settings', 'shortcuts:recording', (e, on: unknown) => tabs.setRecordingKeys(e.sender, on === true));
+
+  // opt-in update notice
+  handle('settings', 'update:status', () => d.updates.status());
+  handle('settings', 'update:check', async () => {
+    const status = await d.updates.check();
+    tabs.emit();
+    return status;
+  });
+  handle('shell', 'update:open', () => {
+    // Only the validated release page from the last check can be opened.
+    const notice = d.updates.notice();
+    if (notice) tabs.openTab(notice.url);
+  });
+  handle('shell', 'update:dismiss', () => {
+    d.updates.dismiss();
+    tabs.emit();
+  });
 
   // sync
   handle('settings', 'sync:status', () => d.sync.status());
