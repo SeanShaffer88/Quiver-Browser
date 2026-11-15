@@ -20,7 +20,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{1
 
 function fingerprint(bookmarks: Bookmark[]): string {
   const hash = createHash('sha256');
-  for (const { title, url } of bookmarks) hash.update(JSON.stringify([title, url]));
+  for (const { title, url, profile } of bookmarks) hash.update(JSON.stringify(profile ? [title, url, profile] : [title, url]));
   return hash.digest('hex');
 }
 
@@ -59,19 +59,21 @@ export class BookmarkImports<Owner extends object> {
     return this.current?.owner === owner && this.current.generation === generation;
   }
 
-  finish(owner: Owner, generation: symbol, source: string, input: unknown, scanLimited: boolean): BookmarkPreview | ImportError {
+  /** `profile` is the separate profile the bookmarks are for; undefined adds them to the shared library. */
+  finish(owner: Owner, generation: symbol, source: string, input: unknown, scanLimited: boolean, profile?: string): BookmarkPreview | ImportError {
     const current = this.current;
     if (!current || current.owner !== owner || current.generation !== generation || current.plan) return changed();
     if (!Array.isArray(input)) return { error: 'Quiver could not read this bookmark export.' };
     const existing = this.state.bookmarks;
-    const seen = new Set(existing.map(({ url }) => url));
+    const seen = new Set(existing.filter((b) => b.profile === profile).map(({ url }) => url));
     const available = Math.max(0, BOOKMARK_LIMIT - existing.length);
     const additions: Bookmark[] = [];
     let duplicates = 0;
     let unsupported = 0;
     let overCapacity = 0;
     for (const entry of input.slice(0, BOOKMARK_LIMIT)) {
-      const bookmark = normalizeBookmark(entry);
+      const found = normalizeBookmark(entry);
+      const bookmark = found && (profile ? { title: found.title, url: found.url, profile } : { title: found.title, url: found.url });
       if (!bookmark) {
         unsupported++;
       } else if (seen.has(bookmark.url)) {

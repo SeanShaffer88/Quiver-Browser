@@ -1,7 +1,12 @@
-import type { DownloadInfo } from '../shared/types';
+import type { DownloadInfo, ProfileContext } from '../shared/types';
 
 const list = document.getElementById('list')!;
 const status = document.getElementById('status')!;
+const scope = document.getElementById('scope') as HTMLSelectElement;
+const scopeNote = document.getElementById('scope-note')!;
+let profile: ProfileContext | undefined;
+// Remember the choice per page load only: each Downloads tab starts on its own Space's profile.
+scope.addEventListener('change', () => void refresh());
 
 function size(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -56,7 +61,7 @@ function render(items: DownloadInfo[]): void {
   if (!items.length) {
     const empty = document.createElement('li');
     empty.className = 'note';
-    empty.textContent = 'No downloads yet.';
+    empty.textContent = scope.value === 'all' ? 'No downloads yet.' : 'No downloads in this profile yet.';
     list.replaceChildren(empty);
     return;
   }
@@ -99,7 +104,11 @@ function render(items: DownloadInfo[]): void {
 }
 
 async function refresh(): Promise<void> {
-  render((await quiver.invoke('downloads:list')) as DownloadInfo[]);
+  profile ??= (await quiver.invoke('profile:context')) as ProfileContext;
+  scopeNote.textContent = scope.value === 'all'
+    ? 'Files downloaded in any Space.'
+    : profile.kind === 'private' ? 'Files downloaded in this private Space.' : `Files downloaded in the ${profile.label} (${profile.spaces.join(', ')}).`;
+  render((await quiver.invoke('downloads:list', scope.value)) as DownloadInfo[]);
 }
 
 document.getElementById('clear')!.addEventListener('click', async () => {

@@ -107,12 +107,17 @@ export interface SyncedSpace {
   name: string;
   color: string;
   isolated: boolean;
+  /** One emoji, when the Space has one. */
+  icon?: string;
   folders: unknown;
   pinned: SyncedPin[];
 }
 
-/** Validate the synced Spaces section; folders are validated by the caller with normalizeFolders. */
-export function normalizeSyncedSpaces(raw: unknown, restorable: (url: string) => boolean): SyncedSpace[] {
+/**
+ * Validate the synced Spaces section; folders are validated by the caller with normalizeFolders. `icon` validates a
+ * Space icon. A Space's behavior settings are not synced: they are kept on each device.
+ */
+export function normalizeSyncedSpaces(raw: unknown, restorable: (url: string) => boolean, icon: (value: unknown) => string | undefined = () => undefined): SyncedSpace[] {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
   const out: SyncedSpace[] = [];
@@ -137,6 +142,7 @@ export function normalizeSyncedSpaces(raw: unknown, restorable: (url: string) =>
       name: typeof s.name === 'string' && s.name.trim() ? s.name.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 40) : 'Space',
       color: typeof s.color === 'string' && /^#[0-9a-f]{6}$/i.test(s.color) ? s.color : '#5b8cff',
       isolated: s.isolated === true,
+      ...(icon(s.icon) ? { icon: icon(s.icon) } : {}),
       folders: s.folders,
       pinned,
     });
@@ -149,15 +155,17 @@ function list(value: unknown): Record<string, unknown>[] {
 }
 
 /** Remote entries first, then local entries whose key the remote lacks. */
-function unionBy(local: unknown, remote: unknown, key: string): Record<string, unknown>[] {
+function unionBy(local: unknown, remote: unknown, key: string | ((e: Record<string, unknown>) => unknown)): Record<string, unknown>[] {
+  const of = typeof key === 'string' ? (e: Record<string, unknown>) => e[key] : key;
   const theirs = list(remote);
-  const seen = new Set(theirs.map((e) => e[key]));
-  return [...theirs, ...list(local).filter((e) => !seen.has(e[key]))];
+  const seen = new Set(theirs.map(of));
+  return [...theirs, ...list(local).filter((e) => !seen.has(of(e)))];
 }
 
 /** How a device that has never synced a section combines its own data with what other devices already share. */
 export const JOIN: Partial<Record<SyncSection, (local: unknown, remote: unknown) => unknown>> = {
-  bookmarks: (local, remote) => unionBy(local, remote, 'url'),
+  // A bookmark is one URL within one profile (see profiles.ts).
+  bookmarks: (local, remote) => unionBy(local, remote, (e) => `${typeof e.profile === 'string' ? e.profile : ''} ${String(e.url)}`),
   research: (local, remote) => unionBy(local, remote, 'id'),
   boosts: (local, remote) => ({
     ...(local && typeof local === 'object' ? local : {}),

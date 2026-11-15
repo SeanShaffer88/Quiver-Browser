@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   INTERNAL_PARTITION,
   MOBILE_UA,
+  SHARED_PARTITION,
   PHONE_LABEL_H,
   PHONE_MARGIN,
   PHONE_W,
@@ -11,7 +12,7 @@ import {
   TOOLBAR_H,
 } from '../shared/constants';
 import { badgeFor, isLocalHost, switchEnv } from '../shared/env';
-import type { DevServer, EnvBadge, Folder, LocalServerStatus, PeekView, PhoneStatus, RecoveryNotice, ShellState, Space, SplitView, TabInfo } from '../shared/types';
+import type { DevServer, EnvBadge, Folder, LocalServerStatus, PeekView, PhoneStatus, RecoveryNotice, ShellState, Space, SpaceBehavior, SplitView, TabInfo } from '../shared/types';
 import { boostKind, boostMatchesHost, transpileBoost, wrapScript, type Boosts } from './boosts';
 import {
   allowsInternalNavigation, allowsWebNavigation, configureSitePermissions, internalTabUrl, isInternalTabPage, type InternalTabPage,
@@ -47,6 +48,7 @@ import { canNest, deleteFolder, displayOrder, folderName, normalizeFolders, plac
 import type { Downloads } from './downloads';
 import { nextZoom } from './browsing';
 import { markdownLink, recentOrder } from './keyboard-workflows';
+import { archiveHoursFor, normalizeSpaceColor, normalizeSpaceIcon, patchSpaceBehavior, peekModeFor, profileKind, profileOfPartition, rehomeBookmarks, spaceProfile, spacesInProfile } from './profiles';
 import { clampSplitRatio, opensInPeek, peekRects, relativeTo, splitPairKey, splitPartner, splitRects } from './split';
 
 interface Peek {
@@ -170,6 +172,14 @@ export class TabManager {
   blockedCount?: (webContentsId: number) => number;
   /** A page asked to open an ftp:// address. */
   onFtpLink?: (url: string, partition: string) => void;
+  /** The last Space of a separate profile was deleted: its history goes too. */
+  onProfileRemoved?: (profile: string) => void;
+  /** A private Space closed: its in-memory camera/microphone decisions go too. */
+  forgetPrivateDecisions?: (partition: string) => void;
+  /** A web session was set up; Quiver now knows which profile it belongs to. */
+  onSessionPrepared?: (ses: Electron.Session) => void;
+  /** A Space's profile settings (spell check) changed. */
+  onProfileSettingsChanged?: () => void;
 
   /** The storage partition web tabs in a Space use (for downloads started from the command bar). */
   webPartition(spaceId: string): string {
@@ -194,6 +204,7 @@ export class TabManager {
   private phoneEmulationHeight = 0;
   private phoneEmulationBusy: WebContents | null = null;
   private readonly preparedPartitions = new Set<string>();
+  private readonly sessionPartitions = new Map<Electron.Session, string>();
   private emitTimer: NodeJS.Timeout | null = null;
   private overlayOpen = false;
   private sidebarPeek = false;
@@ -378,9 +389,24 @@ export class TabManager {
     if (this.preparedPartitions.has(partition)) return;
     this.preparedPartitions.add(partition);
     const ses = session.fromPartition(partition);
+    this.sessionPartitions.set(ses, partition);
     if (this.portableDownloadPath) ses.setDownloadPath(this.portableDownloadPath);
     if (partition !== INTERNAL_PARTITION) this.downloads?.attach(ses, partition);
     if (partition !== INTERNAL_PARTITION) configureSitePermissions(ses, true, this.mediaDelegate());
+    if (partition !== INTERNAL_PARTITION) this.onSessionPrepared?.(ses);
+  }
+
+  /** The storage partition a page uses, so camera/microphone decisions are kept per profile. */
+  partitionOfContents(contentsId: number): string {
+    const wc = webContents.fromId(contentsId);
+    return (wc && !wc.isDestroyed() && this.sessionPartitions.get(wc.session)) || SHARED_PARTITION;
+  }
+
+  /** A separate profile's own spell check choice for a session, if it made one. */
+  spellcheckFor(ses: Electron.Session): boolean | undefined {
+    const profile = profileOfPartition(this.sessionPartitions.get(ses));
+    if (!profile || profile === 'shared') return undefined;
+    return spacesInProfile(this.spaces, profile).find((sp) => sp.behavior?.spellcheck !== undefined)?.behavior?.spellcheck;
   }
 
   /**
@@ -496,7 +522,7 @@ export class TabManager {
       boostReadyNavigation: -1,
       localFailure: null,
     };
-    this.insertTab(tab, opts.index);
+    this.insertTab(tab, opts.index ?? this.newTabIndex(spaceId, tab.pinned));
     this.win.contentView.addChildView(view);
     this.bringOverlayToTop();
     view.setVisible(false);
@@ -511,6 +537,13 @@ export class TabManager {
     this.persist();
     this.emit();
     return tab;
+  }
+
+  /** Where a new temporary tab goes when nothing asked for a place: the top of the list if its Space says so. */
+  private newTabIndex(spaceId: string, pinned: boolean): number | undefined {
+    if (pinned || this.restoring || this.spaces.find((sp) => sp.id === spaceId)?.behavior?.newTabPosition !== 'top') return undefined;
+    const index = this.spaceTabs(spaceId).findIndex((t) => !t.pinned);
+    return index < 0 ? undefined : index;
   }
 
   private insertTab(tab: Tab, index?: number): void {
@@ -631,7 +664,8 @@ export class TabManager {
     wc.setWindowOpenHandler(({ url }) => {
       // Pinned tabs are long-lived apps (mail, chat, docs); links they spawn are usually a quick look, so they
       // open in a Peek over the page instead of piling up temporary tabs.
-      if (opensInPeek(tab, this.settings.peekPinnedLinks, url)) this.openPeek(tab, url);
+      const space = this.spaces.find((sp) => sp.id === tab.spaceId);
+      if (opensInPeek(tab, peekModeFor(space, this.settings.peekPinnedLinks), url)) this.openPeek(tab, url);
       else if (/^https?:/i.test(url)) this.openTab(url, { spaceId: tab.spaceId });
       return { action: 'deny' };
     });
@@ -744,16 +778,20 @@ export class TabManager {
 
   /** Archive temporary tabs nobody has looked at for the configured time (Arc's Today). */
   archiveStale(now = Date.now()): void {
-    const hours = this.settings.archiveAfterHours;
     const active = new Set(this.spaces.map((sp) => this.lastActive[sp.id]));
-    // Archiving would write a private tab's address to disk, so private Spaces are left out.
-    const candidates = [...this.tabs.values()].filter((t) => !this.isPrivate(t.spaceId)).map((t) => ({
-      id: t.id, pinned: t.pinned, active: t.id === this.activeTabId || active.has(t.id),
-      // A page granted media permission may still be capturing, even after the grant is forgotten.
-      audible: !t.view.webContents.isDestroyed() && (t.view.webContents.isCurrentlyAudible() || !!this.media?.hadPageGrant(t.view.webContents.id)),
-      lastActiveAt: t.lastActiveAt,
-    }));
-    const ids = tabsToArchive(candidates, now, hours);
+    // Each Space can archive on its own schedule (Settings > Spaces); the rest follow Settings > Tabs.
+    const ids: number[] = [];
+    for (const space of this.spaces) {
+      // Archiving would write a private tab's address to disk, so private Spaces are left out.
+      if (space.private) continue;
+      const candidates = this.spaceTabs(space.id).map((t) => ({
+        id: t.id, pinned: t.pinned, active: t.id === this.activeTabId || active.has(t.id),
+        // A page granted media permission may still be capturing, even after the grant is forgotten.
+        audible: !t.view.webContents.isDestroyed() && (t.view.webContents.isCurrentlyAudible() || !!this.media?.hadPageGrant(t.view.webContents.id)),
+        lastActiveAt: t.lastActiveAt,
+      }));
+      ids.push(...tabsToArchive(candidates, now, archiveHoursFor(space, this.settings.archiveAfterHours)));
+    }
     if (!ids.length) return;
     for (const id of ids) {
       const tab = this.tabs.get(id)!;
@@ -1177,7 +1215,7 @@ export class TabManager {
   /** Spaces with their folders and pinned tabs, as published to other devices. */
   syncedSpaces(): SyncedSpace[] {
     return publicSpaces(this.spaces).filter((sp) => !arcSpaceId(sp.id)).map((sp) => ({
-      id: sp.id, name: sp.name, color: sp.color, isolated: sp.isolated, folders: this.folders(sp.id),
+      id: sp.id, name: sp.name, color: sp.color, isolated: sp.isolated, ...(sp.icon ? { icon: sp.icon } : {}), folders: this.folders(sp.id),
       pinned: this.spaceTabs(sp.id).filter((t) => t.pinned).flatMap((t) => {
         const url = t.pinnedUrl ?? this.tabUrl(t);
         if (!restorableUrl(url)) return [];
@@ -1192,17 +1230,19 @@ export class TabManager {
    * tabs lazily and unpins (never closes) pinned tabs the other device no longer has. Spaces are never deleted.
    */
   applySyncedSpaces(raw: unknown): void {
-    for (const remote of normalizeSyncedSpaces(raw, restorableUrl)) {
+    for (const remote of normalizeSyncedSpaces(raw, restorableUrl, normalizeSpaceIcon)) {
       if (arcSpaceId(remote.id)) continue;
       let space = this.spaces.find((sp) => sp.id === remote.id);
       if (space?.private) continue;
       if (!space) {
-        space = { id: remote.id, name: remote.name, color: remote.color, isolated: remote.isolated };
+        space = { id: remote.id, name: remote.name, color: remote.color, isolated: remote.isolated, ...(remote.icon ? { icon: remote.icon } : {}) };
         this.store.state.spaces.push(space);
       } else {
         // Isolation is not changed on an existing Space: it decides which cookie jar its tabs already use.
         space.name = remote.name;
         space.color = remote.color;
+        if (remote.icon) space.icon = remote.icon;
+        else delete space.icon;
       }
       space.folders = normalizeFolders(remote.folders);
       const known = new Set(space.folders.map((f) => f.id));
@@ -1285,6 +1325,7 @@ export class TabManager {
     delete this.store.state.tabsBySpace[id];
     delete this.store.state.activeIndexBySpace[id];
     if (this.activeSpaceId === id) this.activateSpace(this.spaces[0].id);
+    this.releaseProfiles([space]);
     this.persist();
     this.emit();
     if (space.sessionGroupId) {
@@ -1297,6 +1338,64 @@ export class TabManager {
         /* best effort */
       }
     }
+  }
+
+  /**
+   * Spaces are gone. A profile no Space uses any more loses its history and camera/microphone decisions, like its
+   * cookies; its bookmarks move to the shared library so none are lost.
+   */
+  private releaseProfiles(removed: readonly Space[]): void {
+    for (const space of removed) {
+      if (space.private) {
+        this.forgetPrivateDecisions?.(privatePartition(space.id));
+        continue;
+      }
+      const profile = spaceProfile(space);
+      if (!profile || profile === 'shared' || spacesInProfile(this.spaces, profile).length) continue;
+      const before = this.store.state.bookmarks;
+      this.store.state.bookmarks = rehomeBookmarks(before, profile);
+      if (this.store.state.bookmarks.length !== before.length || before.some((b) => b.profile === profile)) delete this.store.state.bookmarkUndo;
+      delete this.store.state.profilePermissions?.[profile];
+      this.onProfileRemoved?.(profile);
+    }
+  }
+
+  /** Settings > Spaces: change a Space's icon, color or behavior. Every field is validated. */
+  updateSpace(id: string, patch: { icon?: unknown; color?: unknown; behavior?: unknown }): Space | undefined {
+    const space = this.spaces.find((sp) => sp.id === id);
+    if (!space || space.private || !patch || typeof patch !== 'object') return undefined;
+    if (patch.icon === '' || patch.icon === null) delete space.icon;
+    else if (patch.icon !== undefined) {
+      const icon = normalizeSpaceIcon(patch.icon);
+      if (icon) space.icon = icon;
+    }
+    if (patch.color !== undefined) space.color = normalizeSpaceColor(patch.color, space.color);
+    if (patch.behavior !== undefined) {
+      const kind = profileKind(space);
+      const before = this.spellcheckForSpace(space);
+      const behavior = patchSpaceBehavior(space.behavior, patch.behavior, kind);
+      if (behavior) space.behavior = behavior;
+      else delete space.behavior;
+      // Spell check belongs to the profile, so every Space of an imported Arc profile gets the same choice.
+      const profile = spaceProfile(space);
+      if (kind === 'separate' && profile) {
+        for (const member of spacesInProfile(this.spaces, profile)) {
+          if (member === space) continue;
+          const own: SpaceBehavior | undefined = patchSpaceBehavior(member.behavior, { spellcheck: behavior?.spellcheck ?? null }, kind);
+          if (own) member.behavior = own;
+          else delete member.behavior;
+        }
+      }
+      if (before !== this.spellcheckForSpace(space)) this.onProfileSettingsChanged?.();
+      if (peekModeFor(space, this.settings.peekPinnedLinks) === 'off' && this.peek?.spaceId === space.id) this.closePeek();
+    }
+    this.store.save();
+    this.emit();
+    return space;
+  }
+
+  private spellcheckForSpace(space: Space): boolean | undefined {
+    return space.behavior?.spellcheck;
   }
 
   /** Called after candidate state is installed in memory, before it is saved or broadcast. */
@@ -1322,6 +1421,7 @@ export class TabManager {
     const ids = new Set(spaces.map(({ id }) => id));
     for (const tab of this.tabs.values()) if (ids.has(tab.spaceId)) this.discardTab(tab);
     for (const id of ids) delete this.lastActive[id];
+    this.releaseProfiles(spaces.filter((space) => !this.spaces.includes(space)));
     this.emit();
     queueMicrotask(() => void this.clearUnusedArcPartitions(spaces));
   }

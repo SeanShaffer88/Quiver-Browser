@@ -60,8 +60,13 @@ export function splitPartner(order: readonly { id: number }[], activeId: number)
 }
 
 /** Whether a new-window request from a tab opens in Peek instead of a new tab. */
-export function opensInPeek(source: { pinned: boolean; internal: boolean }, enabled: boolean, url: string): boolean {
-  return enabled && source.pinned && !source.internal && /^https?:\/\//i.test(url) && URL.canParse(url);
+/**
+ * Whether a link a tab would open in a new tab or window shows in Peek. `mode` is the Space's choice ('pinned':
+ * links from pinned tabs, 'all': links from every tab, 'off': never); true / false mean 'pinned' / 'off'.
+ */
+export function opensInPeek(source: { pinned: boolean; internal: boolean }, mode: boolean | 'pinned' | 'all' | 'off', url: string): boolean {
+  const on = mode === true || mode === 'pinned' ? source.pinned : mode === 'all';
+  return on && !source.internal && /^https?:\/\//i.test(url) && URL.canParse(url);
 }
 
 export interface PeekRects {

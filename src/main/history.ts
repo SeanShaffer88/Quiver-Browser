@@ -117,6 +117,18 @@ export class History {
     this.flush();
   }
 
+  /** Stop without writing (the file is about to be deleted). */
+  discard(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.entries = [];
+  }
+
+  /** A change is waiting to be written. */
+  get pending(): boolean {
+    return this.timer !== null;
+  }
+
   private schedule(): void {
     if (this.timer) return;
     this.timer = setTimeout(() => this.flush(), SAVE_DELAY_MS);
@@ -132,5 +144,71 @@ export class History {
     } catch (error) {
       console.error('[quiver] could not save history:', error instanceof Error ? error.message : String(error));
     }
+  }
+}
+
+/**
+ * One history per profile (see profiles.ts). The shared profile keeps the original history.json, so history from
+ * before profiles existed stays where it was; each separate profile has its own file under history-profiles/.
+ */
+export class ProfileHistories {
+  private readonly open = new Map<string, History>();
+
+  constructor(private readonly dir: string, private readonly enabled: () => boolean, private readonly now = () => Date.now()) {}
+
+  fileFor(profile: string): string | null {
+    if (profile === 'shared') return path.join(this.dir, 'history.json');
+    return /^[\w-]{1,80}$/.test(profile) ? path.join(this.dir, 'history-profiles', `${profile}.json`) : null;
+  }
+
+  get(profile: string): History | null {
+    let history = this.open.get(profile);
+    if (history) return history;
+    const file = this.fileFor(profile);
+    if (!file) return null;
+    history = new History(file, this.enabled, this.now);
+    this.open.set(profile, history);
+    return history;
+  }
+
+  list(profile: string): readonly HistoryEntry[] {
+    return this.get(profile)?.list() ?? [];
+  }
+
+  visit(profile: string, url: string, title: string): void {
+    this.get(profile)?.visit(url, title);
+  }
+
+  title(profile: string, url: string, title: string): void {
+    this.get(profile)?.title(url, title);
+  }
+
+  clear(profile: string): void {
+    this.get(profile)?.clear();
+  }
+
+  /** Clear the shared history and every given separate profile's. */
+  clearAll(profiles: Iterable<string>): void {
+    for (const profile of new Set(['shared', ...profiles])) this.clear(profile);
+  }
+
+  /** A profile is gone (its last Space was deleted): its history goes with its cookies. */
+  remove(profile: string): void {
+    if (profile === 'shared') return;
+    const file = this.fileFor(profile);
+    this.open.get(profile)?.discard();
+    this.open.delete(profile);
+    if (file) {
+      try {
+        fs.rmSync(file, { force: true });
+      } catch (error) {
+        console.error('[quiver] could not delete profile history:', error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
+
+  flush(): void {
+    // Only profiles with unsaved visits are written, so looking at a profile never creates its file.
+    for (const history of this.open.values()) if (history.pending) history.flush();
   }
 }

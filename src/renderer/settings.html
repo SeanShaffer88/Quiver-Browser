@@ -30,8 +30,71 @@
     </div>
     <p class="note">Applies to Quiver, its menus and dialogs, and websites that offer a light and dark look.</p>
   </section>
+  <section class="settings-section" id="section-spaces" aria-labelledby="spaces-heading">
+    <h2 id="spaces-heading" tabindex="-1">Spaces and profiles</h2>
+    <p class="note">This page shows the <strong id="profile-name">…</strong>. <span id="profile-detail"></span></p>
+    <p class="note">A Space created with <b>Separate profile</b> has its own cookies and sign-ins, history, bookmarks, downloads list and camera and microphone choices. Shared Spaces all use the shared profile. Whether a Space is separate is chosen when you create it. Quiver has no password manager and does not support browser extensions, so neither is part of a profile.</p>
+    <div class="row">
+      <label for="space-pick">Space</label>
+      <select id="space-pick" aria-describedby="space-pick-profile"></select>
+      <span class="note" id="space-pick-profile"></span>
+    </div>
+    <fieldset class="space-settings" id="space-settings" aria-labelledby="space-settings-legend">
+      <legend id="space-settings-legend">Space settings</legend>
+      <div class="row">
+        <label for="space-icon">Icon</label>
+        <input id="space-icon" type="text" maxlength="32" spellcheck="false" autocomplete="off" placeholder="e.g. 🚀" aria-describedby="space-icon-note">
+        <button type="button" class="btn" id="space-icon-clear">Remove icon</button>
+        <span class="note" id="space-icon-note">One emoji, shown before the name in the sidebar. Press Win+. for the emoji picker.</span>
+      </div>
+      <div class="row">
+        <label for="space-color">Color</label>
+        <input id="space-color" type="color">
+      </div>
+      <div class="row">
+        <label for="space-archive">Archive unused tabs</label>
+        <select id="space-archive">
+          <option value="">Use the Tabs setting</option>
+          <option value="0">Never</option>
+          <option value="12">After 12 hours</option>
+          <option value="24">After 1 day</option>
+          <option value="168">After 7 days</option>
+          <option value="720">After 30 days</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="space-newtab">New tabs open at</label>
+        <select id="space-newtab">
+          <option value="">Bottom of the list (default)</option>
+          <option value="top">Top of the list</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="space-peek">Open links in Peek</label>
+        <select id="space-peek" aria-describedby="space-peek-note">
+          <option value="">Use the Tabs setting</option>
+          <option value="pinned">Links from pinned tabs</option>
+          <option value="all">Links from every tab</option>
+          <option value="off">Never: open a new tab</option>
+        </select>
+        <span class="note" id="space-peek-note">For links a page would open in a new tab or window.</span>
+      </div>
+      <div class="row">
+        <label for="space-spell">Spell check</label>
+        <select id="space-spell" aria-describedby="space-spell-note">
+          <option value="">Use the Privacy setting</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
+        <span class="note" id="space-spell-note"></span>
+      </div>
+      <p class="status" id="space-status" role="status"></p>
+    </fieldset>
+    <p class="note">The icon and color sync with the Space when Spaces sync is on. The other Space settings stay on this device.</p>
+  </section>
   <section class="settings-section" id="section-bookmarks" aria-labelledby="bookmarks-heading">
     <h2 id="bookmarks-heading" tabindex="-1">Bookmarks</h2>
+    <p class="note" id="bookmarks-profile"></p>
     <div class="row">
       <label for="bookmark-profile">Browser profile</label>
       <select id="bookmark-profile" aria-describedby="bookmark-profiles-note"><option value="">Finding browser profiles…</option></select>
@@ -109,6 +172,7 @@
   <section class="settings-section" id="section-camera" aria-labelledby="camera-heading">
     <h2 id="camera-heading" tabindex="-1">Camera, microphone and screen sharing</h2>
     <p class="note">Sites ask before using your camera, microphone or screen; Quiver shows the question in the toolbar. Known meeting sites (Google Meet, Zoom, Microsoft Teams, Webex, Jitsi, Whereby) can ask; other sites are denied until they ask and you agree. Choices you saved:</p>
+    <p class="note" id="camera-profile"></p>
     <ul class="site-permissions" id="site-permissions" aria-label="Saved site permissions"></ul>
   </section>
   <section class="settings-section" id="section-sync" aria-labelledby="sync-heading">
@@ -135,11 +199,12 @@
   <section class="settings-section" id="section-history" aria-labelledby="history-heading">
     <h2 id="history-heading" tabindex="-1">History</h2>
     <div class="row"><label for="history-on">Remember history</label><input id="history-on" type="checkbox"><span class="note">Keeps up to 5,000 visited web pages on this device so <kbd>Ctrl+K</kbd> can find them (<code>h</code> <i>words</i> searches only history).</span></div>
-    <div class="row"><label>Saved pages</label><span id="history-count" class="note">…</span><button class="btn danger" id="history-clear">Clear history</button></div>
+    <p class="note" id="history-profile"></p>
+    <div class="row"><label>Saved pages</label><span id="history-count" class="note">…</span><button class="btn danger" id="history-clear">Clear history</button><button class="btn danger" id="history-clear-all" hidden>Clear history in every profile</button></div>
   </section>
   <section class="settings-section" id="section-privacy" aria-labelledby="privacy-heading">
     <h2 id="privacy-heading" tabindex="-1">Privacy</h2>
-    <p class="note">Quiver sends no telemetry, has no account and checks for updates only if you turn that on under Updates. Crash reports stay on this device. These settings apply to all Spaces.</p>
+    <p class="note">Quiver sends no telemetry, has no account and checks for updates only if you turn that on under Updates. Crash reports stay on this device. These settings apply to all Spaces; a Space with a separate profile can choose its own spell check under Spaces and profiles.</p>
     <div class="row"><label for="privacy-block">Block ads and trackers</label><input id="privacy-block" type="checkbox"><span class="note">Cancel requests from other sites to a built-in list of well-known ad and tracker hosts. The list ships with Quiver and is never downloaded. The shield in the toolbar shows how many were blocked on the page; click it to allow ads on that site.</span></div>
     <p class="note" id="privacy-allow-heading">Sites where ads are allowed:</p>
     <ul class="site-permissions" id="privacy-allow-list" aria-labelledby="privacy-allow-heading"></ul>
