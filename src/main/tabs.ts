@@ -43,6 +43,7 @@ import { addArchived, tabsToArchive, type ArchivedTab } from './archive';
 import { isPrivateSpace, newPrivateSpace, privatePartition, publicSpaces } from './private-spaces';
 import { siteAllowed, toggleSite } from './content-blocking';
 import { normalizeSyncedSpaces, type SyncedSpace } from './sync';
+import type { ContinuePlan, LocalSpace, LocalTab } from './continuity';
 import { canNest, deleteFolder, displayOrder, folderName, normalizeFolders, placeRelative, sidebarRows } from './tab-tree';
 import type { Downloads } from './downloads';
 import { nextZoom } from './browsing';
@@ -179,6 +180,10 @@ export class TabManager {
   researchStatus?: (spaceId: string) => ShellState['research'];
   /** The opt-in "new version available" notice, if any. */
   updateNotice?: () => ShellState['update'];
+  /** Tabs other devices sent here, waiting for Open or Dismiss. */
+  handoffNotices?: () => ShellState['handoffs'];
+  /** Called after every state change, e.g. to publish open tabs to sync. */
+  onChanged?: () => void;
   private readonly endpointStatus = new EndpointStatus();
 
   private phone: WebContentsView | null = null;
@@ -306,6 +311,7 @@ export class TabManager {
       settings: this.settings,
       keys: Object.fromEntries(REBINDABLE.map(({ action }) => [action, shortcutLabel(action)])),
       update: this.updateNotice?.(),
+      handoffs: this.handoffNotices?.(),
     };
   }
 
@@ -360,6 +366,7 @@ export class TabManager {
     this.emitTimer = setTimeout(() => {
       this.emitTimer = null;
       this.onState(this.snapshot());
+      this.onChanged?.();
     }, 16);
   }
 
@@ -1174,6 +1181,58 @@ export class TabManager {
   }
 
   // ───────── sync ─────────
+  /** Every open tab with its Space, for publishing; continuity.ts filters out what may not leave this device. */
+  openTabsForSync(): { spaces: LocalSpace[]; tabs: LocalTab[]; activeSpaceId: string } {
+    return {
+      spaces: this.spaces.map(({ id, name, color, private: priv }) => ({ id, name, color, ...(priv ? { private: true } : {}) })),
+      tabs: [...this.tabs.values()].map((t) => {
+        const url = this.tabUrl(t);
+        return { spaceId: t.spaceId, url, title: t.customTitle || t.title, pinned: t.pinned, lastActiveAt: t.lastActiveAt, internal: t.internal };
+      }),
+      activeSpaceId: this.activeSpaceId,
+    };
+  }
+
+  /** Addresses open in a Space, for deduplicating "Continue here". */
+  openUrls(spaceId: string): string[] {
+    return this.spaceTabs(spaceId).map((t) => this.tabUrl(t));
+  }
+
+  /**
+   * Open another device's Space here: into the planned Space (or a new one with the shared sign-in), lazily so
+   * nothing loads until selected, then select the tab last used on that device. Returns how many tabs opened.
+   */
+  continueSession(plan: ContinuePlan): number {
+    let space = plan.spaceId === null ? undefined : this.spaces.find((sp) => sp.id === plan.spaceId && !sp.private);
+    if (plan.spaceId !== null && !space) return 0;
+    if (!space) {
+      space = {
+        id: `space-${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`,
+        name: plan.name.trim().slice(0, 40) || 'Space',
+        color: /^#[0-9a-f]{6}$/i.test(plan.color) ? plan.color : SPACE_COLORS[this.spaces.length % SPACE_COLORS.length],
+        isolated: false,
+      };
+      this.store.state.spaces.push(space);
+    }
+    const spaceId = space.id;
+    let focus: Tab | undefined;
+    for (const { url, title } of plan.urls) {
+      const tab = this.openTab(url, { spaceId, activate: false, lazy: true });
+      const name = normalizeTabTitle(title, url);
+      if (name) {
+        tab.title = name;
+        tab.titleIsExplicit = true;
+      }
+      if (url === plan.focusUrl) focus = tab;
+    }
+    focus ??= this.spaceTabs(spaceId).find((t) => this.tabUrl(t) === plan.focusUrl);
+    if (focus) this.activateTab(focus.id);
+    else this.activateSpace(spaceId);
+    this.persist();
+    this.emit();
+    return plan.urls.length;
+  }
+
   /** Spaces with their folders and pinned tabs, as published to other devices. */
   syncedSpaces(): SyncedSpace[] {
     return publicSpaces(this.spaces).filter((sp) => !arcSpaceId(sp.id)).map((sp) => ({

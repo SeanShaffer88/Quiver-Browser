@@ -14,6 +14,7 @@ const INVOKE = new Set([
   'sidebar:toggle', 'sidebar:peek', 'preview:toggle', 'env:switch',
   'cmd:open', 'cmd:close', 'cmd:suggest', 'cmd:commit', 'cmd:run',
   'settings:get', 'settings:set', 'sync:status', 'sync:choose', 'sync:disconnect', 'sync:options', 'sync:now',
+  'devices:list', 'devices:open-tab', 'devices:continue', 'handoff:open', 'handoff:dismiss',
   'history:clear', 'history:count',
   'shortcuts:list', 'shortcuts:set', 'shortcuts:reset', 'shortcuts:recording',
   'update:status', 'update:check', 'update:open', 'update:dismiss',

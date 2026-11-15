@@ -71,6 +71,17 @@ kbd, code { font: 12px var(--mono); background: var(--panel-2); border: 1px soli
 .sync-parts { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; margin: 8px 0; display: flex; flex-direction: column; gap: 6px; }
 .sync-parts legend { color: var(--muted); padding: 0 4px; }
 .sync-parts label { display: flex; gap: 8px; align-items: baseline; }
+.sync-parts .note { margin: -2px 0 0 24px; }
+.sync-devices-wrap h3 { font-size: 13px; margin: 14px 0 4px; }
+.sync-device { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; margin: 8px 0; }
+.sync-device h4 { margin: 0; font-size: 13px; }
+.sync-device > .note { margin: 2px 0 6px; }
+.sync-device-space h5 { margin: 0; font-size: 12px; font-weight: 600; flex: 1; }
+.sync-device-tabs { list-style: none; margin: 2px 0 8px; padding: 0; max-height: 240px; overflow: auto; }
+.sync-device-tabs li { display: flex; gap: 8px; align-items: baseline; min-width: 0; padding: 1px 0; }
+.link-btn { background: none; border: 0; padding: 0; color: var(--accent, inherit); font: inherit; text-align: start; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+.link-btn:hover { text-decoration: underline; }
+.link-btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 /* downloads */
 .downloads { list-style: none; padding: 0; margin: 12px 0; display: flex; flex-direction: column; gap: 8px; }
 .download { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }

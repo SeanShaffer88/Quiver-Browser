@@ -4,6 +4,10 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+- Tabs on other devices: with **Sync open tabs** (Settings → Sync), each device publishes its open tabs per Space (address, title, pinned, last used) in its own sync file, about 2 seconds after they change, and watches the sync folder (checking every 5 seconds where it can't be watched) so other devices' tabs appear within seconds. Private Spaces, Quiver's own pages, local files and addresses with credentials are never published. See them with `devices` in the command bar, in command-bar results, or in Settings → Sync → Other devices; open one tab or **Continue here** to open a device's Space into the matching Space (or a new one) without duplicating open tabs. Devices not seen for 30 days are hidden.
+- Send tab to device (tab menu, `send` in the command bar): the other device shows a dismissible "Tab from <device>" notice with **Open**.
+- **Sync open tabs defaults:** on when you set up sync from this version on; off on devices that were already syncing before it, so upgrading never starts sharing tabs without you turning it on.
+- Sync no longer rewrites an unchanged device file every minute; it is rewritten when something changes and otherwise every 5 minutes, so sync clients upload less.
 - Deny camera, microphone, and screen sharing in Phone Preview.
 - Clear a tab's media permission prompt and page indicator when its renderer stops.
 - Resume paused and interrupted HTTP downloads from saved progress after reopening Quiver.

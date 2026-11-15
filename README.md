@@ -167,7 +167,16 @@ In **Settings → Sync**, choose a folder you already sync with OneDrive, Dropbo
 - **What syncs:** settings (environments, search engine, local-server scanning), bookmarks, Spaces with their folders and pinned tabs, and research topics. Boosts can also sync, but that is off by default because they run code on websites.
 - **When:** at launch, every minute, and on **Sync now**. For each part, the most recent change on any device wins.
 - **First sync:** a device syncing for the first time merges its bookmarks, topics, Spaces and pinned tabs with what is already shared.
-- **What sync never does:** delete a Space or close a tab. A pinned tab removed on another device becomes a regular tab. Cookies, open regular tabs and privacy settings stay per device.
+- **What sync never does:** delete a Space or close a tab. A pinned tab removed on another device becomes a regular tab. Cookies and privacy settings stay per device; open tabs are shared only for continuity (below), never reopened automatically.
+
+#### Open tabs on other devices
+
+With **Sync open tabs** on (Settings → Sync), each device also publishes the tabs it has open, per Space: address, title, whether it is pinned, and when it was last used. Private Spaces, Quiver's own pages, `file:` / `data:` / `blob:` addresses and any address with a user name or password are never published, and the same rules are applied again to every file read from the folder. The device file is rewritten about 2 seconds after tabs change (unchanged files only every few minutes, so sync clients stay quiet), and Quiver watches the `Quiver Sync` folder, falling back to checking it every 5 seconds where it cannot be watched, so another device's tabs appear within seconds of your sync client delivering them.
+
+- **See them:** type `devices` in the command bar (`devices <words>` filters), or open **Settings → Sync → Other devices**: each device with when it was last seen, its Spaces and their tabs. Typing anything else in the command bar also lists matching tabs from other devices below this device's own results. Devices not seen for 30 days are hidden.
+- **Open one tab** in the current Space, or **Continue here** to open a whole Space from that device: into the Space with the same id (as Spaces sync keeps it) or the same name, else a new Space with the shared sign-in, skipping addresses already open there. Tabs open lazily and the one last used on the other device is selected.
+- **Send a tab:** right-click a tab → **Send tab to device**, or `send` / `send to <device>` in the command bar (also **Send tab to device…** in the action list). The receiving device shows a **Tab from <device>** notice in the sidebar with **Open** and dismiss; it is offered for 7 days, and the sender drops it once the receiver has opened or dismissed it. Sending works whenever sync is on, even with Sync open tabs off, and only to devices on a Quiver version that can receive tabs.
+- **Default:** on for sync set up from this version on; off for folders that were already syncing, so no existing device starts sharing its tabs unasked.
 ### Privacy
 
 Quiver sends no telemetry, has no account and checks for updates only if you turn that on (see Updates); crash reports stay on the device. **Settings → Privacy** controls what pages and Chromium can send:
@@ -236,6 +245,7 @@ Quiver currently covers these Flecha workflows, plus split view and Peek (below)
 | 2 | Vertical sidebar | Collapsible sidebar, tab list, favicons, close, middle-click close, drag and keyboard reorder | Included |
 | 2 | Pinned tabs and folders | Pin, nested folders, collapse, drag between pinned and temporary, saved per Space | Included |
 | 2 | Spaces | Create / rename / delete, per-Space partition (cookies, storage), private Spaces | Included |
+| – | Tabs on other devices | Open tabs per Space through the sync folder, `devices`, Continue here, send tab to device | Included |
 | – | Ad and tracker blocking | Built-in domain list, per-page count, per-site exceptions | Included |
 | 3 | Command bar | `Ctrl+K` / `Ctrl+L` / `Ctrl+T` overlay | Included |
 | 3 | `gh` `npm` `mdn` `caniuse` `so` | Offline parser → URL | Included |

@@ -129,8 +129,15 @@
       <label><input type="checkbox" data-sync="spaces"> Spaces, folders and pinned tabs</label>
       <label><input type="checkbox" data-sync="research"> Research topics and notes</label>
       <label><input type="checkbox" data-sync="boosts"> Boosts. Off by default: Boosts run code on websites, so only turn this on if no one else can write to the sync folder.</label>
+      <label><input type="checkbox" id="sync-open-tabs" aria-describedby="sync-open-tabs-note"> Sync open tabs</label>
+      <p class="note" id="sync-open-tabs-note">Shares the address, title and last-used time of each open tab, so your other devices can open them or continue a whole Space. Never private Spaces, Quiver’s own pages, files on this computer, or addresses with a user name or password. Written a couple of seconds after tabs change.</p>
     </fieldset>
     <p class="status" id="sync-status" role="status"></p>
+    <div class="sync-devices-wrap" id="sync-devices-wrap" hidden>
+      <h3 id="sync-devices-heading">Other devices</h3>
+      <p class="note">Devices seen in the last 30 days. Continue here opens a Space’s tabs in the Space with the same name here, or a new one, skipping tabs already open. Send a tab from its right-click menu or with <code>send</code> in the command bar.</p>
+      <div id="sync-devices" aria-labelledby="sync-devices-heading"></div>
+    </div>
   </section>
   <section class="settings-section" id="section-history" aria-labelledby="history-heading">
     <h2 id="history-heading" tabindex="-1">History</h2>

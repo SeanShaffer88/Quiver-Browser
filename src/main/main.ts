@@ -17,6 +17,7 @@ import { MediaPermissions } from './site-permissions';
 import { clearSessions, PrivacyController } from './privacy';
 import { normalizeTopics, Research } from './research';
 import { normalizeSyncState, SyncService } from './sync-service';
+import { collectDeviceTabs } from './continuity';
 import os from 'node:os';
 import { parseLaunchArgs } from './launch-args';
 import { setShortcutOverrides, type ShortcutAction } from './shortcuts';
@@ -440,11 +441,23 @@ async function main(): Promise<void> {
         for (const [name, content] of wanted) if (boosts.readIfExists(name) !== content) boosts.save(name, content);
       },
     },
-  }, () => store.save(), () => {
+  }, () => store.save(), notifySettings, undefined, {
+    tabs: () => {
+      const { spaces, tabs: open, activeSpaceId } = tabs.openTabsForSync();
+      return collectDeviceTabs(spaces, open, activeSpaceId, Date.now());
+    },
+    changed: () => {
+      tabs.emit();
+      notifySettings();
+    },
+  });
+  function notifySettings() {
     for (const tab of tabs.tabs.values()) {
       if (tab.internalPage === 'settings' && !tab.view.webContents.isDestroyed()) tab.view.webContents.send('sync:changed');
     }
-  });
+  }
+  tabs.onChanged = () => sync.tabsChanged();
+  tabs.handoffNotices = () => sync.pendingHandoffs().slice(0, 3).map(({ id, from, title, url }) => ({ id, from, title: title || (URL.parse(url)?.host ?? url), host: URL.parse(url)?.host ?? '' }));
   const updates = new UpdateChecker(
     () => store.state.updates ?? { lastCheckedAt: 0 },
     (next) => {
@@ -461,7 +474,10 @@ async function main(): Promise<void> {
     tabs, store, boosts, devWatcher, overlay, shell, research, sync, history, downloads, updates,
     onPrivacyChanged: () => privacy.apply(),
     onThemeChanged: () => { nativeTheme.themeSource = store.state.settings.theme; },
-    runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings') : onShortcut(command)),
+    runCommand: (command) => (command === 'settings' ? void tabs.navigate('quiver://settings')
+      : command === 'devices' ? actions?.openCommandBar('devices ')
+      : command === 'send-tab' ? actions?.openCommandBar('send to ')
+      : onShortcut(command)),
   });
 
   await Promise.all([shell.webContents.loadURL('quiver://app/shell.html'), overlay.webContents.loadURL('quiver://app/commandbar.html')]);
