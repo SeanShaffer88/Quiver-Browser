@@ -4,6 +4,8 @@ All notable changes to Quiver. Format: [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+- Fix: a link that starts Quiver opens as a tab in the main window instead of a Little Quiver window. Closing the window now quits Quiver, as before; the extra small window had kept it running.
+
 - Little Quiver: links from other apps open in a small window (title and host, *Copy link*, *Open in Quiver* with `Ctrl+O`, *Close* with `Esc` / `Ctrl+W`) in the active Space's storage instead of adding tabs. *Open in Quiver* moves the live page into the active Space as a tab. Windows cascade and open at the last size you chose. Setting in Settings → Tabs, on by default.
 - Peek any link: Shift+click a link in any tab, or *Peek link* in the new link menu (with *Open link in new tab* and *Copy link address*), opens it in Peek. Pages that handle Shift+click themselves keep it. Setting in Settings → Tabs, on by default.
 

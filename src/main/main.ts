@@ -563,14 +563,15 @@ async function main(): Promise<void> {
   store.state.sessionOpen = true;
   store.flush();
   /**
-   * Open links handed over by another app. With Little Quiver on (the default) each one gets a small window of its
-   * own and the main window's tabs are left alone; otherwise they become tabs as before. Returns whether anything
-   * was opened in the main window, which is then brought forward.
+   * Open links handed over by another app. While Quiver is running, with Little Quiver on (the default), each one
+   * gets a small window of its own and the main window's tabs are left alone; otherwise they become tabs as before.
+   * A link that starts Quiver opens as a tab: the main window opens anyway, so a second window would only add one to
+   * close. Returns whether anything was opened in the main window, which is then brought forward.
    */
-  const openLaunchTargets = ({ urls, importBookmarks }: LaunchTargets): boolean => {
+  const openLaunchTargets = ({ urls, importBookmarks }: LaunchTargets, coldStart = false): boolean => {
     let inMain = importBookmarks;
     for (const url of urls) {
-      if (opensInLittle(store.state.settings.littleQuiver, url)) littleWindows.open(url);
+      if (!coldStart && opensInLittle(store.state.settings.littleQuiver, url)) littleWindows.open(url);
       else {
         tabs.openTab(url);
         inMain = true;
@@ -589,8 +590,7 @@ async function main(): Promise<void> {
   setInterval(checkForUpdates, 60 * 60_000).unref();
   tabs.layout();
   win.show();
-  // After the main window is shown, so a Little Quiver window from the launch opens in front of it.
-  openLaunchTargets(parseLaunchArgs(process.argv));
+  openLaunchTargets(parseLaunchArgs(process.argv), true);
   handleSecondInstance = (targets) => {
     if (win.isDestroyed()) return;
     const raise = targets.urls.length === 0 || targets.urls.some((url) => !opensInLittle(store.state.settings.littleQuiver, url));
